@@ -7,6 +7,7 @@ import { Search, X, Wifi, WifiOff } from 'lucide-react';
 import { ProfileModal } from '../profile/ProfileModal';
 import { Input } from "@/components/ui/input";
 import StoriesBar from './StoriesBar';
+import StoryCreator from '@/components/story/StoryCreator';
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
@@ -14,6 +15,8 @@ import { useRealtimeStore } from "@/lib/realtime-store";
 interface MemberListProps {
   isSearchOpen?: boolean;
   setIsSearchOpen?: (open: boolean) => void;
+  onOpenChat?: (userId: string) => void;
+  onOpenProfile?: (userId: string) => void;
 }
 
 type OnlineMember = {
@@ -129,7 +132,7 @@ const getCurrentMember = () => {
 
 const IDLE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
-const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) => {
+const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenProfile }: MemberListProps) => {
   const {
     onlineUsers,
     onlineCount,
@@ -137,9 +140,10 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) 
     removeOnlineUser
   } = useRealtimeStore();
 
-  const [selectedUser, setSelectedUser] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isConnected, setIsConnected] = useState(true); // Default to true since presence engine connects it
+  const [storyCreatorOpen, setStoryCreatorOpen] = useState(false);
+
   const [myStatus, setMyStatus] = useState<PresenceStatus>("online");
   const myStatusRef = useRef<PresenceStatus>("online");
   const [userStatuses, setUserStatuses] = useState<Map<string, string>>(new Map());
@@ -187,18 +191,6 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) 
     const socket = getSocket();
     const onUserProfileUpdated = (data: any) => {
       if (!data?.userId) return;
-      
-      setSelectedUser((currentSelected: any) => {
-        if (currentSelected && (currentSelected.id === data.userId || currentSelected.name === data.username)) {
-          return {
-            ...currentSelected,
-            avatar: data.avatar || data.avatarUrl || currentSelected.avatar,
-            profileCover: data.profileCover || currentSelected.profileCover,
-            statusMsg: data.profileMsg !== undefined ? data.profileMsg : currentSelected.statusMsg,
-          };
-        }
-        return currentSelected;
-      });
 
       if (data.userId === currentMember?.id || data.username === currentMember?.name) {
         setProfileTrigger((prev) => prev + 1);
@@ -307,7 +299,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) 
   return (
     <div className="flex flex-col h-full bg-card">
       {/* Stories Bar */}
-      <StoriesBar />
+      <StoriesBar onOpenCreator={() => setStoryCreatorOpen(true)} />
 
       {/* Online Counter */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b border-border">
@@ -355,7 +347,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) 
           return (
           <div 
             key={`${getMemberIdentity(member)}-${member.id || index}`} 
-            onClick={() => setSelectedUser(member)}
+            onClick={() => onOpenProfile?.(member.id)}
             className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-all cursor-pointer border-b border-border/50 [direction:ltr]"
           >
             <div className="relative shrink-0">
@@ -425,11 +417,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen }: MemberListProps) 
         )}
       </div>
 
-      <ProfileModal 
-        profileId={selectedUser?.id || null} 
-        onClose={() => setSelectedUser(null)} 
-        isAdmin={currentMember?.role === 'admin'}
-      />
+      <StoryCreator open={storyCreatorOpen} onClose={() => setStoryCreatorOpen(false)} />
     </div>
   );
 };

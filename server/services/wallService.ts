@@ -18,17 +18,30 @@ const normalizeAuthorName = (value?: string | null) => {
   return name ? name.slice(0, 80) : "";
 };
 
-const mapWallPost = (row: any) => ({
-  id: String(row.id),
-  body: row.body,
-  mediaUrl: row.mediaUrl ? normalizeAssetPath(row.mediaUrl, "") : null,
-  createdAt: row.createdAt || new Date().toISOString(),
-  author: {
-    id: String(row.authorId || ""),
-    name: row.authorName || row.fallbackAuthorName || row.authorId || "زائر",
-    avatar: normalizeAssetPath(row.authorAvatar, "/pic.png"),
-  },
-});
+const mapWallPost = (row: any) => {
+  let mediaUrls: string[] | null = null;
+  try {
+    if (row.mediaUrls) {
+      mediaUrls = typeof row.mediaUrls === "string" ? JSON.parse(row.mediaUrls) : row.mediaUrls;
+      if (!Array.isArray(mediaUrls)) mediaUrls = null;
+    }
+  } catch {
+    mediaUrls = null;
+  }
+
+  return {
+    id: String(row.id),
+    body: row.body,
+    mediaUrl: row.mediaUrl ? normalizeAssetPath(row.mediaUrl, "") : null,
+    mediaUrls: mediaUrls || (row.mediaUrl ? [normalizeAssetPath(row.mediaUrl, "")] : null),
+    createdAt: row.createdAt || new Date().toISOString(),
+    author: {
+      id: String(row.authorId || ""),
+      name: row.authorName || row.fallbackAuthorName || row.authorId || "زائر",
+      avatar: normalizeAssetPath(row.authorAvatar, "/pic.png"),
+    },
+  };
+};
 
 const setWallCache = (posts: any[]) => {
   cachedWallPosts = posts.slice(0, WALL_CACHE_LIMIT);
@@ -53,7 +66,8 @@ export const listWallPosts = async () => {
 
   pendingWallPostsLoad = (async () => {
     const result = await dbPool.query(`
-      SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.uid as "authorId", b.topic as "fallbackAuthorName",
+      SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.media_urls as "mediaUrls",
+             b.uid as "authorId", b.topic as "fallbackAuthorName",
              COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as "authorName",
              NULLIF(u.pic, '') as "authorAvatar"
       FROM bars b
@@ -136,41 +150,210 @@ export const updateCachedWallAuthorProfile = (
   });
 };
 
-export const listPostComments = async (postId: string) => {
-  const result = await dbPool.query(`
-    SELECT id, body, created_at as "createdAt", author_topic as "authorName", author_pic as "authorAvatar"
-    FROM bar_comments
-    WHERE bar_id = $1
-    ORDER BY id DESC
-  `, [parseInt(postId, 10)]);
-  
-  return result.rows.map(row => ({
-    id: String(row.id),
-    body: row.body,
-    createdAt: row.createdAt || new Date().toISOString(),
-    author: {
-      name: row.authorName || "زائر",
-      avatar: row.authorAvatar || "/pic.png",
-    }
-  }));
-};
+// ----- التعليقات الهرمية (Threaded Comments) -----
 
-export const createWallComment = async (postId: string, authorId: string, body: string) => {
-  // Look up username for author_topic
-  const userRes = await dbPool.query("SELECT username FROM users WHERE id::text = $1 OR idreg::text = $1 LIMIT 1", [authorId]);
-  const username = userRes.rows[0]?.username || authorId;
+export const createWallComment = async (
+  postId: string,
+  authorId: string,
+  authorName: string,
+  body: string,
+  parentId?: string,
+) => {
+  const userRes = await dbPool.query(
+    `SELECT id, username, topic, pic FROM users WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 LIMIT 1`,
+    [authorId],
+  );
+  const user = userRes.rows[0];
+  const resolvedId = String(user?.id || authorId);
+  const resolvedName = user?.topic || user?.username || authorName || "زائر";
 
   const result = await dbPool.query(
-    `INSERT INTO bar_comments (bar_id, body, author_topic) 
-     VALUES ($1, $2, $3) 
+    `INSERT INTO bar_comments (bar_id, author_id, author_topic, author_pic, body, parent_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, body, created_at as "createdAt"`,
-    [parseInt(postId, 10), body, username]
+    [parseInt(postId, 10), resolvedId, resolvedName, user?.pic || null, body, parentId ? parseInt(parentId, 10) : null],
   );
-  
+
   const row = result.rows[0];
   return {
     id: String(row.id),
     body: row.body,
     createdAt: row.createdAt || new Date().toISOString(),
+    author: {
+      id: resolvedId,
+      name: resolvedName,
+      avatar: user?.pic ? normalizeAssetPath(user.pic, "/pic.png") : "/pic.png",
+    },
+    parentId: parentId || null,
+    replies: [],
   };
+};
+
+export const listPostComments = async (postId: string) => {
+  const result = await dbPool.query(
+    `SELECT id, body, created_at as "createdAt",
+            author_topic as "authorName", author_pic as "authorAvatar",
+            author_id as "authorId", parent_id as "parentId"
+     FROM bar_comments
+     WHERE bar_id = $1
+     ORDER BY id ASC`,
+    [parseInt(postId, 10)],
+  );
+
+  const mapRow = (row: any) => ({
+    id: String(row.id),
+    body: row.body,
+    createdAt: row.createdAt || new Date().toISOString(),
+    author: {
+      id: String(row.authorId || ""),
+      name: row.authorName || "زائر",
+      avatar: row.authorAvatar ? normalizeAssetPath(row.authorAvatar, "/pic.png") : "/pic.png",
+    },
+    parentId: row.parentId ? String(row.parentId) : null,
+    replies: [] as any[],
+  });
+
+  const allComments = result.rows.map(mapRow);
+  const commentMap = new Map<string, any>();
+  const rootComments: any[] = [];
+
+  for (const comment of allComments) {
+    commentMap.set(comment.id, comment);
+    if (!comment.parentId) {
+      rootComments.push(comment);
+    } else {
+      const parent = commentMap.get(comment.parentId);
+      if (parent) {
+        parent.replies.push(comment);
+      } else {
+        rootComments.push(comment);
+      }
+    }
+  }
+
+  return rootComments;
+};
+
+export const deleteWallComment = async (commentId: string, authorId: string) => {
+  const result = await dbPool.query(
+    `DELETE FROM bar_comments WHERE id = $1 AND (author_id = $2 OR author_id IS NULL)
+     RETURNING id`,
+    [parseInt(commentId, 10), authorId],
+  );
+  return (result.rowCount ?? 0) > 0;
+};
+
+export const getCommentCounts = async (postIds: number[]) => {
+  if (postIds.length === 0) return {};
+  const placeholders = postIds.map((_, i) => `$${i + 1}`).join(",");
+  const result = await dbPool.query(
+    `SELECT bar_id, COUNT(*)::int as count
+     FROM bar_comments
+     WHERE bar_id IN (${placeholders})
+     GROUP BY bar_id`,
+    postIds,
+  );
+  const counts: Record<string, number> = {};
+  for (const row of result.rows) {
+    counts[String(row.bar_id)] = row.count;
+  }
+  return counts;
+};
+
+// ----- الإعجابات (Likes) -----
+
+export const toggleWallLike = async (postId: string, userId: string) => {
+  const existing = await dbPool.query(
+    "SELECT bar_id FROM bars_likes WHERE bar_id = $1 AND user_id = $2",
+    [parseInt(postId, 10), userId],
+  );
+
+  if (existing.rowCount && existing.rowCount > 0) {
+    await dbPool.query("DELETE FROM bars_likes WHERE bar_id = $1 AND user_id = $2", [
+      parseInt(postId, 10),
+      userId,
+    ]);
+    return { liked: false };
+  }
+
+  await dbPool.query("INSERT INTO bars_likes (bar_id, user_id) VALUES ($1, $2)", [
+    parseInt(postId, 10),
+    userId,
+  ]);
+  return { liked: true };
+};
+
+export const getLikeCounts = async (postIds: number[]) => {
+  if (postIds.length === 0) return {};
+  const placeholders = postIds.map((_, i) => `$${i + 1}`).join(",");
+  const result = await dbPool.query(
+    `SELECT bar_id, COUNT(*)::int as count
+     FROM bars_likes
+     WHERE bar_id IN (${placeholders})
+     GROUP BY bar_id`,
+    postIds,
+  );
+  const counts: Record<string, number> = {};
+  for (const row of result.rows) {
+    counts[String(row.bar_id)] = row.count;
+  }
+  return counts;
+};
+
+export const getUserLikedPosts = async (userId: string, postIds: number[]) => {
+  if (postIds.length === 0) return new Set<string>();
+  const placeholders = postIds.map((_, i) => `$${i + 2}`).join(",");
+  const result = await dbPool.query(
+    `SELECT bar_id FROM bars_likes WHERE user_id = $1 AND bar_id IN (${placeholders})`,
+    [userId, ...postIds],
+  );
+  return new Set(result.rows.map((row: any) => String(row.bar_id)));
+};
+
+// ----- إعجابات التعليقات -----
+
+export const toggleCommentLike = async (commentId: string, userId: string) => {
+  const existing = await dbPool.query(
+    "SELECT comment_id FROM bar_comment_likes WHERE comment_id = $1 AND user_id = $2",
+    [parseInt(commentId, 10), userId],
+  );
+
+  if (existing.rowCount && existing.rowCount > 0) {
+    await dbPool.query("DELETE FROM bar_comment_likes WHERE comment_id = $1 AND user_id = $2", [
+      parseInt(commentId, 10), userId,
+    ]);
+    return { liked: false };
+  }
+
+  await dbPool.query("INSERT INTO bar_comment_likes (comment_id, user_id) VALUES ($1, $2)", [
+    parseInt(commentId, 10), userId,
+  ]);
+  return { liked: true };
+};
+
+export const getCommentLikeCounts = async (commentIds: number[]) => {
+  if (commentIds.length === 0) return {};
+  const placeholders = commentIds.map((_, i) => `$${i + 1}`).join(",");
+  const result = await dbPool.query(
+    `SELECT comment_id, COUNT(*)::int as count
+     FROM bar_comment_likes
+     WHERE comment_id IN (${placeholders})
+     GROUP BY comment_id`,
+    commentIds,
+  );
+  const counts: Record<string, number> = {};
+  for (const row of result.rows) {
+    counts[String(row.comment_id)] = row.count;
+  }
+  return counts;
+};
+
+export const getUserLikedComments = async (userId: string, commentIds: number[]) => {
+  if (commentIds.length === 0) return new Set<string>();
+  const placeholders = commentIds.map((_, i) => `$${i + 2}`).join(",");
+  const result = await dbPool.query(
+    `SELECT comment_id FROM bar_comment_likes WHERE user_id = $1 AND comment_id IN (${placeholders})`,
+    [userId, ...commentIds],
+  );
+  return new Set(result.rows.map((row: any) => String(row.comment_id)));
 };

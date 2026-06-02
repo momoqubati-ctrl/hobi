@@ -153,6 +153,7 @@ export const updatePersistedUserProfile = async (
     avatar?: string;
     cover?: string;
     profileMsg?: string;
+    displayName?: string;
   }
 ): Promise<boolean> => {
   if (databaseAvailable === false) return false;
@@ -173,6 +174,10 @@ export const updatePersistedUserProfile = async (
     if (profileUpdates.profileMsg !== undefined) {
       fields.push(`msg = $${paramIndex++}`);
       values.push(profileUpdates.profileMsg);
+    }
+    if (profileUpdates.displayName !== undefined) {
+      fields.push(`topic = $${paramIndex++}`);
+      values.push(String(profileUpdates.displayName).slice(0, 120));
     }
 
     if (fields.length === 0) return true;

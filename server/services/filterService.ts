@@ -28,7 +28,7 @@ async function getRules() {
   try {
     const queryPromise = dbPool.query("SELECT v, path FROM notext");
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Query timeout")), 2000)
+      setTimeout(() => reject(new Error("Query timeout")), 8000)
     );
     const result = await Promise.race([queryPromise, timeoutPromise]) as any;
     

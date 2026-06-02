@@ -57,11 +57,17 @@ export async function publishSocketEvent(roomId: string, event: string, payload:
   if (!redisModule.isRedisEnabled) {
     // Fallback to local emission if Redis is disabled
     if (localIo) {
-      let target = localIo.to(`room:${roomId}`);
+      const roomName = `room:${roomId}`;
+      const sockets = await localIo.in(roomName).fetchSockets();
+      console.log(`[SocketBroker] Publishing to room "${roomName}": ${sockets.length} sockets connected`);
+      let target = localIo.to(roomName);
       if (excludeSocketId) {
         target = target.except(excludeSocketId) as any;
       }
       target.emit(event, payload);
+      console.log(`[SocketBroker] Emitted "${event}" to room "${roomName}"`);
+    } else {
+      console.error("[SocketBroker] localIo is null! Cannot publish event");
     }
     return;
   }
@@ -71,17 +77,21 @@ export async function publishSocketEvent(roomId: string, event: string, payload:
   await redisModule.redis.publish(channel, data);
 }
 
-export async function publishGlobalEvent(event: string, payload: any): Promise<void> {
+export async function publishGlobalEvent(event: string, payload: any, excludeSocketId?: string): Promise<void> {
   const redisModule = await import("../services/redis");
   
   if (!redisModule.isRedisEnabled) {
     if (localIo) {
-      localIo.emit(event, payload);
+      let target: any = localIo;
+      if (excludeSocketId) {
+        target = target.except(excludeSocketId);
+      }
+      target.emit(event, payload);
     }
     return;
   }
 
   const channel = `pubsub:room:__global__`;
-  const data = JSON.stringify({ event, payload });
+  const data = JSON.stringify({ event, payload, excludeSocketId });
   await redisModule.redis.publish(channel, data);
 }

@@ -4,6 +4,8 @@
  */
 import type { Plugin } from "vite";
 import { Server as SocketIOServer } from "socket.io";
+import { initializeSocketBroker } from "./server/socket/SocketBroker";
+import { joinUserChannels } from "./server/socket/SocketChannels";
 
 export function viteSocketIO(): Plugin {
   let io: SocketIOServer | null = null;
@@ -12,6 +14,8 @@ export function viteSocketIO(): Plugin {
     name: "vite-plugin-socket-io",
     configureServer(server) {
       if (!server.httpServer) return;
+
+      (globalThis as any).__VITE_SOCKET_IO_CREATED__ = true;
 
       io = new SocketIOServer(server.httpServer, {
         path: "/ws",
@@ -31,6 +35,28 @@ export function viteSocketIO(): Plugin {
           zlibInflateOptions: { chunkSize: 1024 * 16 },
         },
       });
+
+      // Initialize the SocketBroker with this io instance
+      initializeSocketBroker(io);
+
+      // Profile handlers
+      let profileHandlers: any;
+      import("./server/socket/profileHandlers").then(m => { profileHandlers = m; });
+      // Story handlers
+      let storyHandlers: any;
+      import("./server/socket/storyHandlers").then(m => { storyHandlers = m; });
+      // Wall handlers (create, like, comment)
+      let wallHandlers: any;
+      import("./server/socket/wallHandlers").then(m => { wallHandlers = m; });
+      // Notification handlers
+      let notificationHandlers: any;
+      import("./server/socket/notificationHandlers").then(m => { notificationHandlers = m; });
+      // Mail handlers
+      let mailHandlers: any;
+      import("./server/socket/mailHandlers").then(m => { mailHandlers = m; });
+      // Private message handlers
+      let privateHandlers: any;
+      import("./server/socket/privateHandlers").then(m => { privateHandlers = m; });
 
       // ========== Presence Manager (inline) ==========
       type OnlineUser = {
@@ -157,7 +183,7 @@ export function viteSocketIO(): Plugin {
       // ========== Socket.io Connection Handler ==========
       io.on("connection", (socket) => {
         const auth = socket.handshake.auth || {};
-        const username = auth.username || "زائر";
+        let username = auth.username || "زائر";
         const role = auth.role || "guest";
         const userId = auth.userId || socket.id;
 
@@ -178,17 +204,19 @@ export function viteSocketIO(): Plugin {
         };
 
         addUser(socket.id, userData);
-        
-        // Broadcast new connection status to all visitors
+        socket.data.user = { id: userId, username, role, avatar: userData.avatar };
+
+        // الانضمام للقنوات الشخصية (إشعارات، حضور، etc.)
+        joinUserChannels(socket);
+
         const connectedUser = connectedUsers.get(socket.id)!;
         broadcastUserConnected(connectedUser);
+        io!.emit("online_count", { count: connectedUsers.size });
 
         // Join moderators alerts room if authorized
         if (role === 'admin' || role === 'owner') {
           socket.join("moderators_alerts");
         }
-
-        io!.emit("online_count", { count: connectedUsers.size });
 
         socket.emit("connected", {
           socketId: socket.id,
@@ -433,10 +461,26 @@ export function viteSocketIO(): Plugin {
               finalChatText = filterRes.filteredText;
             }
 
+            // ─── جلب بيانات الرسالة المردود عليها ──────────────────────────
+            const replyToId = data?.replyToId || "";
+            let replyToText = "";
+            let replyToSenderName = "";
+            if (replyToId) {
+              const parentMsg = chatStore.getRoomMessage ? chatStore.getRoomMessage(roomId, replyToId) : undefined;
+              if (parentMsg) {
+                replyToText = parentMsg.text || "";
+                replyToSenderName = parentMsg.user || "";
+              } else {
+                replyToText = data?.replyToText || "";
+                replyToSenderName = data?.replyToSenderName || "";
+              }
+            }
+
             const msg = await chatStore.addMessage({
               roomId,
               clientId: data.clientId,
               user: username,
+              userId: userId,
               role,
               text: finalChatText,
               avatar: connectedUsers.get(socket.id)?.avatar || userData.avatar,
@@ -444,6 +488,9 @@ export function viteSocketIO(): Plugin {
               avatarFrameUrl: connectedUsers.get(socket.id)?.avatarFrameUrl || userData.avatarFrameUrl,
               giftIconUrl: connectedUsers.get(socket.id)?.giftIconUrl || userData.giftIconUrl,
               messageBubbleStyle: connectedUsers.get(socket.id)?.messageBubbleStyle || userData.messageBubbleStyle,
+              replyToId: replyToId || undefined,
+              replyToText: replyToText || undefined,
+              replyToSenderName: replyToSenderName || undefined,
             });
 
             io!.to(`room:${roomId}`).emit("new_message", { roomId, message: msg });
@@ -451,6 +498,56 @@ export function viteSocketIO(): Plugin {
           } catch (error) {
             console.error("Error sending message:", error);
             callback?.({ success: false, message: "تعذر إرسال الرسالة" });
+          }
+        });
+
+        // ─── تفاعل على رسالة في غرفة ──────────────────────────────────────
+        socket.on("room:react", async (data: any, callback?: any) => {
+          try {
+            const roomId = String(data?.roomId || "").trim();
+            const messageId = String(data?.messageId || "").trim();
+            const reaction = data?.reaction;
+
+            if (!roomId || !messageId || !reaction) {
+              return callback?.({ success: false, error: "بيانات ناقصة" });
+            }
+
+            const validReactions = chatStore.ROOM_REACTIONS || ["like", "love", "haha", "wow", "sad", "angry"];
+            if (!validReactions.includes(reaction)) {
+              return callback?.({ success: false, error: "نوع تفاعل غير صالح" });
+            }
+
+            const msg = chatStore.getRoomMessage ? chatStore.getRoomMessage(roomId, messageId) : undefined;
+            if (!msg) {
+              return callback?.({ success: false, error: "الرسالة غير موجودة" });
+            }
+
+            if (!msg.reactions) msg.reactions = {};
+
+            const reactorId = String(userId || username || socket.id);
+            const existingReaction = msg.reactions[reactorId];
+
+            if (existingReaction === reaction) {
+              delete msg.reactions[reactorId];
+            } else {
+              msg.reactions[reactorId] = reaction;
+            }
+
+            if (chatStore.updateRoomMessageReactions) {
+              chatStore.updateRoomMessageReactions(roomId, messageId, msg.reactions);
+            }
+
+            // بث التحديث لجميع أعضاء الغرفة
+            io!.to(`room:${roomId}`).emit("room_reaction", {
+              roomId,
+              messageId,
+              reactions: msg.reactions,
+            });
+
+            callback?.({ success: true, reactions: msg.reactions });
+          } catch (err) {
+            console.error("[room:react] Error:", err);
+            callback?.({ success: false, error: "خطأ في الخادم" });
           }
         });
 
@@ -620,16 +717,20 @@ export function viteSocketIO(): Plugin {
           const user = connectedUsers.get(socket.id);
           if (!user) return;
 
+          const oldUsername = user.username;
+
           if (data.avatar) user.avatar = data.avatar;
           if (data.avatarFrameUrl) user.avatarFrameUrl = data.avatarFrameUrl;
           if (data.giftIconUrl) user.giftIconUrl = data.giftIconUrl;
           if (data.messageBubbleStyle) user.messageBubbleStyle = data.messageBubbleStyle;
+          if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
+            user.username = data.displayName.trim().slice(0, 80);
+            userData.username = user.username;
+            socket.data.user.username = user.username;
+            username = user.username;
+          }
 
-          userData.avatar = user.avatar;
-          userData.avatarFrameUrl = user.avatarFrameUrl;
-          userData.giftIconUrl = user.giftIconUrl;
-          userData.messageBubbleStyle = user.messageBubbleStyle;
-          chatStore.updateUserMessageIdentity(user.username, {
+          chatStore.updateUserMessageIdentity(oldUsername, {
             avatar: user.avatar,
             avatarFrameUrl: user.avatarFrameUrl,
             giftIconUrl: user.giftIconUrl,
@@ -641,6 +742,7 @@ export function viteSocketIO(): Plugin {
             socketId: socket.id,
             userId: user.id,
             username: user.username,
+            previousUsername: oldUsername,
             avatar: data.avatar || user.avatar,
             avatarUrl: data.avatarUrl || data.avatar || user.avatar,
             profileCover: data.profileCover || data.cover,
@@ -695,6 +797,36 @@ export function viteSocketIO(): Plugin {
           const to = String(data?.toSocketId || "").trim();
           if (to) io!.to(to).emit("pm_typing", { fromSocketId: socket.id, username });
         });
+
+        // ===== Profile Handlers =====
+        if (profileHandlers) {
+          profileHandlers.registerProfileHandlers(io!, socket);
+        }
+
+        // ===== Story Handlers =====
+        if (storyHandlers) {
+          storyHandlers.registerStoryHandlers(io!, socket);
+        }
+
+        // ===== Wall Handlers (posts, likes, comments) =====
+        if (wallHandlers) {
+          wallHandlers.registerWallHandlers(io!, socket);
+        }
+
+        // ===== Notification Handlers =====
+        if (notificationHandlers) {
+          notificationHandlers.registerNotificationHandlers(io!, socket);
+        }
+
+        // ===== Mail Handlers =====
+        if (mailHandlers) {
+          mailHandlers.registerMailHandlers(io!, socket);
+        }
+
+        // ===== Private Message Handlers =====
+        if (privateHandlers) {
+          privateHandlers.registerPrivateHandlers(io!, socket);
+        }
 
         // ===== Disconnect =====
         socket.on("disconnect", () => {
@@ -755,8 +887,10 @@ export function viteSocketIO(): Plugin {
             });
           } else {
             const user = removeUser(socket.id);
-            if (user) broadcastUserDisconnected(user);
-            io!.emit("online_count", { count: connectedUsers.size });
+            if (user) {
+              broadcastUserDisconnected(user);
+              io!.emit("online_count", { count: connectedUsers.size });
+            }
           }
         });
       });

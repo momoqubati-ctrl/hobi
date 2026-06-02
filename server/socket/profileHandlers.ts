@@ -1,5 +1,6 @@
 import { Socket, Server as SocketIOServer } from "socket.io";
 import { ProfileService } from "../services/profileService";
+import { createNotification } from "../services/notificationService";
 import { db, dbPool } from "../db";
 import { userProfiles } from "../db/schema";
 import { eq } from "drizzle-orm";
@@ -263,9 +264,11 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         metadata: { value: data.value },
       });
 
+      const newDisplayName = action === "nick" && data.value ? String(data.value).trim().slice(0, 120) : targetProfile.username;
       io.emit("user_profile_updated", {
         userId: targetProfile.id || profileId,
-        username: targetProfile.username,
+        username: newDisplayName,
+        previousUsername: targetProfile.username,
         avatar: updates.pic ? "/pic.png" : undefined,
         avatarUrl: updates.pic ? "/pic.png" : undefined,
         profileMsg: updates.msg,
@@ -288,6 +291,10 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       const result = await ProfileService.toggleFollow(userId, profileId);
       if (result.error) return callback?.({ error: result.error });
+
+      if (result.following && String(profileId) !== String(userId)) {
+        createNotification(profileId, userId, "follow", "user", userId, {}).catch(() => {});
+      }
 
       io.to(`user:${profileId}`).emit("user:followed", {
         followerId: userId,

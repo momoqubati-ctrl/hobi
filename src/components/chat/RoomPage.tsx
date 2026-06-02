@@ -5,14 +5,29 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, Loader2 } from "lucide-react";
+import { EmojiPanel } from "./EmojiPickerPopover";
+import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, Loader2, SmilePlus, Reply, ArrowLeft, Youtube } from "lucide-react";
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
+import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
+import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
+
+type ReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
+
+const REACTIONS_CONFIG: { type: ReactionType; emoji: string; label: string }[] = [
+  { type: "like",  emoji: "👍", label: "أعجبني" },
+  { type: "love",  emoji: "❤️", label: "حب" },
+  { type: "haha",  emoji: "😂", label: "ضحك" },
+  { type: "wow",   emoji: "😮", label: "متفاجئ" },
+  { type: "sad",   emoji: "😢", label: "حزين" },
+  { type: "angry", emoji: "😡", label: "غاضب" },
+];
 
 type ChatMessage = {
   id: string;
   clientId?: string;
   user: string;
+  userId?: string;
   role: "guest" | "member" | "admin" | "bot" | "system";
   text: string;
   avatar: string;
@@ -29,6 +44,10 @@ type ChatMessage = {
     name: string;
     image: string;
   };
+  reactions?: Record<string, ReactionType>;
+  replyToId?: string;
+  replyToText?: string;
+  replyToSenderName?: string;
   createdAt: string;
   pending?: boolean;
   failed?: boolean;
@@ -47,6 +66,7 @@ type RoomMember = {
 const getStoredUser = () => {
   const fallback = {
     name: "زائر",
+    id: "0",
     role: "guest" as const,
     countryCode: "SA",
     avatar: "/pic.png",
@@ -65,6 +85,7 @@ const getStoredUser = () => {
 
     return {
       name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : fallback.name,
+      id: String(parsed.id || parsed.idreg || parsed.uid || fallback.id),
       role,
       countryCode: normalizeCountryCode(parsed.countryCode),
       avatar: typeof parsed.avatar === "string" && parsed.avatar.trim() ? parsed.avatar : fallback.avatar,
@@ -111,25 +132,39 @@ const getMessageBubbleClass = (msg: ChatMessage) => {
   return "border-border bg-card text-foreground";
 };
 
-const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, onSendMessage: (text: string) => void }) => {
+const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelReply }: {
+  roomId: string;
+  onSendMessage: (text: string) => void;
+  replyToMsg: ChatMessage | null;
+  onCancelReply: () => void;
+}) => {
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [activeEmojiCat, setActiveEmojiCat] = useState("smileys");
+  const [selectedVideo, setSelectedVideo] = useState<YTVideo | null>(null);
+  const [showYouTubeSearch, setShowYouTubeSearch] = useState(false);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const text = message.trim();
+    let text = message.trim();
+    if (selectedVideo) {
+      const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
+      text = text ? `${text}\n${videoUrl}` : videoUrl;
+    }
     if (!text || isSending) return;
 
     setIsSending(true);
-    setMessage(""); // Clear instantly for better UX
+    setMessage("");
+    setSelectedVideo(null);
+    setShowYouTubeSearch(false);
 
     try {
-      // Calling the parent which handles optimistic UI and socket emit
       await onSendMessage(text);
     } finally {
       setIsSending(false);
-
       const socket = getSocket();
       socket.emit("stop_typing", { roomId });
     }
@@ -137,7 +172,6 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, o
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setMessage(e.target.value);
-
     const socket = getSocket();
     if (!typingTimerRef.current) {
       socket.emit("typing", { roomId });
@@ -148,8 +182,78 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, o
   };
 
   return (
-    <div className="z-10 border-t border-border bg-card p-3 shadow-lg [direction:ltr]" dir="ltr">
-      <form onSubmit={handleSubmit} className="flex items-center gap-2">
+    <div className="z-10 border-t border-border bg-card shadow-lg [direction:ltr] relative" dir="ltr">
+      {/* شريط معاينة الرد */}
+      {replyToMsg && (
+        <div className="px-3 pt-2 border-b border-border">
+          <div className="flex items-center gap-3 px-3 py-2 bg-muted/50 rounded-xl border-l-4 border-primary">
+            <Reply size={14} className="text-primary shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[9px] font-bold text-primary">
+                الرد على {replyToMsg.user}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                {replyToMsg.text || "..."}
+              </p>
+            </div>
+            <button
+              onClick={onCancelReply}
+              className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted transition"
+            >
+              <X size={14} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* معاينة الفيديو المختار من يوتيوب */}
+      {selectedVideo && (
+        <div className="px-3 pt-2 border-b border-border bg-slate-50 dark:bg-slate-900/50">
+          <div className="flex items-center gap-3 px-3 py-1.5 bg-muted/50 rounded-xl border-l-4 border-red-500">
+            <div className="relative shrink-0 w-12 h-8 rounded-lg overflow-hidden bg-slate-200">
+              <img src={selectedVideo.thumbnail} className="w-full h-full object-cover" alt="" />
+              <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
+                <Youtube size={10} className="text-red-500" />
+              </div>
+            </div>
+            <div className="flex-1 min-w-0 text-right" dir="rtl">
+              <p className="text-[9px] font-bold text-red-600">فيديو YouTube المختار</p>
+              <p className="text-[10px] text-foreground truncate animate-pulse" dir="auto">
+                {selectedVideo.title}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedVideo(null)}
+              className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted transition"
+            >
+              <X size={14} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* لوحة البحث في يوتيوب */}
+      {showYouTubeSearch && (
+        <div className="p-3 border-b border-border bg-slate-50 dark:bg-slate-900/40 animate-in slide-in-from-bottom duration-200">
+          <YouTubeSearchInline
+            onSelectVideo={(video) => setSelectedVideo(video)}
+            selectedVideoId={selectedVideo?.id}
+          />
+        </div>
+      )}
+
+      {/* لوحة الإيموجي مدمجة */}
+      <EmojiPanel
+        onEmojiSelect={(emoji) => setMessage((prev) => prev + emoji)}
+        search={emojiSearch}
+        setSearch={setEmojiSearch}
+        activeCategory={activeEmojiCat}
+        setActiveCategory={setActiveEmojiCat}
+        isOpen={showEmoji}
+      />
+
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 p-3">
         <div className="flex gap-1">
           <Button type="button" variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-primary">
             <Plus size={20} />
@@ -157,6 +261,43 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, o
           <Button type="button" variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-pink-500">
             <Gift size={20} />
           </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={`h-10 w-10 rounded-xl transition-colors ${showYouTubeSearch ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "text-muted-foreground hover:bg-muted hover:text-red-500"}`}
+            onClick={() => {
+              setShowYouTubeSearch(!showYouTubeSearch);
+              setShowEmoji(false);
+            }}
+            title="بحث YouTube"
+          >
+            <Youtube size={20} />
+          </Button>
+          {showEmoji ? (
+            <button
+              type="button"
+              onClick={() => setShowEmoji(false)}
+              className="h-10 w-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition shadow-md shrink-0 animate-in zoom-in duration-150"
+              title="إغلاق"
+            >
+              <ArrowLeft size={20} />
+            </button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-yellow-500"
+              onClick={() => {
+                setShowEmoji(true);
+                setShowYouTubeSearch(false);
+              }}
+              title="إيموجي"
+            >
+              <SmilePlus size={20} />
+            </Button>
+          )}
         </div>
         <div className="relative flex-1">
           <Input
@@ -168,7 +309,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, o
             maxLength={1000}
           />
         </div>
-        <Button type="submit" disabled={!message.trim() || isSending} className={`h-10 w-10 rounded-xl p-0 shadow-lg ${message.trim() ? "bg-primary shadow-primary/20" : "bg-slate-100 text-muted-foreground"}`}>
+        <Button type="submit" disabled={(!message.trim() && !selectedVideo) || isSending} className={`h-10 w-10 rounded-xl p-0 shadow-lg ${message.trim() || selectedVideo ? "bg-primary shadow-primary/20" : "bg-slate-100 text-muted-foreground"}`}>
           {isSending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
         </Button>
       </form>
@@ -176,7 +317,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage }: { roomId: string, o
   );
 });
 
-const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
+const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfile }: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [memberCount, setMemberCount] = useState(0);
@@ -186,8 +327,14 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
   const [isMuted, setIsMuted] = useState(false);
   const [showMics, setShowMics] = useState(true);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
+  const [replyToMsg, setReplyToMsg] = useState<ChatMessage | null>(null);
+  const [openActionMsgId, setOpenActionMsgId] = useState<string | null>(null);
+  const [activeYouTubeEmbedUrl, setActiveYouTubeEmbedUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasJoinedOnceRef = useRef(false);
+  const reactionPickerRef = useRef<HTMLDivElement>(null);
+  const currentUser = getStoredUser();
 
   const roomId = useMemo(() => String(room?.id ?? "general"), [room?.id]);
 
@@ -196,6 +343,47 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
     setTypingUsers([]);
     setError("");
     setIsLoading(true);
+    setReplyToMsg(null);
+    setActiveReactionMsgId(null);
+    setOpenActionMsgId(null);
+    setActiveYouTubeEmbedUrl(null);
+  }, [roomId]);
+
+  // إغلاق قائمة التفاعل عند النقر خارجها
+  useEffect(() => {
+    if (!activeReactionMsgId && !openActionMsgId) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (reactionPickerRef.current && !reactionPickerRef.current.contains(e.target as Node)) {
+        setActiveReactionMsgId(null);
+      }
+      // إغلاق أزرار الإجراءات عند النقر خارج أي رسالة
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-msg-actions]")) {
+        setOpenActionMsgId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [activeReactionMsgId, openActionMsgId]);
+
+  // الانتقال إلى رسالة محددة
+  const scrollToMessage = useCallback((messageId: string) => {
+    const el = document.getElementById(`room-msg-${messageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-primary", "ring-offset-2", "ring-offset-background");
+    el.style.transition = "box-shadow 0.3s ease";
+    setTimeout(() => {
+      el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "ring-offset-background");
+    }, 2000);
+  }, []);
+
+  // إرسال تفاعل
+  const handleReact = useCallback((messageId: string, reaction: ReactionType) => {
+    const socket = getSocket();
+    if (!socket || !socket.connected) return;
+    socket.emit("room:react", { roomId, messageId, reaction });
+    setActiveReactionMsgId(null);
   }, [roomId]);
 
   const mergeMessages = useCallback((incoming: ChatMessage[]) => {
@@ -324,12 +512,16 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
     const onUserProfileUpdated = (data: any) => {
       if (!data?.userId) return;
 
+      const nameMatcher = (name: string) =>
+        name === data.username || (data.previousUsername && name === data.previousUsername);
+
       // Update room members list
       setMembers((prev) =>
         prev.map((m) => {
-          if (m.id === data.userId || m.username === data.username) {
+          if (m.id === data.userId || nameMatcher(m.username || m.name)) {
             return {
               ...m,
+              username: data.username || m.username,
               avatar: data.avatar || m.avatar,
             };
           }
@@ -337,12 +529,13 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
         })
       );
 
-      // Update room messages avatars
+      // Update room messages avatars and display name
       setMessages((prev) =>
         prev.map((msg) => {
-          if (msg.user === data.username) {
+          if (nameMatcher(msg.user)) {
             return {
               ...msg,
+              user: data.username || msg.user,
               avatar: data.avatar || msg.avatar,
             };
           }
@@ -361,6 +554,14 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
     socket.on("system_message", onSystemMessage);
     socket.on("user_profile_updated", onUserProfileUpdated);
 
+    const onRoomReaction = (data: { roomId: string; messageId: string; reactions: Record<string, ReactionType> }) => {
+      if (data.roomId !== roomId) return;
+      setMessages(prev =>
+        prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m),
+      );
+    };
+    socket.on("room_reaction", onRoomReaction);
+
     // إذا كان متصل بالفعل، انضم للغرفة مباشرة
     if (socket.connected) {
       onConnect();
@@ -378,6 +579,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
       socket.off("user_typing", onUserTyping);
       socket.off("system_message", onSystemMessage);
       socket.off("user_profile_updated", onUserProfileUpdated);
+      socket.off("room_reaction", onRoomReaction);
       socket.emit("leave_room", { roomId });
     };
   }, [roomId, mergeMessages]);
@@ -392,6 +594,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
   const handleSendMessage = useCallback(async (text: string) => {
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const currentReplyTo = replyToMsg;
 
     // Optimistic UI
     const pendingMessage: ChatMessage = {
@@ -407,11 +610,16 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
       messageBubbleStyle: user.messageBubbleStyle,
       color: user.role === "admin" ? "text-red-600" : "text-foreground",
       isOwner: user.role === "admin",
+      reactions: {},
+      replyToId: currentReplyTo?.id || undefined,
+      replyToText: currentReplyTo?.text || undefined,
+      replyToSenderName: currentReplyTo?.user || undefined,
       createdAt: new Date().toISOString(),
       pending: true,
     };
 
     mergeMessages([pendingMessage]);
+    setReplyToMsg(null);
 
     return new Promise<void>((resolve) => {
       const socket = getSocket();
@@ -431,7 +639,14 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
         resolve();
       }, 8000);
 
-      socket.emit("room_message", { roomId, text, clientId }, (res: any) => {
+      socket.emit("room_message", {
+        roomId,
+        text,
+        clientId,
+        replyToId: currentReplyTo?.id || undefined,
+        replyToText: currentReplyTo?.text || undefined,
+        replyToSenderName: currentReplyTo?.user || undefined,
+      }, (res: any) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timeout);
@@ -451,7 +666,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
         resolve();
       });
     });
-  }, [roomId, mergeMessages]);
+  }, [roomId, mergeMessages, replyToMsg]);
 
   return (
     <div dir="ltr" className={`relative flex h-full flex-col bg-card [direction:ltr] ${!isEmbedded ? "fixed inset-0 z-[60]" : ""}`}>
@@ -521,6 +736,28 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
         </div>
       )}
 
+      {/* مشغل يوتيوب المدمج */}
+      {activeYouTubeEmbedUrl && (
+        <div className="absolute top-[56px] inset-x-0 z-30 bg-black border-b border-slate-800 shadow-xl animate-in slide-in-from-top duration-300">
+          <div className="relative w-full" style={{ aspectRatio: "16/9", maxHeight: "240px", margin: "0 auto" }}>
+            <iframe
+              src={`${activeYouTubeEmbedUrl}?autoplay=1&rel=0`}
+              className="w-full h-full"
+              allow="autoplay; fullscreen; encrypted-media"
+              allowFullScreen
+              title="YouTube Player"
+            />
+            <button
+              onClick={() => setActiveYouTubeEmbedUrl(null)}
+              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-600 text-white flex items-center justify-center transition shadow-lg z-40"
+              title="إغلاق المشغل"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div ref={scrollRef} dir="ltr" className={`flex-1 space-y-3 overflow-y-auto bg-muted/50 p-3 [direction:ltr] ${showMics ? "pt-[120px]" : "pt-[64px]"}`}>
         {isLoading && (
           <div className="flex h-24 items-center justify-center text-muted-foreground">
@@ -540,12 +777,17 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
           </div>
         )}
 
-        {messages.map((msg) => (
-          <div key={msg.clientId || msg.id} className={`flex gap-3 group ${msg.pending ? "opacity-70" : ""}`}>
+        {messages.map((msg) => {
+          const isSystem = msg.isSystem;
+          const hasReactions = msg.reactions && Object.keys(msg.reactions).length > 0;
+
+          return (
+          <div key={msg.clientId || msg.id} id={`room-msg-${msg.id}`} className={`flex gap-3 group ${msg.pending ? "opacity-70" : ""} transition-all duration-300`}>
             <div className="relative shrink-0">
               <div
-                className="rounded-xl bg-cover bg-center p-0.5"
+                className="rounded-xl bg-cover bg-center p-0.5 cursor-pointer transition hover:scale-105"
                 style={msg.avatarFrameUrl ? { backgroundImage: `url(${msg.avatarFrameUrl})` } : undefined}
+                onClick={() => onOpenProfile?.(msg.user)}
               >
                 <Avatar className="h-9 w-9 rounded-xl border border-white shadow-sm">
                   <AvatarImage src={msg.avatar} />
@@ -555,7 +797,12 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
             </div>
             <div className="min-w-0 flex-1" dir="ltr">
               <div className="mb-1 flex flex-wrap items-center gap-2">
-                <h4 className={`text-[11px] font-black ${msg.color}`}>{msg.user}</h4>
+                <h4 
+                  className={`text-[11px] font-black cursor-pointer hover:underline ${msg.color}`}
+                  onClick={() => onOpenProfile?.(msg.user)}
+                >
+                  {msg.user}
+                </h4>
                 <img src={getCountryFlagSrc(msg.countryCode)} alt={msg.countryCode} className="h-3 w-4 rounded-sm object-cover" />
                 {msg.giftIconUrl && <img src={msg.giftIconUrl} alt="gift" className="h-4 w-4 rounded object-cover" />}
                 {msg.isOwner && <Badge className="h-3.5 rounded-sm border-none bg-blue-600 px-1 text-[8px] font-black text-white">مالك الموقع</Badge>}
@@ -563,39 +810,137 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
                   {msg.pending ? "جار الإرسال" : msg.failed ? "فشل" : formatMessageTime(msg.createdAt)}
                 </span>
               </div>
-              <div className={`relative inline-block max-w-[90%] rounded-2xl rounded-tl-none border p-2.5 shadow-sm ${getMessageBubbleClass(msg)}`}>
-                <p className="break-words text-xs font-bold leading-relaxed">{msg.text}</p>
-                {msg.isSystem && msg.systemType === "transition" && msg.targetRoom && (
-                  <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200/50 bg-white/40 dark:border-slate-700/50 dark:bg-slate-900/40 p-3 shadow-md backdrop-blur-md transition-all duration-300 hover:shadow-lg hover:bg-white/60 dark:hover:bg-slate-900/60 flex items-center justify-between gap-4 max-w-[280px]">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar className="h-10 w-10 rounded-xl border border-white dark:border-slate-800 shadow-sm shrink-0">
-                        <AvatarImage src={msg.targetRoom.image} />
-                        <AvatarFallback>{msg.targetRoom.name?.[0] || "غ"}</AvatarFallback>
-                      </Avatar>
-                      <div className="text-left min-w-0">
-                        <h5 className="text-[11px] font-black text-slate-800 dark:text-white truncate leading-tight">{msg.targetRoom.name}</h5>
-                        <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500">غرفة محادثة نشطة</span>
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() => onSelectRoom?.({
-                        id: msg.targetRoom?.id,
-                        name: msg.targetRoom?.name,
-                        image: msg.targetRoom?.image,
-                        owner: "إدارة الموقع"
-                      })}
-                      className="h-7 rounded-lg bg-primary hover:bg-primary/95 text-[9px] font-black text-white px-3 flex items-center gap-1 shadow-md shadow-primary/10 transition-all active:scale-95 shrink-0"
+
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`relative inline-block max-w-[90%] rounded-2xl rounded-tl-none border p-2.5 shadow-sm ${getMessageBubbleClass(msg)}`}>
+                  {/* اقتباس الرد */}
+                  {msg.replyToId && (
+                    <div
+                      className="mb-2 px-3 py-2 rounded-xl border-l-4 border-primary/40 bg-muted/30 cursor-pointer hover:bg-muted/50 transition"
+                      onClick={() => scrollToMessage(msg.replyToId!)}
                     >
-                      <span>انضمام</span>
-                    </Button>
+                      <p className="text-[9px] font-bold text-primary">
+                        {msg.replyToSenderName || "عضو"}
+                      </p>
+                      <p className="text-[9px] text-muted-foreground truncate max-w-[200px]">
+                        {msg.replyToText || "..."}
+                      </p>
+                    </div>
+                  )}
+
+                  <p className="break-words text-xs font-bold leading-relaxed">{msg.text}</p>
+                  {!isSystem && findYouTubeLinks(msg.text).map((link) => (
+                    <YouTubePreviewCard
+                      key={link}
+                      url={link}
+                      onPlay={(embedUrl) => setActiveYouTubeEmbedUrl(embedUrl)}
+                    />
+                  ))}
+                  {msg.isSystem && msg.systemType === "transition" && msg.targetRoom && (
+                    <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200/50 bg-white/40 dark:border-slate-700/50 dark:bg-slate-900/40 p-3 shadow-md backdrop-blur-md transition-all duration-300 hover:shadow-lg hover:bg-white/60 dark:hover:bg-slate-900/60 flex items-center justify-between gap-4 max-w-[280px]">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar className="h-10 w-10 rounded-xl border border-white dark:border-slate-800 shadow-sm shrink-0">
+                          <AvatarImage src={msg.targetRoom.image} />
+                          <AvatarFallback>{msg.targetRoom.name?.[0] || "غ"}</AvatarFallback>
+                        </Avatar>
+                        <div className="text-left min-w-0">
+                          <h5 className="text-[11px] font-black text-slate-800 dark:text-white truncate leading-tight">{msg.targetRoom.name}</h5>
+                          <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500">غرفة محادثة نشطة</span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => onSelectRoom?.({
+                          id: msg.targetRoom?.id,
+                          name: msg.targetRoom?.name,
+                          image: msg.targetRoom?.image,
+                          owner: "إدارة الموقع"
+                        })}
+                        className="h-7 rounded-lg bg-primary hover:bg-primary/95 text-[9px] font-black text-white px-3 flex items-center gap-1 shadow-md shadow-primary/10 transition-all active:scale-95 shrink-0"
+                      >
+                        <span>انضمام</span>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* أزرار التفاعل والرد */}
+                {!isSystem && !msg.pending && !msg.failed && (
+                  <div className="relative flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity" data-msg-actions>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setActiveReactionMsgId(activeReactionMsgId === msg.id ? null : msg.id); }}
+                      className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition active:scale-95"
+                      title="تفاعل"
+                    >
+                      <SmilePlus size={13} className="text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setReplyToMsg(msg); }}
+                      className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition active:scale-95"
+                      title="رد"
+                    >
+                      <Reply size={13} className="text-muted-foreground" />
+                    </button>
+
+                    {/* قائمة اختيار التفاعل */}
+                    {activeReactionMsgId === msg.id && (
+                      <div ref={reactionPickerRef} className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50">
+                        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-border animate-in fade-in zoom-in-95 duration-100">
+                          {REACTIONS_CONFIG.map(({ type, emoji, label }) => (
+                            <button
+                              key={type}
+                              onClick={() => handleReact(msg.id, type)}
+                              className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-muted transition-all hover:scale-125 active:scale-95"
+                              title={label}
+                            >
+                              <span className="text-lg leading-none">{emoji}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* عرض التفاعل */}
+              {hasReactions && !isSystem && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {(() => {
+                    const counts: Partial<Record<ReactionType, number>> = {};
+                    let myReaction: ReactionType | null = null;
+                    for (const [, rt] of Object.entries(msg.reactions || {})) {
+                      counts[rt] = (counts[rt] || 0) + 1;
+                    }
+                    const myUserId = String(currentUser?.id || currentUser?.name || "");
+                    if (msg.reactions?.[myUserId]) myReaction = msg.reactions[myUserId];
+                    return (Object.entries(counts) as [ReactionType, number][]).map(([type, count]) => {
+                      const cfg = REACTIONS_CONFIG.find(r => r.type === type);
+                      if (!cfg) return null;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => handleReact(msg.id, type)}
+                          className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold transition-all hover:scale-110 ${
+                            myReaction === type
+                              ? "bg-primary/20 border border-primary/40"
+                              : "bg-muted hover:bg-muted/80 border border-transparent"
+                          }`}
+                          title={cfg.label}
+                        >
+                          <span className="text-sm leading-none">{cfg.emoji}</span>
+                          <span className={myReaction === type ? "text-primary" : "text-muted-foreground"}>{count}</span>
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {/* مؤشر الكتابة */}
         {typingUsers.length > 0 && (
@@ -610,7 +955,12 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false }: any) => {
         )}
       </div>
 
-      <ChatInputArea roomId={roomId} onSendMessage={handleSendMessage} />
+      <ChatInputArea
+        roomId={roomId}
+        onSendMessage={handleSendMessage}
+        replyToMsg={replyToMsg}
+        onCancelReply={() => setReplyToMsg(null)}
+      />
     </div>
   );
 };

@@ -317,10 +317,33 @@ export async function runAutoMigrations() {
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "post_id" uuid REFERENCES "wall_posts"("id") ON DELETE CASCADE,
         "author_id" varchar(255) REFERENCES "users"("id") ON DELETE CASCADE,
+        "parent_id" uuid REFERENCES "wall_comments"("id") ON DELETE CASCADE,
         "body" text,
         "created_at" timestamptz DEFAULT now() NOT NULL
       );
     `);
+    // إضافة parent_id إذا كان الجدول موجوداً مسبقاً بدونه
+    try { await client.query(`ALTER TABLE "wall_comments" ADD COLUMN IF NOT EXISTS "parent_id" uuid REFERENCES "wall_comments"("id") ON DELETE CASCADE`); } catch (_) {}
+    await client.query(`CREATE INDEX IF NOT EXISTS "wall_comments_post_idx" ON "wall_comments" ("post_id")`);
+    await client.query(`CREATE INDEX IF NOT EXISTS "wall_comments_parent_idx" ON "wall_comments" ("parent_id")`);
+
+    // ----- ترحيل التعليقات القديمة من bar_comments إلى wall_comments -----
+    // إضافة أعمدة parent_id و author_id إلى جدول bar_comments (legacy)
+    try { await client.query(`ALTER TABLE "bar_comments" ADD COLUMN IF NOT EXISTS "parent_id" integer`); } catch (_) {}
+    try { await client.query(`ALTER TABLE "bar_comments" ADD COLUMN IF NOT EXISTS "author_id" varchar(255)`); } catch (_) {}
+
+    // إضافة عمود media_urls لتخزين عدة صور/فيديو في المنشورات
+    try { await client.query(`ALTER TABLE "bars" ADD COLUMN IF NOT EXISTS "media_urls" text`); } catch (_) {}
+    // تعبئة author_id من جدول users (حيثما أمكن)
+    try {
+      await client.query(`
+        UPDATE "bar_comments" bc
+        SET "author_id" = u.id
+        FROM "users" u
+        WHERE bc.author_id IS NULL
+          AND (u.username = bc.author_topic OR u.topic = bc.author_topic)
+      `);
+    } catch (_) {}
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS "wall_post_likes" (
@@ -329,6 +352,27 @@ export async function runAutoMigrations() {
         "created_at" timestamptz DEFAULT now() NOT NULL,
         PRIMARY KEY ("post_id", "user_id")
       );
+    `);
+
+    // ----- جدول الإعجابات للـ wall posts (legacy bars) -----
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "bars_likes" (
+        "bar_id" integer NOT NULL,
+        "user_id" varchar(255) NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("bar_id", "user_id")
+      );
+      CREATE INDEX IF NOT EXISTS "bars_likes_bar_idx" ON "bars_likes" ("bar_id");
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "bar_comment_likes" (
+        "comment_id" bigint NOT NULL,
+        "user_id" varchar(255) NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("comment_id", "user_id")
+      );
+      CREATE INDEX IF NOT EXISTS "bar_comment_likes_comment_idx" ON "bar_comment_likes" ("comment_id");
     `);
 
     await client.query(`
@@ -372,6 +416,239 @@ export async function runAutoMigrations() {
       );
     `);
 
+    // --- STORIES ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "stories" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "author_id" varchar(255) NOT NULL,
+        "media_url" text,
+        "media_type" varchar(20) DEFAULT 'text' NOT NULL,
+        "caption" text,
+        "link_url" text,
+        "bg_color" varchar(80) DEFAULT 'linear-gradient(135deg,#667eea,#764ba2)' NOT NULL,
+        "text_color" varchar(20) DEFAULT '#ffffff' NOT NULL,
+        "is_active" boolean DEFAULT true NOT NULL,
+        "view_count" integer DEFAULT 0 NOT NULL,
+        "like_count" integer DEFAULT 0 NOT NULL,
+        "gift_count" integer DEFAULT 0 NOT NULL,
+        "share_count" integer DEFAULT 0 NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        "expires_at" timestamptz NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "stories_author_idx" ON "stories" ("author_id");
+      CREATE INDEX IF NOT EXISTS "stories_expires_idx" ON "stories" ("expires_at");
+      CREATE INDEX IF NOT EXISTS "stories_active_idx" ON "stories" ("is_active");
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "story_views" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "story_id" uuid NOT NULL REFERENCES "stories"("id") ON DELETE CASCADE,
+        "viewer_id" varchar(255) NOT NULL,
+        "viewer_name" varchar(255),
+        "viewed_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "story_views_unique_idx" ON "story_views" ("story_id", "viewer_id");
+      CREATE INDEX IF NOT EXISTS "story_views_story_idx" ON "story_views" ("story_id");
+    `);
+
+    try { await client.query(`ALTER TABLE "story_views" ADD COLUMN IF NOT EXISTS "viewer_name" varchar(255)`); } catch (_) {}
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "story_reactions" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "story_id" uuid NOT NULL REFERENCES "stories"("id") ON DELETE CASCADE,
+        "user_id" varchar(255) NOT NULL,
+        "user_name" varchar(255),
+        "type" varchar(20) DEFAULT 'like' NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "story_reactions_unique_idx" ON "story_reactions" ("story_id", "user_id");
+      CREATE INDEX IF NOT EXISTS "story_reactions_story_idx" ON "story_reactions" ("story_id");
+    `);
+
+    try { await client.query(`ALTER TABLE "story_reactions" ADD COLUMN IF NOT EXISTS "user_name" varchar(255)`); } catch (_) {}
+
+    // --- تجهيز بيانات الأدمن للقصص عند أول تشغيل ---
+    await client.query(`
+      INSERT INTO "site_settings" ("key", "value")
+      VALUES ('stories_enabled', 'true'::jsonb)
+      ON CONFLICT ("key") DO NOTHING;
+    `);
+
+    // --- GIFTS ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "gift_catalog" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(120) NOT NULL,
+        "icon" varchar(20) NOT NULL,
+        "price" integer NOT NULL,
+        "category" varchar(40) DEFAULT 'common' NOT NULL,
+        "is_active" boolean DEFAULT true NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+    `);
+
+    // بذر الهدايا الافتراضية
+    await client.query(`
+      INSERT INTO "gift_catalog" ("name", "icon", "price", "category") VALUES
+        ('وردة حمراء', '🌹', 10, 'common'),
+        ('قلب ذهبي', '💖', 50, 'rare'),
+        ('سيارة رياضية', '🏎️', 500, 'epic'),
+        ('طائرة خاصة', '🛩️', 2000, 'legendary'),
+        ('تاج الملك', '👑', 5000, 'legendary'),
+        ('خاتم ألماس', '💎', 1000, 'epic')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "gift_transactions" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "gift_id" uuid NOT NULL REFERENCES "gift_catalog"("id") ON DELETE CASCADE,
+        "sender_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "receiver_id" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+        "quantity" integer DEFAULT 1 NOT NULL,
+        "total_coins" integer NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "gift_transactions_sender_idx" ON "gift_transactions" ("sender_id");
+      CREATE INDEX IF NOT EXISTS "gift_transactions_receiver_idx" ON "gift_transactions" ("receiver_id");
+      CREATE INDEX IF NOT EXISTS "gift_transactions_created_idx" ON "gift_transactions" ("created_at");
+    `);
+
+    // --- PRIVATE MESSAGES ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "private_messages" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "conversation_id" varchar(512) NOT NULL,
+        "sender_id" varchar(255) NOT NULL,
+        "receiver_id" varchar(255) NOT NULL,
+        "body" text NOT NULL,
+        "read_at" timestamptz,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "pm_conversation_idx" ON "private_messages" ("conversation_id");
+      CREATE INDEX IF NOT EXISTS "pm_sender_idx" ON "private_messages" ("sender_id");
+      CREATE INDEX IF NOT EXISTS "pm_receiver_idx" ON "private_messages" ("receiver_id");
+      CREATE INDEX IF NOT EXISTS "pm_created_idx" ON "private_messages" ("created_at");
+    `);
+
+    // --- INTERNAL MAIL ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "internal_mail" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "sender_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "recipient_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "subject" varchar(255) NOT NULL,
+        "body" text NOT NULL,
+        "read_at" timestamptz,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "internal_mail_sender_idx" ON "internal_mail" ("sender_id");
+      CREATE INDEX IF NOT EXISTS "internal_mail_recipient_idx" ON "internal_mail" ("recipient_id");
+      CREATE INDEX IF NOT EXISTS "internal_mail_created_idx" ON "internal_mail" ("created_at");
+    `);
+
+    // --- NOTIFICATIONS ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "notifications" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "actor_id" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+        "type" varchar(40) NOT NULL,
+        "entity_type" varchar(40) NOT NULL,
+        "entity_id" varchar(128),
+        "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+        "read_at" timestamptz,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "notifications_user_idx" ON "notifications" ("user_id");
+      CREATE INDEX IF NOT EXISTS "notifications_read_idx" ON "notifications" ("user_id", "read_at");
+      CREATE INDEX IF NOT EXISTS "notifications_created_idx" ON "notifications" ("created_at");
+    `);
+
+    // --- FILE MANAGER ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "files" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "name" varchar(255) NOT NULL,
+        "folder_path" text DEFAULT '/' NOT NULL,
+        "is_folder" boolean DEFAULT false NOT NULL,
+        "mime_type" varchar(80),
+        "size" integer DEFAULT 0 NOT NULL,
+        "storage_path" text,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        "updated_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "files_user_idx" ON "files" ("user_id");
+      CREATE INDEX IF NOT EXISTS "files_folder_idx" ON "files" ("folder_path");
+    `);
+
+    // ========== فهارس الأداء الحرجة ==========
+    console.log("[Migration] جاري إنشاء فهارس الأداء...");
+
+    const safeIndex = async (name: string, sql: string) => {
+      try { await client.query(sql); }
+      catch (e: any) { console.warn(`[Migration] تخطي الفهرس ${name}: ${e.message}`); }
+    };
+
+    // --- فهارس التعليقات (الأكثر استخداماً) ---
+    await safeIndex("bar_comments_bar_id_idx", `CREATE INDEX IF NOT EXISTS "bar_comments_bar_id_idx" ON "bar_comments" ("bar_id", "id" ASC);`);
+
+    // --- فهارس المستخدمين (تُستخدم في كل مكان) ---
+    await safeIndex("users_uid_idx", `CREATE INDEX IF NOT EXISTS "users_uid_idx" ON "users" ("uid");`);
+    await safeIndex("users_idreg_idx", `CREATE INDEX IF NOT EXISTS "users_idreg_idx" ON "users" ("idreg");`);
+    await safeIndex("users_username_lower_idx", `CREATE INDEX IF NOT EXISTS "users_username_lower_idx" ON "users" (LOWER("username"));`);
+    await safeIndex("users_topic_lower_idx", `CREATE INDEX IF NOT EXISTS "users_topic_lower_idx" ON "users" (LOWER("topic"));`);
+
+    // --- فهارس الرسائل الخاصة ---
+    await safeIndex("pm_conv_created_idx", `CREATE INDEX IF NOT EXISTS "pm_conv_created_idx" ON "private_messages" ("conversation_id", "created_at" DESC);`);
+    await safeIndex("pm_receiver_read_idx", `CREATE INDEX IF NOT EXISTS "pm_receiver_read_idx" ON "private_messages" ("receiver_id", "read_at") WHERE "read_at" IS NULL;`);
+    await safeIndex("pm_conv_receiver_read_idx", `CREATE INDEX IF NOT EXISTS "pm_conv_receiver_read_idx" ON "private_messages" ("conversation_id", "receiver_id", "read_at");`);
+
+    // --- فهارس البريد الداخلي ---
+    await safeIndex("mail_recipient_created_idx", `CREATE INDEX IF NOT EXISTS "mail_recipient_created_idx" ON "internal_mail" ("recipient_id", "created_at" DESC);`);
+    await safeIndex("mail_sender_created_idx", `CREATE INDEX IF NOT EXISTS "mail_sender_created_idx" ON "internal_mail" ("sender_id", "created_at" DESC);`);
+    await safeIndex("mail_recipient_read_idx", `CREATE INDEX IF NOT EXISTS "mail_recipient_read_idx" ON "internal_mail" ("recipient_id", "read_at") WHERE "read_at" IS NULL;`);
+
+    // --- فهارس الإشعارات ---
+    await safeIndex("notifications_user_created_idx", `CREATE INDEX IF NOT EXISTS "notifications_user_created_idx" ON "notifications" ("user_id", "created_at" DESC);`);
+
+    // --- فهارس الملفات ---
+    await safeIndex("files_user_folder_idx", `CREATE INDEX IF NOT EXISTS "files_user_folder_idx" ON "files" ("user_id", "folder_path", "is_folder", "name");`);
+
+    // --- فهارس القصص ---
+    await safeIndex("stories_active_expires_created_idx", `CREATE INDEX IF NOT EXISTS "stories_active_expires_created_idx" ON "stories" ("is_active", "expires_at", "created_at" DESC) WHERE "is_active" = true;`);
+    await safeIndex("stories_author_active_created_idx", `CREATE INDEX IF NOT EXISTS "stories_author_active_created_idx" ON "stories" ("author_id", "is_active", "created_at" DESC) WHERE "is_active" = true;`);
+
+    // --- فهارس الصلاحيات ---
+    await safeIndex("ura_user_idreg_idx", `CREATE INDEX IF NOT EXISTS "ura_user_idreg_idx" ON "user_role_assignments" ("user_id");`);
+
+    // --- فهارس لوحة التحكم ---
+    await safeIndex("moderation_events_created_idx", `CREATE INDEX IF NOT EXISTS "moderation_events_created_idx" ON "moderation_events" ("created_at" DESC);`);
+    await safeIndex("admin_audit_logs_created_idx", `CREATE INDEX IF NOT EXISTS "admin_audit_logs_created_idx" ON "admin_audit_logs" ("created_at" DESC);`);
+    await safeIndex("moderation_bans_created_idx", `CREATE INDEX IF NOT EXISTS "moderation_bans_created_idx" ON "moderation_bans" ("created_at" DESC);`);
+    await safeIndex("moderation_bans_active_expires_idx", `CREATE INDEX IF NOT EXISTS "moderation_bans_active_expires_idx" ON "moderation_bans" ("is_active", "expires_at") WHERE "is_active" = true;`);
+
+    // --- فهارس سجلات الوصول ---
+    await safeIndex("logs_time_idx", `CREATE INDEX IF NOT EXISTS "logs_time_idx" ON "logs" ("time" DESC);`);
+    await safeIndex("logs_username_idx", `CREATE INDEX IF NOT EXISTS "logs_username_idx" ON "logs" ("username");`);
+
+    // --- فهارس الهدايا ---
+    await safeIndex("gift_catalog_active_price_idx", `CREATE INDEX IF NOT EXISTS "gift_catalog_active_price_idx" ON "gift_catalog" ("is_active", "price") WHERE "is_active" = true;`);
+
+    // --- فهارس الجلسات ---
+    await safeIndex("tokens_token_expires_idx", `CREATE INDEX IF NOT EXISTS "tokens_token_expires_idx" ON "tokens" ("token", "expires_at");`);
+
+    // --- فهارس البوتات ---
+    await safeIndex("bots_idreg_idx", `CREATE INDEX IF NOT EXISTS "bots_idreg_idx" ON "bots" ("idreg");`);
+
+    // --- فهارس إعجابات التعليقات ---
+    await safeIndex("bar_comment_likes_comment_idx", `CREATE INDEX IF NOT EXISTS "bar_comment_likes_comment_idx" ON "bar_comment_likes" ("comment_id");`);
+
+    console.log("[Migration] ✅ تم إنشاء فهارس الأداء بنجاح");
+
     console.log("[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح");
   } catch (error) {
     console.error("[Migration] ❌ خطأ أثناء تشغيل الـ migrations:", error);
@@ -404,6 +681,15 @@ export async function verifyDatabaseSchema() {
     "roles",
     "role_permissions",
     "user_role_assignments",
+    "stories",
+    "story_views",
+    "story_reactions",
+    "gift_catalog",
+    "gift_transactions",
+    "private_messages",
+    "internal_mail",
+    "files",
+    "notifications",
   ];
 
   const client = await dbPool.connect();

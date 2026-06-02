@@ -30,8 +30,44 @@ const PresenceEngine = () => {
     isLoadingWallPosts,
     setWallPosts,
     addWallPost,
+    removeWallPost,
+    resolveWallPostId,
     updateWallAuthorProfile,
     setLoadingWallPosts,
+
+    // Notifications state & actions
+    notifications,
+    isNotificationsLoaded,
+    setNotifications,
+    addNotification,
+    markNotificationRead,
+    setLoadingNotifications,
+    setIsNotificationsLoaded,
+
+    // Mail state & actions
+    inbox,
+    outbox,
+    isMailLoaded,
+    setMail,
+    addMailToInbox,
+    addMailToOutbox,
+    markMailRead,
+    deleteMail,
+    setLoadingMail,
+    setIsMailLoaded,
+
+    // PM state & actions
+    setPmUnreadCount,
+
+    // Wall Comments & Likes actions
+    addComment,
+    removeComment,
+    toggleLike,
+    updateLikeCount,
+    updateCommentCount,
+    setLikedPosts,
+    updateCommentLikeCount,
+    setHasNewWallPosts,
 
     setPresence,
     updateCounter
@@ -40,6 +76,8 @@ const PresenceEngine = () => {
   const isOnlineUsersLoadedRef = useRef(isOnlineUsersLoaded);
   const isRoomsLoadedRef = useRef(isRoomsLoaded);
   const isWallLoadedRef = useRef(isWallLoaded);
+  const isNotificationsLoadedRef = useRef(isNotificationsLoaded);
+  const isMailLoadedRef = useRef(isMailLoaded);
 
   useEffect(() => {
     isOnlineUsersLoadedRef.current = isOnlineUsersLoaded;
@@ -52,6 +90,14 @@ const PresenceEngine = () => {
   useEffect(() => {
     isWallLoadedRef.current = isWallLoaded;
   }, [isWallLoaded]);
+
+  useEffect(() => {
+    isNotificationsLoadedRef.current = isNotificationsLoaded;
+  }, [isNotificationsLoaded]);
+
+  useEffect(() => {
+    isMailLoadedRef.current = isMailLoaded;
+  }, [isMailLoaded]);
 
   // ===== Initial Fetch Logic =====
   const fetchOnlineUsers = useCallback(() => {
@@ -96,6 +142,29 @@ const PresenceEngine = () => {
       const data = await res.json();
       if (res.ok && data.success) {
         setWallPosts(data.posts || []);
+        
+        // جلب الإعجابات التي قام بها المستخدم الحالي لتفعيل زر الإعجاب الأحمر
+        try {
+          const rawUser = localStorage.getItem("user");
+          if (rawUser) {
+            const user = JSON.parse(rawUser);
+            const postIds = (data.posts || []).map((p: any) => parseInt(p.id, 10)).filter(Boolean);
+            if (postIds.length > 0) {
+              const likesRes = await fetch("/api/wall/posts/likes-status", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId: user.id, postIds })
+              });
+              const likesData = await likesRes.json();
+              if (likesRes.ok && likesData.success && likesData.likedPostIds) {
+                setLikedPosts(likesData.likedPostIds);
+              }
+            }
+          }
+        } catch (likeErr) {
+          console.error("Failed to fetch initial wall likes status:", likeErr);
+        }
+
       } else {
         setLoadingWallPosts(false);
       }
@@ -103,15 +172,54 @@ const PresenceEngine = () => {
       console.error("Failed to load wall posts in PresenceEngine:", err);
       setLoadingWallPosts(false);
     }
-  }, [setWallPosts, setLoadingWallPosts]);
+  }, [setWallPosts, setLoadingWallPosts, setLikedPosts]);
+
+  const fetchNotifications = useCallback(() => {
+    if (isNotificationsLoadedRef.current) return;
+
+    setLoadingNotifications(true);
+    const socket = getSocket();
+    socket.emit("notifications:get", { limit: 30 }, (res: any) => {
+      if (res?.success) {
+        setNotifications(res.notifications || []);
+      } else {
+        setLoadingNotifications(false);
+      }
+    });
+  }, [setNotifications, setLoadingNotifications]);
+
+  const fetchMail = useCallback(() => {
+    if (isMailLoadedRef.current) return;
+
+    setLoadingMail(true);
+    const socket = getSocket();
+    
+    // جلب الوارد
+    socket.emit("mail:get_inbox", (inboxRes: any) => {
+      if (inboxRes?.success) {
+        // جلب الصادر
+        socket.emit("mail:get_outbox", (outboxRes: any) => {
+          if (outboxRes?.success) {
+            setMail(inboxRes.inbox || [], outboxRes.outbox || []);
+          } else {
+            setLoadingMail(false);
+          }
+        });
+      } else {
+        setLoadingMail(false);
+      }
+    });
+  }, [setMail, setLoadingMail]);
 
   // Load all initial data once
   useEffect(() => {
     const socket = getSocket();
     
     const onConnect = () => {
-      // Fetch online users immediately when socket connects (or reconnects)
+      // Fetch online users and other socket-based data on connect
       fetchOnlineUsers();
+      fetchNotifications();
+      fetchMail();
     };
 
     socket.on("connect", onConnect);
@@ -122,10 +230,24 @@ const PresenceEngine = () => {
     fetchRooms();
     fetchWallPosts();
 
+    // جلب عدد الرسائل غير المقروءة
+    try {
+      const rawUser = localStorage.getItem("user");
+      if (rawUser) {
+        const userId = JSON.parse(rawUser).id;
+        fetch(`/api/pm/unread?userId=${userId}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) setPmUnreadCount(data.count);
+          })
+          .catch(() => {});
+      }
+    } catch {}
+
     return () => {
       socket.off("connect", onConnect);
     };
-  }, [fetchOnlineUsers, fetchRooms, fetchWallPosts]);
+  }, [fetchOnlineUsers, fetchRooms, fetchWallPosts, fetchNotifications, fetchMail, setPmUnreadCount]);
 
   // ===== Socket Event Listeners =====
   useEffect(() => {
@@ -205,7 +327,7 @@ const PresenceEngine = () => {
     const onUserProfileUpdated = (data: any) => {
       if (!data?.userId) return;
 
-      // Update online user
+      // Update online user (including display name)
       mergeOnlineUser({
         id: data.userId,
         username: data.username,
@@ -215,10 +337,13 @@ const PresenceEngine = () => {
         statusMsg: data.profileMsg,
       });
 
-      // Update wall post author avatar
-      if (data.avatar || data.avatarUrl) {
-        updateWallAuthorProfile(data.userId, data.username, data.avatar || data.avatarUrl);
-      }
+      // Update wall post author (avatar + display name)
+      updateWallAuthorProfile(
+        data.userId,
+        data.username,
+        data.avatar || data.avatarUrl,
+        data.previousUsername
+      );
     };
 
     const onRoomCountUpdate = (data: { roomId: string; memberCount: number }) => {
@@ -228,6 +353,118 @@ const PresenceEngine = () => {
     const onWallPostCreated = (post: any) => {
       if (post) {
         addWallPost(post);
+        // إشارة وجود منشور جديد
+        let currentUserId = "";
+        try {
+          const rawUser = localStorage.getItem("user");
+          if (rawUser) currentUserId = JSON.parse(rawUser).id;
+        } catch {}
+        if (String(post.author?.id) !== String(currentUserId)) {
+          setHasNewWallPosts(true);
+        }
+      }
+    };
+
+    const onWallPostResolved = (data: { tempId: string; realId: string }) => {
+      if (data) {
+        resolveWallPostId(data.tempId, data.realId);
+      }
+    };
+
+    const onWallPostFailed = (data: { tempId: string }) => {
+      if (data) {
+        removeWallPost(data.tempId);
+      }
+    };
+
+    // --- أحداث الحائط اللحظية الجديدة ---
+    const onWallLikeToggled = (data: { postId: string; liked: boolean; likeCount: number; userId: string }) => {
+      if (!data) return;
+
+      // تحديث العداد لجميع المتواجدين (بما فيهم صاحب الإعجاب للتأكد من التزامن)
+      updateLikeCount(data.postId, data.likeCount);
+
+      // لا نُحدّث حالة الإعجاب للمستخدم الحالي — تم تحديثها فوراً بـ optimistic
+    };
+
+    const onWallCommentAdded = (data: { postId: string; comment: any; commentCount: number }) => {
+      if (!data) return;
+      addComment(data.postId, data.comment);
+      updateCommentCount(data.postId, data.commentCount);
+    };
+
+    const onWallCommentDeleted = (data: { postId: string; commentId: string; commentCount: number }) => {
+      if (!data) return;
+      removeComment(data.postId, data.commentId);
+      updateCommentCount(data.postId, data.commentCount);
+    };
+
+    const onWallCommentLikeToggled = (data: { commentId: string; liked: boolean; likeCount: number; userId: string }) => {
+      if (!data) return;
+      updateCommentLikeCount(data.commentId, data.likeCount);
+    };
+
+    // --- أحداث الإشعارات والبريد اللحظية الجديدة ---
+    const onNotificationReceived = (notification: any) => {
+      if (notification) {
+        let currentUserId = "";
+        try {
+          const rawUser = localStorage.getItem("user");
+          if (rawUser) currentUserId = JSON.parse(rawUser).id;
+        } catch {}
+
+        if (String(notification.userId) === String(currentUserId)) {
+          addNotification(notification);
+        }
+      }
+    };
+
+    const onNotificationUnreadUpdate = (data: { userId: string; count: number }) => {
+      let currentUserId = "";
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) currentUserId = JSON.parse(rawUser).id;
+      } catch {}
+
+      if (data && String(data.userId) === String(currentUserId)) {
+        useRealtimeStore.setState({ notificationUnreadCount: data.count });
+      }
+    };
+
+    const onMailReceived = (mail: any) => {
+      if (!mail) return;
+      
+      let currentUserId = "";
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) currentUserId = JSON.parse(rawUser).id;
+      } catch {}
+
+      // التحقق مما إذا كان المستخدم الحالي هو المستلم أم المرسل
+      if (String(mail.recipientId) === String(currentUserId)) {
+        addMailToInbox(mail);
+      } else if (String(mail.senderId) === String(currentUserId)) {
+        addMailToOutbox(mail);
+      }
+    };
+
+    // --- أحداث الرسائل الخاصة ---
+    const onPrivateMessage = (msg: any) => {
+      if (!msg) return;
+      let currentUserId = "";
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) currentUserId = JSON.parse(rawUser).id;
+      } catch {}
+
+      // إذا كان المستخدم الحالي هو المستلم → جلب عدد غير المقروءة
+      if (String(msg.receiverId) === String(currentUserId)) {
+        fetch(`/api/pm/unread?userId=${currentUserId}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) setPmUnreadCount(data.count);
+          })
+          .catch(() => {});
       }
     };
 
@@ -242,6 +479,18 @@ const PresenceEngine = () => {
     socket.on("user_profile_updated", onUserProfileUpdated);
     socket.on("room_count_update", onRoomCountUpdate);
     socket.on("wall_post_created", onWallPostCreated);
+    socket.on("wall_post_resolved", onWallPostResolved);
+    socket.on("wall_post_failed", onWallPostFailed);
+    
+    // Listeners الجديدة
+    socket.on("wall_like_toggled", onWallLikeToggled);
+    socket.on("wall_comment_added", onWallCommentAdded);
+    socket.on("wall_comment_deleted", onWallCommentDeleted);
+    socket.on("wall_comment_like_toggled", onWallCommentLikeToggled);
+    socket.on("notification", onNotificationReceived);
+    socket.on("notification_unread", onNotificationUnreadUpdate);
+    socket.on("internal_mail", onMailReceived);
+    socket.on("private_message", onPrivateMessage);
 
     // Idle Detection
     let idleTimer: NodeJS.Timeout;
@@ -270,12 +519,42 @@ const PresenceEngine = () => {
       socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("room_count_update", onRoomCountUpdate);
       socket.off("wall_post_created", onWallPostCreated);
+      socket.off("wall_post_resolved", onWallPostResolved);
+      socket.off("wall_post_failed", onWallPostFailed);
+      
+      // إزالة listeners الجديدة
+      socket.off("wall_like_toggled", onWallLikeToggled);
+      socket.off("wall_comment_added", onWallCommentAdded);
+      socket.off("wall_comment_deleted", onWallCommentDeleted);
+      socket.off("wall_comment_like_toggled", onWallCommentLikeToggled);
+      socket.off("notification", onNotificationReceived);
+      socket.off("notification_unread", onNotificationUnreadUpdate);
+      socket.off("internal_mail", onMailReceived);
+      socket.off("private_message", onPrivateMessage);
       
       window.removeEventListener('mousemove', resetTimer);
       window.removeEventListener('keydown', resetTimer);
       clearTimeout(idleTimer);
     };
-  }, [setPresence, updateCounter, setOnlineCount, mergeOnlineUser, removeOnlineUser, updateWallAuthorProfile, updateRoomMemberCount, addWallPost]);
+  }, [
+    setPresence, 
+    updateCounter, 
+    setOnlineCount, 
+    mergeOnlineUser, 
+    removeOnlineUser, 
+    updateWallAuthorProfile, 
+    updateRoomMemberCount, 
+    addWallPost,
+    updateLikeCount,
+    toggleLike,
+    addComment,
+    removeComment,
+    updateCommentCount,
+    addNotification,
+    addMailToInbox,
+    addMailToOutbox,
+    setPmUnreadCount
+  ]);
 
   return null; // Silent background engine
 };

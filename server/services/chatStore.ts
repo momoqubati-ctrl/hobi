@@ -15,11 +15,16 @@ export type ChatRoom = {
   locked: boolean;
 };
 
+export type RoomReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
+
+export const ROOM_REACTIONS: RoomReactionType[] = ["like", "love", "haha", "wow", "sad", "angry"];
+
 export type ChatMessage = {
   id: string;
   roomId: string;
   clientId?: string;
   user: string;
+  userId?: string;
   role: "guest" | "member" | "admin" | "bot" | "system";
   text: string;
   avatar: string;
@@ -30,11 +35,51 @@ export type ChatMessage = {
   color: string;
   isOwner?: boolean;
   isSystem?: boolean;
+  reactions?: Record<string, RoomReactionType>;
+  replyToId?: string;
+  replyToText?: string;
+  replyToSenderName?: string;
   createdAt: string;
 };
 
 // Room messages are intentionally transient: they are emitted live only and are not retained.
 const subscribersByRoom = new Map<string, Set<(message: ChatMessage) => void>>();
+
+// ─── مخزن رسائل الغرف في الذاكرة (للردود والتفاعل) ──────────────────────────
+const ROOM_MSG_CACHE_TTL = 30 * 60 * 1000; // 30 دقيقة
+const roomMessagesCache = new Map<string, Map<string, ChatMessage>>();
+
+const getRoomMsgMap = (roomId: string) => {
+  if (!roomMessagesCache.has(roomId)) {
+    roomMessagesCache.set(roomId, new Map());
+  }
+  return roomMessagesCache.get(roomId)!;
+};
+
+export const cacheRoomMessage = (msg: ChatMessage) => {
+  const map = getRoomMsgMap(msg.roomId);
+  map.set(msg.id, msg);
+  // تنظيف الرسائل القديمة
+  if (map.size > 200) {
+    const now = Date.now();
+    for (const [id, m] of map) {
+      if (now - new Date(m.createdAt).getTime() > ROOM_MSG_CACHE_TTL) {
+        map.delete(id);
+      }
+    }
+  }
+};
+
+export const getRoomMessage = (roomId: string, messageId: string): ChatMessage | undefined => {
+  return roomMessagesCache.get(roomId)?.get(messageId);
+};
+
+export const updateRoomMessageReactions = (roomId: string, messageId: string, reactions: Record<string, RoomReactionType>) => {
+  const msg = roomMessagesCache.get(roomId)?.get(messageId);
+  if (msg) {
+    msg.reactions = reactions;
+  }
+};
 const ROOM_CACHE_TTL_MS = 60_000;
 let cachedRooms: ChatRoom[] | null = null;
 let cachedRoomsAt = 0;
@@ -154,6 +199,7 @@ export const addMessage = (input: {
   roomId: string;
   clientId?: string;
   user?: string;
+  userId?: string;
   role?: ChatMessage["role"];
   countryCode?: string;
   avatar?: string;
@@ -162,6 +208,9 @@ export const addMessage = (input: {
   messageBubbleStyle?: string;
   text: string;
   isSystem?: boolean;
+  replyToId?: string;
+  replyToText?: string;
+  replyToSenderName?: string;
 }) => {
   // Keep room messages live-only: create the payload, emit it, and discard it.
   const message: ChatMessage = {
@@ -169,6 +218,7 @@ export const addMessage = (input: {
     roomId: input.roomId,
     clientId: input.clientId,
     user: input.user?.trim().slice(0, 80) || "زائر",
+    userId: input.userId,
     role: input.role ?? "guest",
     avatar: input.avatar?.trim().slice(0, 255) || "/pic.png",
     countryCode: String(input.countryCode || "SA").trim().toUpperCase().slice(0, 2) || "SA",
@@ -179,8 +229,15 @@ export const addMessage = (input: {
     color: input.role === "admin" ? "text-red-600" : "text-slate-700",
     isOwner: input.role === "admin",
     isSystem: input.isSystem || false,
+    reactions: {},
+    replyToId: input.replyToId || undefined,
+    replyToText: input.replyToText || undefined,
+    replyToSenderName: input.replyToSenderName || undefined,
     createdAt: new Date().toISOString(),
   };
+
+  // حفظ الرسالة في الذاكرة للردود والتفاعل
+  cacheRoomMessage(message);
 
   subscribersByRoom.get(input.roomId)?.forEach((callback) => callback(message));
 

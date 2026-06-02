@@ -29,6 +29,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +54,7 @@ const SettingsPanel = () => {
   const [newAvatar, setNewAvatar] = useState<string | null>(null);
   const [newCover, setNewCover] = useState<string | null>(null);
   const [newStatusMsg, setNewStatusMsg] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -94,28 +96,51 @@ const SettingsPanel = () => {
     setNewAvatar(null);
     setNewCover(null);
     setNewStatusMsg(currentUser?.profileMsg === "(عضو جديد)" || currentUser?.profileMsg === "( غير مسجل )" ? "" : currentUser?.profileMsg || "");
+    setNewDisplayName(currentUser?.name || "");
     setIsEditModalOpen(true);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'cover') => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'cover') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showError("حجم الصورة يجب أن لا يتجاوز 5 ميجابايت");
+    if (file.size > 10 * 1024 * 1024) {
+      showError("حجم الصورة يجب أن لا يتجاوز 10 ميجابايت");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      if (type === 'avatar') {
-        setNewAvatar(result);
-      } else {
-        setNewCover(result);
+    try {
+      const preset = type === 'avatar' ? 'avatar' : 'cover';
+      const { compressImage, COMPRESS_PRESETS, getCompressionSummary } = await import("@/lib/image-compress");
+      const result = await compressImage(file, COMPRESS_PRESETS[preset]);
+      
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (type === 'avatar') {
+          setNewAvatar(dataUrl);
+        } else {
+          setNewCover(dataUrl);
+        }
+      };
+      reader.readAsDataURL(result.file);
+
+      if (result.compressionRatio < 1) {
+        showSuccess(getCompressionSummary(result));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Fallback: use original file
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        if (type === 'avatar') {
+          setNewAvatar(result);
+        } else {
+          setNewCover(result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSaveChanges = async () => {
@@ -131,7 +156,8 @@ const SettingsPanel = () => {
         body: JSON.stringify({
           avatar: newAvatar,
           cover: newCover,
-          profileMsg: newStatusMsg
+          profileMsg: newStatusMsg,
+          displayName: newDisplayName.trim() || undefined
         })
       });
 
@@ -150,6 +176,9 @@ const SettingsPanel = () => {
             user.profileBannerUrl = data.updates.cover;
           }
           if (data.updates.profileMsg !== undefined) user.profileMsg = data.updates.profileMsg;
+          if (data.displayName) {
+            user.name = data.displayName;
+          }
           localStorage.setItem("user", JSON.stringify(user));
         }
         refreshSocketAuth();
@@ -157,6 +186,7 @@ const SettingsPanel = () => {
         // Emit update to other users via socket
         const socket = getSocket();
         socket.emit("profile_update", {
+          displayName: data.displayName,
           avatar: data.updates.avatar,
           avatarUrl: data.updates.avatar,
           cover: data.updates.cover,
@@ -383,6 +413,20 @@ const SettingsPanel = () => {
                   onChange={(e) => handleFileChange(e, 'avatar')}
                 />
               </div>
+            </div>
+
+            {/* Display Name */}
+            <div className="space-y-2">
+              <Label htmlFor="displayName" className="text-xs font-bold text-muted-foreground">الاسم المستعار</Label>
+              <Input
+                id="displayName"
+                type="text"
+                placeholder="أدخل اسمك المستعار..."
+                value={newDisplayName}
+                onChange={(e) => setNewDisplayName(e.target.value)}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold"
+                maxLength={40}
+              />
             </div>
 
             {/* Status Message Msg */}

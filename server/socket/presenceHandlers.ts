@@ -31,7 +31,6 @@ export function registerPresenceHandlers(io: Server, socket: Socket): void {
     connectedAt: user.connectedAt,
     status: user.status || "online",
   }).then(async () => {
-    // تحديث عدد المتصلين للجميع
     const count = await getTotalOnlineCount();
     io.emit("online_count", { count });
     io.emit("user_connected", {
@@ -95,6 +94,12 @@ export function registerPresenceHandlers(io: Server, socket: Socket): void {
       socket.data.user.cover = data.profileCover.trim().slice(0, 255);
     }
 
+    const oldUsername = user.username;
+    if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
+      user.username = data.displayName.trim().slice(0, 80);
+      socket.data.user.username = user.username;
+    }
+
     // تحديث البيانات في كاش الحضور بـ Redis
     try {
       await addConnectedUser(socket.id, {
@@ -123,6 +128,7 @@ export function registerPresenceHandlers(io: Server, socket: Socket): void {
       socketId: socket.id,
       userId: user.id,
       username: user.username,
+      previousUsername: oldUsername,
       role: user.role,
       avatar: socket.data.user.avatar || user.avatar,
       avatarUrl: socket.data.user.avatar || user.avatar,

@@ -41,9 +41,9 @@ export default defineEventHandler(async (event) => {
 
   try {
     const body = await readBody(event);
-    const { avatar, cover, profileMsg } = body;
+    const { avatar, cover, profileMsg, displayName } = body;
 
-    const updates: { avatar?: string; cover?: string; profileMsg?: string } = {};
+    const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string } = {};
 
     if (avatar && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
@@ -71,15 +71,20 @@ export default defineEventHandler(async (event) => {
       updates.profileMsg = profileMsg;
     }
 
+    if (displayName !== undefined && typeof displayName === "string" && displayName.trim().length > 0) {
+      updates.displayName = displayName.trim().slice(0, 120);
+    }
+
     // 2. Update Database
     const dbSuccess = await updatePersistedUserProfile(userId, updates);
 
     // 3. Update in-memory fallback
-    updateInMemoryUserProfile(username, updates);
+    updateInMemoryUserProfile(username, { ...updates, displayName: updates.displayName || username });
 
     publishGlobalEvent("user_profile_updated", {
       userId,
-      username,
+      username: updates.displayName || username,
+      previousUsername: username,
       avatar: updates.avatar,
       avatarUrl: updates.avatar,
       cover: updates.cover,
@@ -90,6 +95,7 @@ export default defineEventHandler(async (event) => {
     return {
       success: true,
       updates,
+      displayName: updates.displayName || username,
       dbSuccess
     };
   } catch (error: any) {

@@ -180,7 +180,7 @@ export const loginMember = async (input: { username: string; password: string; c
   };
 };
 
-export const updateInMemoryUserProfile = (username: string, updates: { avatar?: string; cover?: string; profileMsg?: string }) => {
+export const updateInMemoryUserProfile = (username: string, updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string }) => {
   const norm = normalizeUsername(username);
   const user = usersByUsername.get(norm);
   if (user) {
@@ -190,6 +190,10 @@ export const updateInMemoryUserProfile = (username: string, updates: { avatar?: 
       user.profile.profileBannerUrl = updates.cover;
     }
     if (updates.profileMsg !== undefined) user.profile.profileMsg = updates.profileMsg;
+    if (updates.displayName !== undefined) {
+      user.displayName = updates.displayName;
+      // تحديث خاصية name أيضاً إذا كانت public user
+    }
     usersByUsername.set(norm, user);
     return user;
   }

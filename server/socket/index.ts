@@ -8,6 +8,10 @@ import { registerRoomHandlers } from "./roomHandlers";
 import { registerPresenceHandlers } from "./presenceHandlers";
 import { registerPrivateHandlers } from "./privateHandlers";
 import { registerProfileHandlers } from "./profileHandlers";
+import { registerStoryHandlers } from "./storyHandlers";
+import { registerWallHandlers } from "./wallHandlers";
+import { registerNotificationHandlers } from "./notificationHandlers";
+import { registerMailHandlers } from "./mailHandlers";
 import { configureSocketGateway, registerSocketConnection } from "./SocketGateway";
 import { initializeSocketBroker } from "./SocketBroker";
 
@@ -79,6 +83,14 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     registerPrivateHandlers(io!, socket);
     // تسجيل أحداث الملف الشخصي
     registerProfileHandlers(io!, socket);
+    // تسجيل أحداث القصص
+    registerStoryHandlers(io!, socket);
+    // تسجيل أحداث الحائط والتعليقات والإعجابات لحظياً
+    registerWallHandlers(io!, socket);
+    // تسجيل أحداث الإشعارات لحظياً
+    registerNotificationHandlers(io!, socket);
+    // تسجيل أحداث البريد الداخلي لحظياً
+    registerMailHandlers(io!, socket);
 
     // إرسال تأكيد الاتصال
     socket.emit("connected", {

@@ -1,4 +1,4 @@
-import { createSocketServer } from "../socket";
+import { createSocketServer, getIO } from "../socket";
 import { runAutoMigrations, verifyDatabaseSchema } from "../db/migrate";
 
 let migrationDone = false;
@@ -22,6 +22,12 @@ export default (nitroApp: any) => {
       } catch (error) {
         console.error("[Migration] Error running auto-migrations:", error);
       }
+    }
+
+    // في وضع التطوير (Vite)، الـ Socket.io مُدار بواسطة Vite plugin — لا ننشئ خادماً جديداً
+    if ((globalThis as any).__VITE_SOCKET_IO_CREATED__) {
+      initialized = true;
+      return;
     }
 
     // Extract the raw HTTP server instance from the request/response socket

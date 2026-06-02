@@ -1,0 +1,705 @@
+
+> vite_react_shadcn_ts@0.0.0 dev
+> vite
+
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+
+  [32m[1mVITE[22m v8.0.10[39m  [2mready in [0m[1m3003[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.8.163:[1m8080[22m/[39m
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٢٧:٥٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/story/StoriesViewer.tsx, /src/globals.css[22m
+[2m٢:٢٧:٥٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/story/StoriesViewer.tsx, /src/globals.css[22m
+[2m٢:٢٨:٠٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/story/StoriesViewer.tsx, /src/globals.css[22m
+[2m٢:٢٨:١٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/story/StoriesViewer.tsx, /src/globals.css[22m
+[2m٢:٣٦:٠٠ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٢:٣٦:٠٠ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٣٦:٥١ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[2m٢:٣٦:٥١ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٢:٣٧:٠٠ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٢:٣٧:٠١ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٢:٣٧:١٠ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٢:٣٧:١٠ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٤٧:٤٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٢:٤٧:٥٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٢:٤٨:٠٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٢:٤٨:١٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٢:٤٨:٢٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٢:٤٨:٤٣ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٢:٤٨:٤٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٢:٤٨:٥٤ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٢:٤٨:٥٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٢:٤٩:٠١ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٢:٤٩:٠٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٤٩:١٢ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٢:٤٩:١٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٥٠:٠١ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/RoomPage.tsx[22m
+[2m٢:٥٠:٠٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٢:٥٠:٠٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/RoomList.tsx, /src/components/chat/WallFeed.tsx, /src/components/realtime/ActivityFeed.tsx, /src/components/chat/MemberList.tsx, /src/components/realtime/PresenceEngine.tsx[22m
+[2m٢:٥٠:١٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/realtime/PresenceEngine.tsx[22m
+[2m٢:٥٠:٤١ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/profileHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٢:٥٠:٤١ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٢:٥١:٠٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/chat/SettingsPanel.tsx[22m
+[2m٣:٠٥:٢٧ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٣:٠٥:٢٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٣:١٤:٠٥ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[2m٣:١٤:٠٥ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٣:١٤:١٣ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٣:١٤:١٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٣:١٩:٠٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٣:٤٧:٥٤ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[2m٣:٤٧:٥٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٣:٤٨:٠٣ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٣:٤٨:٠٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٣:٤٨:٢٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٣:٤٨:٤٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٨:٥٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٩:٠٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٩:١٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٩:٢٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٩:٣٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٣:٤٩:٤٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٣:٥٠:٠٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٣:٥٠:٥٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoryCreator.tsx[22m
+[2m٤:٠٥:٠٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/App.tsx, /src/components/story/StoriesViewer.tsx, /src/components/chat/StoriesBar.tsx[22m
+[2m٤:٠٧:١٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٤:٠٧:٢٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٤:٠٧:٣٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٤:١٠:٥٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٤:١٢:٤٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٢:٤٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٣:٣٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/App.tsx, /src/components/story/StoriesViewer.tsx, /src/components/chat/StoriesBar.tsx[22m
+[2m٤:١٣:٤٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/globals.css[22m
+[2m٤:١٣:٥٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٣:٥٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٦:٣٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٦:٣٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:١٩:٢٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/story/StoriesViewer.tsx[22m
+[2m٤:٢٣:٠٧ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٢٣:٠٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٢٣:٢٧ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٤:٢٣:٢٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٢٣:٥١ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٤:٢٣:٥١ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٢٤:٠١ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٢٤:٠٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٢٤:٢٣ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٢٤:٢٤ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٢٤:٣١ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٢٤:٣٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٢٤:٤٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٢٤:٤٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٢٩:٢٧ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٤:٢٩:٢٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٢٩:٣٦ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[2m٤:٢٩:٣٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٢٩:٤٦ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٤:٢٩:٤٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[2m٤:٢٩:٥٥ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٤:٢٩:٥٥ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٣٠:٠٤ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[2m٤:٣٠:٠٤ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٣٠:٠٥ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٣٠:١٨ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[2m٤:٣٠:١٨ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٤:٣٠:١٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٣٠:٣٢ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/index.ts changed, restarting server...[39m
+[2m٤:٣٠:٣٢ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/index.ts changed, restarting server...[39m
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٣١:١٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٣١:١٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٣٣:٣٥ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٤:٣٣:٣٥ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٣٦ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[2m٤:٣٣:٣٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٣٨ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[2m٤:٣٣:٣٩ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[2m٤:٣٣:٣٩ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٣٩ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[2m٤:٣٣:٤٠ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٤:٣٣:٤١ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٤٢ ص[22m [36m[1m[vite][22m[39m [32mvite-socket-io.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[2m٤:٣٣:٤٣ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٤٤ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[2m٤:٣٣:٤٥ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[2m٤:٣٣:٤٥ ص[22m [36m[1m[vite][22m[39m server restarted.
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[2m٤:٣٣:٤٦ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[2m٤:٣٣:٤٦ ص[22m [36m[1m[vite][22m[39m server restarted.
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.8.163:[1m8080[22m/[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٣٣:٤٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٤٧ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[2m٤:٣٣:٤٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٤٩ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٤:٣٣:٥٠ ص[22m [36m[1m[vite][22m[39m server restarted.
+[2m٤:٣٣:٥٠ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/presenceHandlers.ts changed, restarting server...[39m
+[2m٤:٣٣:٥١ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/index.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٤:٣٣:٥٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٣٤:٣٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/globals.css[22m
+[2m٤:٣٤:٣٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/App.tsx[22m
+[2m٤:٣٤:٤٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/globals.css[22m
+[2m٤:٣٤:٤٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/App.tsx[22m
+[2m٤:٣٥:٠٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٣٥:٠٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/App.tsx[22m
+[2m٤:٣٥:١٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٣٥:١٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/App.tsx[22m
+[2m٤:٣٥:٢٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٣٥:٤٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٣٥:٤٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٤١:١٦ ص[22m [36m[1m[vite][22m[39m [32mserver/db/schema.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٤:٤١:١٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٤١:٣٥ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Migration] بدء فحص الجداول الناقصة...
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٤١:٣٦ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٤١:٤٦ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2m٤:٤١:٤٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٤٢:١٧ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[2m٤:٤٢:١٧ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[2m٤:٤٢:١٨ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٤٢:٣٢ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٤٢:٣٢ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[2m٤:٤٣:١٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٤٣:١٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٤٥:٤٣ ص[22m [36m[1m[vite][22m[39m [32mserver/db/schema.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[2m٤:٤٥:٤٣ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٤٦:٠٩ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2m٤:٤٦:٠٩ ص[22m [36m[1m[vite][22m[39m server restarted.
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[2m٤:٤٦:٢٥ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[2m٤:٤٦:٢٥ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٤٦:٤١ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[2m٤:٤٦:٤٢ ص[22m [36m[1m[vite][22m[39m [32mserver/services/storyService.ts changed, restarting server...[39m
+[2m٤:٤٧:٠٦ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[2m٤:٤٧:٠٦ ص[22m [36m[1m[vite][22m[39m [32mserver/socket/storyHandlers.ts changed, restarting server...[39m
+[36mi[39m Using [36m[36mindex.html[36m[39m as renderer template.
+[Socket.io] ✅ WebSocket server attached on path /ws
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+[2m٤:٤٧:٠٧ ص[22m [36m[1m[vite][22m[39m server restarted.
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] بدء فحص الجداول الناقصة...
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح
+[SocketBroker] Redis is disabled. Skipping Redis Pub/Sub subscriber broker.
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server
+[2m٤:٤٧:٣٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٤٧:٣٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥١:٠٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥١:١٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥١:٢٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥١:٣٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥١:٥٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥١:٥٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٢:٣٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥٢:٥٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٢:٥٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٣:٥٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥٤:١٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٤:١٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٥:١٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/pages/Dashboard.tsx[22m
+[2m٤:٥٦:٠١ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٥٦:٠١ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٠:١٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٥:٠٠:٢٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileStats.tsx[22m
+[2m٥:٠٠:٢٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileActions.tsx[22m
+[2m٥:٠١:٠٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠١:١٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠١:١٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٣:٥٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠٤:٠٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠٤:١٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠٤:٥٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠٥:١٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٥:١٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٦:٣١ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٥:٠٦:٤٠ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileStats.tsx[22m
+[2m٥:٠٦:٤٥ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileActions.tsx[22m
+[2m٥:٠٧:١٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:٠٧:٣٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٧:٣٢ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:٠٩:٤٣ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٥:١٠:٠٤ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٥:١٠:١٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:١٠:١٩ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:١٦:٤٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٥:١٦:٥٨ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٥:١٧:٠٦ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileStats.tsx[22m
+[2m٥:١٧:١١ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileActions.tsx[22m
+[2m٥:١٧:٢٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٥:١٧:٢٧ ص[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٢٢:٤٢ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٢:٥٢ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٣:٠٩ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٣:٣٦ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٣:٤٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٣:٥٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileHeader.tsx[22m
+[2m٤:٢٤:٢٣ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileStats.tsx[22m
+[2m٤:٢٤:٤٥ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٤:٥٨ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٥:١٢ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٥:٢٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٥:٥٠ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٦:٠٣ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٦:٢٦ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٧:٠١ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileActions.tsx[22m
+[2m٤:٢٧:٤٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٨:٠٥ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٢٨:٥٢ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/globals.css, /src/components/profile/ProfileModal.tsx[22m
+[2m٤:٣٠:٣٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m
+[2m٤:٣٠:٣٧ م[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2m.output/public/index.html[22m

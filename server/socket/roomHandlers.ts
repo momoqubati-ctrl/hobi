@@ -5,7 +5,7 @@
 import type { Server, Socket } from "socket.io";
 import { joinRoom, leaveRoom, getRoomMembers, getRoomMemberCount, pendingDisconnects, removeConnectedUser } from "./presenceManager";
 import { publishSocketEvent, publishGlobalEvent } from "./SocketBroker";
-import { listRooms, addMessage } from "../services/chatStore";
+import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, type RoomReactionType, ROOM_REACTIONS } from "../services/chatStore";
 import { processText } from "../services/filterService";
 import { eventBus } from "../core/events/EventBus";
 import { bootstrapWorkers } from "../workers";
@@ -232,11 +232,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   /**
    * إرسال رسالة في غرفة (مع الفلترة)
    */
-  socket.on("room_message", async (data: { roomId: string; text: string; clientId?: string }, callback?: (res: any) => void) => {
+  socket.on("room_message", async (data: { roomId: string; text: string; clientId?: string; replyToId?: string; replyToText?: string; replyToSenderName?: string }, callback?: (res: any) => void) => {
     try {
       const roomId = String(data?.roomId || "").trim();
       const text = String(data?.text || "").trim();
       const clientId = data?.clientId;
+      const replyToId = data?.replyToId || "";
+      const clientReplyToText = data?.replyToText || "";
+      const clientReplyToSenderName = data?.replyToSenderName || "";
 
       if (!roomId || !text) {
         callback?.({ success: false, message: "البيانات ناقصة" });
@@ -254,11 +257,27 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         },
       });
 
+      // ─── جلب بيانات الرسالة المردود عليها ──────────────────────────────────
+      let replyToText = "";
+      let replyToSenderName = "";
+      if (replyToId) {
+        const parentMsg = getRoomMessage(roomId, replyToId);
+        if (parentMsg) {
+          replyToText = parentMsg.text || "";
+          replyToSenderName = parentMsg.user || "";
+        } else {
+          // استخدام البيانات المرسلة من العميل كبديل
+          replyToText = clientReplyToText || "";
+          replyToSenderName = clientReplyToSenderName || "";
+        }
+      }
+
       // إنشاء وحفظ الرسالة (باستخدام النص المفلتر)
       const message = addMessage({
         roomId,
         clientId,
         user: user.username,
+        userId: String(user.id || ""),
         role: user.role,
         countryCode: user.countryCode,
         avatar: user.avatar,
@@ -266,6 +285,9 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         giftIconUrl: user.giftIconUrl,
         messageBubbleStyle: user.messageBubbleStyle,
         text: filterResult.filteredText,
+        replyToId: replyToId || undefined,
+        replyToText: replyToText || undefined,
+        replyToSenderName: replyToSenderName || undefined,
       });
 
       publishSocketEvent(roomId, "new_message", {
@@ -277,6 +299,57 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     } catch (error) {
       console.error("room_message failed:", error);
       callback?.({ success: false, message: "تعذر إرسال الرسالة" });
+    }
+  });
+
+  // ─── تفاعل على رسالة في غرفة ──────────────────────────────────────────────
+
+  socket.on("room:react", async (
+    data: { roomId: string; messageId: string; reaction: RoomReactionType },
+    callback?: (res: any) => void,
+  ) => {
+    try {
+      const roomId = String(data?.roomId || "").trim();
+      const messageId = String(data?.messageId || "").trim();
+      const reaction = data?.reaction;
+
+      if (!roomId || !messageId || !reaction) {
+        return callback?.({ success: false, error: "بيانات ناقصة" });
+      }
+
+      if (!ROOM_REACTIONS.includes(reaction)) {
+        return callback?.({ success: false, error: "نوع تفاعل غير صالح" });
+      }
+
+      const msg = getRoomMessage(roomId, messageId);
+      if (!msg) {
+        return callback?.({ success: false, error: "الرسالة غير موجودة" });
+      }
+
+      if (!msg.reactions) msg.reactions = {};
+
+      const userId = String(user.id || user.username || socket.id);
+      const existingReaction = msg.reactions[userId];
+
+      if (existingReaction === reaction) {
+        delete msg.reactions[userId];
+      } else {
+        msg.reactions[userId] = reaction;
+      }
+
+      updateRoomMessageReactions(roomId, messageId, msg.reactions);
+
+      // بث التحديث لجميع أعضاء الغرفة
+      await publishSocketEvent(roomId, "room_reaction", {
+        roomId,
+        messageId,
+        reactions: msg.reactions,
+      });
+
+      callback?.({ success: true, reactions: msg.reactions });
+    } catch (err) {
+      console.error("[room:react] Error:", err);
+      callback?.({ success: false, error: "خطأ في الخادم" });
     }
   });
 

@@ -19,30 +19,32 @@ const queryClient = new QueryClient({
   },
 });
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-      <ConfirmProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner position="top-center" richColors />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
-            <Route 
-              path="/dashboard/*" 
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              } 
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </TooltipProvider>
-      </ConfirmProvider>
-    </ThemeProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+        <ConfirmProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner position="top-center" richColors />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route 
+                path="/dashboard/*" 
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </TooltipProvider>
+        </ConfirmProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

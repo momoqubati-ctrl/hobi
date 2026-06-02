@@ -1,4 +1,5 @@
-import { Star, Coins, Heart, Eye, Gift } from "lucide-react";
+import { Users, Star, Heart, Gift, ThumbsUp, UserPlus, Coins } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface ProfileStatsProps {
   stats: {
@@ -7,6 +8,9 @@ interface ProfileStatsProps {
     coins: number;
     evaluation: number;
     giftsReceivedCount?: number;
+    followersCount?: number;
+    followingCount?: number;
+    wallLikesCount?: number;
   };
 }
 
@@ -19,62 +23,60 @@ const formatNumber = (value: number) => {
 export function ProfileStats({ stats }: ProfileStatsProps) {
   if (!stats) return null;
 
-  const statItems = [
-    {
-      label: "إعجابات",
-      value: stats.likes,
-      icon: <Heart className="h-7 w-7" />,
-      className: "from-rose-50 to-pink-50 text-rose-500 dark:from-rose-500/10 dark:to-pink-500/10",
-    },
-    {
-      label: "نقاط",
-      value: stats.evaluation,
-      icon: <Star className="h-7 w-7" />,
-      className: "from-violet-600 to-fuchsia-500 text-white shadow-violet-600/25",
-      featured: true,
-    },
-    {
-      label: "عملات",
-      value: stats.coins,
-      icon: <Coins className="h-7 w-7" />,
-      className: "from-amber-50 to-orange-50 text-amber-600 dark:from-amber-500/10 dark:to-orange-500/10",
-    },
-    {
-      label: "هدايا",
-      value: stats.giftsReceivedCount || 0,
-      icon: <Gift className="h-7 w-7" />,
-      className: "from-emerald-50 to-green-50 text-emerald-600 dark:from-emerald-500/10 dark:to-green-500/10",
-    },
-    {
-      label: "زيارات",
-      value: stats.views,
-      icon: <Eye className="h-7 w-7" />,
-      className: "from-blue-50 to-sky-50 text-blue-600 dark:from-blue-500/10 dark:to-sky-500/10",
-    },
-  ];
-
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {statItems.map((item) => (
-        <div
-          key={item.label}
-          className={`min-h-[116px] rounded-2xl border border-slate-200 bg-gradient-to-br p-3 shadow-[0_12px_35px_rgba(15,23,42,0.06)] dark:border-white/10 sm:min-h-[134px] sm:p-4 ${item.className} ${item.featured ? "shadow-lg" : "bg-white dark:bg-slate-900/70"}`}
-        >
-          <div className="flex h-full items-center justify-between gap-2 sm:gap-3">
-            <div className={`grid h-14 w-14 shrink-0 place-items-center rounded-full sm:h-16 sm:w-16 ${item.featured ? "bg-white/15 text-amber-300 ring-1 ring-white/30" : "bg-white shadow-sm dark:bg-slate-950/60"}`}>
-              {item.icon}
-            </div>
-            <div className="min-w-0 text-left">
-              <div className={`truncate text-2xl font-black sm:text-3xl ${item.featured ? "text-white" : "text-slate-950 dark:text-white"}`}>
-                {formatNumber(Number(item.value || 0))}
-              </div>
-              <div className={`mt-1 truncate text-xs font-black sm:text-sm ${item.featured ? "text-white/85" : "text-slate-500 dark:text-slate-400"}`}>
-                {item.label}
-              </div>
-            </div>
+    <>
+      <div className="grid grid-cols-3 gap-3 px-[22px] pb-3">
+        <div className="min-h-[92px] rounded-[18px] border border-border bg-card shadow-sm flex items-center justify-center gap-[10px] transition hover:translate-y-[-2px] hover:shadow-md">
+          <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-primary">
+            <Users className="h-6 w-6" />
+          </div>
+          <div className="text-right">
+            <strong className="block text-[25px] font-black leading-none text-foreground">{formatNumber(Number(stats.followersCount || 0))}</strong>
+            <span className="text-xs font-black text-muted-foreground">متابعون</span>
           </div>
         </div>
-      ))}
-    </div>
+        <div className="min-h-[92px] rounded-[18px] bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-[0_16px_30px_rgba(37,99,235,0.34)] flex items-center justify-center gap-[10px] transition hover:translate-y-[-2px] hover:shadow-[0_16px_28px_rgba(20,28,45,0.09)]">
+          <div className="h-12 w-12 rounded-full bg-white/15 text-amber-300 border border-white/25 flex items-center justify-center shrink-0">
+            <Star className="h-6 w-6 fill-amber-300" />
+          </div>
+          <div className="text-right">
+            <strong className="block text-[25px] font-black leading-none text-primary-foreground">{formatNumber(Number(stats.evaluation || 0))}</strong>
+            <span className="text-xs font-black text-primary-foreground/80">نقاط</span>
+          </div>
+        </div>
+        <div className="min-h-[92px] rounded-[18px] border border-border bg-card shadow-sm flex items-center justify-center gap-[10px] transition hover:translate-y-[-2px] hover:shadow-md">
+          <div className="h-12 w-12 rounded-full bg-rose-50 dark:bg-rose-500/20 flex items-center justify-center shrink-0 text-rose-500">
+            <Heart className="h-6 w-6 fill-rose-500" />
+          </div>
+          <div className="text-right">
+            <strong className="block text-[25px] font-black leading-none text-foreground">{formatNumber(Number(stats.likes || 0))}</strong>
+            <span className="text-xs font-black text-muted-foreground">إعجابات</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 px-[22px] pb-[14px]">
+        <div className="h-[62px] rounded-xl border border-border bg-card shadow-sm flex flex-col items-center justify-center gap-0.5 text-[11px] font-black text-center transition hover:translate-y-[-2px] hover:shadow-md">
+          <Gift className="h-3.5 w-3.5 text-primary" />
+          {formatNumber(Number(stats.giftsReceivedCount || 0))}
+          <span className="text-[9px] font-black text-muted-foreground">الهدايا</span>
+        </div>
+        <div className="h-[62px] rounded-xl border border-border bg-card shadow-sm flex flex-col items-center justify-center gap-0.5 text-[11px] font-black text-center transition hover:translate-y-[-2px] hover:shadow-md">
+          <ThumbsUp className="h-3.5 w-3.5 text-rose-500" />
+          {formatNumber(Number(stats.wallLikesCount || 0))}
+          <span className="text-[9px] font-black text-muted-foreground">إعجابات الحائط</span>
+        </div>
+        <div className="h-[62px] rounded-xl border border-border bg-card shadow-sm flex flex-col items-center justify-center gap-0.5 text-[11px] font-black text-center transition hover:translate-y-[-2px] hover:shadow-md">
+          <UserPlus className="h-3.5 w-3.5 text-primary" />
+          {formatNumber(Number(stats.followingCount || 0))}
+          <span className="text-[9px] font-black text-muted-foreground">يتابع</span>
+        </div>
+        <div className="h-[62px] rounded-xl border border-border bg-card shadow-sm flex flex-col items-center justify-center gap-0.5 text-[11px] font-black text-center transition hover:translate-y-[-2px] hover:shadow-md">
+          <Coins className="h-3.5 w-3.5 text-amber-500" />
+          {formatNumber(Number(stats.coins || 0))}
+          <span className="text-[9px] font-black text-muted-foreground">العملات</span>
+        </div>
+      </div>
+    </>
   );
 }

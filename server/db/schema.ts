@@ -414,6 +414,142 @@ export const userRoleAssignments = pgTable("user_role_assignments", {
   primaryKey({ columns: [table.userId, table.roleId] })
 ]);
 
+// --- STORIES ---
+export const stories = pgTable("stories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  authorId: varchar("author_id", { length: 255 }).notNull(),
+  mediaUrl: text("media_url"),
+  mediaType: varchar("media_type", { length: 20 }).default("text").notNull(),
+  caption: text("caption"),
+  linkUrl: text("link_url"),
+  bgColor: varchar("bg_color", { length: 80 }).default("linear-gradient(135deg,#667eea,#764ba2)").notNull(),
+  textColor: varchar("text_color", { length: 20 }).default("#ffffff").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  viewCount: integer("view_count").default(0).notNull(),
+  likeCount: integer("like_count").default(0).notNull(),
+  giftCount: integer("gift_count").default(0).notNull(),
+  shareCount: integer("share_count").default(0).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  index("stories_author_idx").on(table.authorId),
+  index("stories_expires_idx").on(table.expiresAt),
+  index("stories_active_idx").on(table.isActive),
+]);
+
+export const storyViews = pgTable("story_views", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storyId: uuid("story_id").references(() => stories.id, { onDelete: "cascade" }).notNull(),
+  viewerId: varchar("viewer_id", { length: 255 }).notNull(),
+  viewerName: varchar("viewer_name", { length: 255 }),
+  viewedAt: timestamp("viewed_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("story_views_unique_idx").on(table.storyId, table.viewerId),
+  index("story_views_story_idx").on(table.storyId),
+]);
+
+export const storyReactions = pgTable("story_reactions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storyId: uuid("story_id").references(() => stories.id, { onDelete: "cascade" }).notNull(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  userName: varchar("user_name", { length: 255 }),
+  type: varchar("type", { length: 20 }).default("like").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("story_reactions_unique_idx").on(table.storyId, table.userId),
+  index("story_reactions_story_idx").on(table.storyId),
+]);
+
+// --- GIFTS ---
+export const giftCatalog = pgTable("gift_catalog", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  icon: varchar("icon", { length: 20 }).notNull(),
+  price: integer("price").notNull(),
+  category: varchar("category", { length: 40 }).default("common").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const giftTransactions = pgTable("gift_transactions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  giftId: uuid("gift_id").references(() => giftCatalog.id, { onDelete: "cascade" }).notNull(),
+  senderId: varchar("sender_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+  receiverId: varchar("receiver_id", { length: 255 }).references(() => users.id, { onDelete: "set null" }),
+  quantity: integer("quantity").default(1).notNull(),
+  totalCoins: integer("total_coins").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("gift_transactions_sender_idx").on(table.senderId),
+  index("gift_transactions_receiver_idx").on(table.receiverId),
+  index("gift_transactions_created_idx").on(table.createdAt),
+]);
+
+// --- PRIVATE MESSAGES ---
+export const privateMessages = pgTable("private_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  conversationId: varchar("conversation_id", { length: 512 }).notNull(),
+  senderId: varchar("sender_id", { length: 255 }).notNull(),
+  receiverId: varchar("receiver_id", { length: 255 }).notNull(),
+  body: text("body").notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("pm_conversation_idx").on(table.conversationId),
+  index("pm_sender_idx").on(table.senderId),
+  index("pm_receiver_idx").on(table.receiverId),
+  index("pm_created_idx").on(table.createdAt),
+]);
+
+// --- INTERNAL MAIL ---
+export const internalMail = pgTable("internal_mail", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  senderId: varchar("sender_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+  recipientId: varchar("recipient_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  body: text("body").notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("internal_mail_sender_idx").on(table.senderId),
+  index("internal_mail_recipient_idx").on(table.recipientId),
+  index("internal_mail_created_idx").on(table.createdAt),
+]);
+
+// --- FILE MANAGER ---
+export const files = pgTable("files", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: varchar("user_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  folderPath: text("folder_path").default("/").notNull(),
+  isFolder: boolean("is_folder").default(false).notNull(),
+  mimeType: varchar("mime_type", { length: 80 }),
+  size: integer("size").default(0).notNull(),
+  storagePath: text("storage_path"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("files_user_idx").on(table.userId),
+  index("files_folder_idx").on(table.folderPath),
+]);
+
+// --- NOTIFICATIONS ---
+export const notifications = pgTable("notifications", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: varchar("user_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+  actorId: varchar("actor_id", { length: 255 }).references(() => users.id, { onDelete: "set null" }),
+  type: varchar("type", { length: 40 }).notNull(),
+  entityType: varchar("entity_type", { length: 40 }).notNull(),
+  entityId: varchar("entity_id", { length: 128 }),
+  metadata: jsonb("metadata").default({}).notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("notifications_user_idx").on(table.userId),
+  index("notifications_read_idx").on(table.userId, table.readAt),
+  index("notifications_created_idx").on(table.createdAt),
+]);
+
 export const usersRelations = relations(users, ({ one }) => ({
   profile: one(userProfiles),
 }));
