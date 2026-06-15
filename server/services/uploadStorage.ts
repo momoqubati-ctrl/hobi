@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const allowedExtensions = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi"]);
+const allowedExtensions = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi", "mp3", "wav", "ogg", "m4a"]);
 
 /** Maximum file size per kind (bytes) */
 const MAX_SIZES: Record<string, number> = {

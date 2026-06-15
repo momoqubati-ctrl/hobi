@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect } from "react";
 import { SmilePlus, ArrowLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
 
 const EMOJI_CATEGORIES = [
+  {
+    id: "animated",
+    label: "فيسات متحركة",
+    icon: "🎭",
+    emojis: []
+  },
   {
     id: "smileys",
     label: "وجوه وأشخاص",
@@ -92,6 +99,7 @@ const EMOJI_KEYWORDS: Record<string, string[]> = {
 
 interface EmojiPanelProps {
   onEmojiSelect: (emoji: string) => void;
+  onAnimatedFaceSelect?: (faceUrl: string) => void;
   search: string;
   setSearch: (val: string) => void;
   activeCategory: string;
@@ -101,12 +109,21 @@ interface EmojiPanelProps {
 
 export const EmojiPanel: React.FC<EmojiPanelProps> = ({
   onEmojiSelect,
+  onAnimatedFaceSelect,
   search,
   setSearch,
   activeCategory,
   setActiveCategory,
   isOpen
 }) => {
+  const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+
+  useEffect(() => {
+    if (activeCategory === "animated" && animatedFaces.length === 0) {
+      fetchAnimatedFaces().then(setAnimatedFaces);
+    }
+  }, [activeCategory, animatedFaces.length]);
+
   const getFilteredEmojis = () => {
     if (!search) {
       const cat = EMOJI_CATEGORIES.find(c => c.id === activeCategory);
@@ -175,16 +192,30 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
 
         {/* Emojis Grid */}
         <div className="grid grid-cols-8 sm:grid-cols-12 md:grid-cols-16 lg:grid-cols-20 gap-2 max-h-[140px] overflow-y-auto p-1 no-scrollbar select-none">
-          {displayList.map((emoji, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => onEmojiSelect(emoji)}
-              className="text-2xl hover:scale-125 active:scale-95 transition-transform flex items-center justify-center p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              {emoji}
-            </button>
-          ))}
+          {activeCategory === "animated" ? (
+            animatedFaces.map((face) => (
+              <button
+                key={face.id}
+                type="button"
+                onClick={() => onAnimatedFaceSelect?.(face.image_url)}
+                className="hover:scale-125 active:scale-95 transition-transform flex items-center justify-center p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+                title={face.shortcut}
+              >
+                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+              </button>
+            ))
+          ) : (
+            displayList.map((emoji, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => onEmojiSelect(emoji)}
+                className="text-2xl hover:scale-125 active:scale-95 transition-transform flex items-center justify-center p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {emoji}
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>
@@ -194,13 +225,14 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
 // Default export acts as standard wrapper for other places (backwards compatibility)
 interface EmojiPickerPopoverProps {
   onEmojiSelect: (emoji: string) => void;
+  onAnimatedFaceSelect?: (faceUrl: string) => void;
   className?: string;
 }
 
-const EmojiPickerPopover: React.FC<EmojiPickerPopoverProps> = ({ onEmojiSelect, className }) => {
+const EmojiPickerPopover: React.FC<EmojiPickerPopoverProps> = ({ onEmojiSelect, onAnimatedFaceSelect, className }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("smileys");
+  const [activeCategory, setActiveCategory] = useState("animated");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -248,6 +280,7 @@ const EmojiPickerPopover: React.FC<EmojiPickerPopoverProps> = ({ onEmojiSelect, 
       >
         <EmojiPanel
           onEmojiSelect={onEmojiSelect}
+          onAnimatedFaceSelect={onAnimatedFaceSelect}
           search={search}
           setSearch={setSearch}
           activeCategory={activeCategory}

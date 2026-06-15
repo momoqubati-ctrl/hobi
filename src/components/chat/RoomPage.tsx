@@ -6,11 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmojiPanel } from "./EmojiPickerPopover";
-import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, Loader2, SmilePlus, Reply, ArrowLeft, Youtube } from "lucide-react";
+import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile } from "lucide-react";
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
+import VoiceMessagePlayer from "./VoiceMessagePlayer";
+import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
+import { fetchAnimatedFaces, AnimatedFace, findAnimatedFace } from "@/lib/animatedFaceData";
+import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 
 type ReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
 
@@ -48,6 +52,11 @@ type ChatMessage = {
   replyToId?: string;
   replyToText?: string;
   replyToSenderName?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: "image" | "video" | "audio";
+  sticker?: string;
+  animatedFaces?: string[];
   createdAt: string;
   pending?: boolean;
   failed?: boolean;
@@ -132,9 +141,36 @@ const getMessageBubbleClass = (msg: ChatMessage) => {
   return "border-border bg-card text-foreground";
 };
 
-const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelReply }: {
+const FACE_MARKER_RE = /\u200B\[\[FACE:(\d+)\]\]\u200B/g;
+
+const renderTextWithFaces = (text: string, faceUrls?: string[]) => {
+  if (!faceUrls || faceUrls.length === 0) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  FACE_MARKER_RE.lastIndex = 0;
+  while ((match = FACE_MARKER_RE.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`t${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+    const idx = parseInt(match[1], 10);
+    if (faceUrls[idx]) {
+      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "1.4rem", height: "1.4rem" }} />);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(<span key={`t${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+  return <>{parts}</>;
+};
+
+const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSticker, onSendAnimatedFace, replyToMsg, onCancelReply }: {
   roomId: string;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, animatedFaceUrls?: string[]) => void;
+  onSendMedia?: (mediaUrl: string, mediaType: "image" | "video" | "audio", text?: string, mediaUrls?: string[]) => void;
+  onSendSticker?: (stickerUrl: string) => void;
+  onSendAnimatedFace?: (faceUrl: string) => void;
   replyToMsg: ChatMessage | null;
   onCancelReply: () => void;
 }) => {
@@ -142,10 +178,175 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
   const [isSending, setIsSending] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
-  const [activeEmojiCat, setActiveEmojiCat] = useState("smileys");
+  const [activeEmojiCat, setActiveEmojiCat] = useState("animated");
   const [selectedVideo, setSelectedVideo] = useState<YTVideo | null>(null);
   const [showYouTubeSearch, setShowYouTubeSearch] = useState(false);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const recorder = useVoiceRecorder();
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFiles, setPendingFiles] = useState<{ file: File; preview: string; type: "image" | "video" }[]>([]);
+  const [showStickers, setShowStickers] = useState(false);
+  const [stickerCategories, setStickerCategories] = useState<StickerCategory[]>([]);
+  const [activeStickerCat, setActiveStickerCat] = useState<string>("");
+  const [showFaces, setShowFaces] = useState(false);
+  const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+  const inputAreaRef = useRef<HTMLDivElement>(null);
+
+  const closeAllPanels = useCallback(() => {
+    setShowStickers(false);
+    setShowFaces(false);
+    setShowEmoji(false);
+    setShowYouTubeSearch(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showStickers && !showFaces && !showEmoji && !showYouTubeSearch) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (inputAreaRef.current && !inputAreaRef.current.contains(e.target as Node)) {
+        closeAllPanels();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showStickers, showFaces, showEmoji, showYouTubeSearch, closeAllPanels]);
+
+  useEffect(() => {
+    if (showStickers && stickerCategories.length === 0) {
+      fetchStickerCategories().then((cats) => {
+        setStickerCategories(cats);
+        if (cats.length > 0 && !activeStickerCat) setActiveStickerCat(cats[0].id);
+      });
+    }
+  }, [showStickers]);
+
+  useEffect(() => {
+    if (animatedFaces.length === 0) {
+      fetchAnimatedFaces().then(setAnimatedFaces);
+    }
+  }, []);
+
+  const handleSendSticker = (imageUrl: string) => {
+    onSendSticker?.(imageUrl);
+    setShowStickers(false);
+  };
+
+  const uploadFile = async (file: File): Promise<{ url: string; type: "image" | "video" } | null> => {
+    try {
+      const token = localStorage.getItem("authToken");
+      if (!token) throw new Error("جلسة غير صالحة");
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(new Error("فشل قراءة الملف"));
+        reader.readAsDataURL(file);
+      });
+      const ext = file.name.split(".").pop() || "";
+      const res = await fetch("/api/wall/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ file: base64, filename: file.name, contentType: file.type }),
+      });
+      const data = await res.json();
+      if (data.success) return { url: data.url, type: data.type === "image" ? "image" : "video" };
+      throw new Error(data.message || "فشل رفع الملف");
+    } catch (err) {
+      console.error("Upload error:", err);
+      return null;
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newPending: { file: File; preview: string; type: "image" | "video" }[] = [];
+    for (let i = 0; i < files.length && pendingFiles.length + newPending.length < 4; i++) {
+      const f = files[i];
+      if (f.type.startsWith("image/")) {
+        newPending.push({ file: f, preview: URL.createObjectURL(f), type: "image" });
+      } else if (f.type.startsWith("video/")) {
+        newPending.push({ file: f, preview: URL.createObjectURL(f), type: "video" });
+      }
+    }
+    setPendingFiles((prev) => [...prev, ...newPending]);
+    e.target.value = "";
+  };
+
+  const removePendingFile = (idx: number) => {
+    setPendingFiles((prev) => {
+      const removed = prev[idx];
+      if (removed) URL.revokeObjectURL(removed.preview);
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
+  const handleSendWithMedia = async (text: string) => {
+    if (pendingFiles.length === 0) return;
+    setIsSending(true);
+    try {
+      const uploadedUrls: string[] = [];
+      let firstType: "image" | "video" = "image";
+      for (const pf of pendingFiles) {
+        const result = await uploadFile(pf.file);
+        if (result) {
+          uploadedUrls.push(result.url);
+          firstType = result.type;
+        }
+      }
+      if (uploadedUrls.length > 0) {
+        onSendMedia?.(uploadedUrls[0], firstType, text, uploadedUrls.length > 1 ? uploadedUrls : undefined);
+      }
+      setMessage("");
+      setPendingFiles([]);
+    } finally {
+      setIsSending(false);
+      const socket = getSocket();
+      socket.emit("stop_typing", { roomId });
+    }
+  };
+
+  const uploadAudio = async (blob: Blob): Promise<string | undefined> => {
+    setIsUploading(true);
+    try {
+      const token = localStorage.getItem("authToken");
+      if (!token) throw new Error("جلسة غير صالحة");
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(new Error("فشل قراءة الملف"));
+        reader.readAsDataURL(blob);
+      });
+      const ext = blob.type.includes("webm") ? "webm" : "mp3";
+      const res = await fetch("/api/wall/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: blob.type }),
+      });
+      const data = await res.json();
+      if (data.success) return data.url;
+      throw new Error(data.message || "فشل رفع التسجيل");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleSendVoice = async () => {
+    if (!recorder.audioBlob) return;
+    setIsSending(true);
+    try {
+      const url = await uploadAudio(recorder.audioBlob);
+      if (url) {
+        onSendMedia?.(url, "audio", message.trim() || undefined);
+        setMessage("");
+      }
+    } finally {
+      setIsSending(false);
+      recorder.clearRecording();
+      const socket = getSocket();
+      socket.emit("stop_typing", { roomId });
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +355,49 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
       const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
       text = text ? `${text}\n${videoUrl}` : videoUrl;
     }
-    if (!text || isSending) return;
+    if (!text && pendingFiles.length === 0) return;
+    if (isSending) return;
+
+    if (pendingFiles.length > 0) {
+      await handleSendWithMedia(text);
+      setSelectedVideo(null);
+      setShowYouTubeSearch(false);
+      return;
+    }
+
+    // Check for animated face shortcuts within text
+    if (animatedFaces.length > 0) {
+      let processedText = text;
+      const matchedFaceUrls: string[] = [];
+      for (const face of animatedFaces) {
+        const regex = new RegExp(face.shortcut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        if (regex.test(processedText)) {
+          const faceIdx = matchedFaceUrls.length;
+          const matches = processedText.match(regex);
+          if (matches) {
+            for (let i = 0; i < matches.length; i++) {
+              matchedFaceUrls.push(face.image_url);
+            }
+          }
+          let counter = 0;
+          processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
+        }
+      }
+      if (matchedFaceUrls.length > 0) {
+        setIsSending(true);
+        setMessage("");
+        setSelectedVideo(null);
+        setShowYouTubeSearch(false);
+        try {
+          await onSendMessage(processedText, matchedFaceUrls);
+        } finally {
+          setIsSending(false);
+          const socket = getSocket();
+          socket.emit("stop_typing", { roomId });
+        }
+        return;
+      }
+    }
 
     setIsSending(true);
     setMessage("");
@@ -182,7 +425,45 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
   };
 
   return (
-    <div className="z-10 border-t border-border bg-card shadow-lg [direction:ltr] relative" dir="ltr">
+    <div ref={inputAreaRef} className="z-10 border-t border-border bg-card shadow-lg [direction:ltr] relative" dir="ltr">
+      {/* شريط معاينة التسجيل الصوتي */}
+      {recorder.isRecording && (
+        <div className="px-3 pt-2 border-b border-border">
+          <div className="flex items-center gap-3 px-3 py-2 bg-red-500/5 rounded-xl border-l-4 border-red-500 animate-pulse">
+            <div className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+            <p className="text-xs font-bold text-red-600">
+              جاري التسجيل {formatDuration(recorder.duration)}
+            </p>
+            <div className="flex-1" />
+            <button type="button" onClick={recorder.isPaused ? recorder.resumeRecording : recorder.pauseRecording} className="text-xs font-bold text-muted-foreground hover:text-foreground px-2 py-1 rounded-lg hover:bg-muted transition">
+              {recorder.isPaused ? "استئناف" : "إيقاف مؤقت"}
+            </button>
+            <button type="button" onClick={recorder.stopRecording} className="text-xs font-bold text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition">
+              إيقاف
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* شريط معاينة التسجيل الجاهز */}
+      {recorder.audioBlob && !recorder.isRecording && (
+        <div className="px-3 pt-2 border-b border-border">
+          <div className="flex items-center gap-3 px-3 py-2 bg-green-500/5 rounded-xl border-l-4 border-green-500">
+            <AudioLines size={14} className="text-green-600 shrink-0" />
+            <p className="text-xs font-bold text-green-600">
+              تسجيل صوتي {formatDuration(recorder.duration)}
+            </p>
+            <div className="flex-1" />
+            <button type="button" onClick={recorder.clearRecording} className="text-xs font-bold text-muted-foreground hover:text-red-600 px-2 py-1 rounded-lg hover:bg-muted transition">
+              حذف
+            </button>
+            <button type="button" onClick={handleSendVoice} disabled={isSending || isUploading} className="text-xs font-bold text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded-lg transition disabled:opacity-50">
+              {isUploading ? "جاري الرفع..." : "إرسال"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* شريط معاينة الرد */}
       {replyToMsg && (
         <div className="px-3 pt-2 border-b border-border">
@@ -243,9 +524,41 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
         </div>
       )}
 
+      {/* معاينة الملفات المختارة */}
+      {pendingFiles.length > 0 && (
+        <div className="px-3 pt-2 border-b border-border">
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {pendingFiles.map((pf, idx) => (
+              <div key={idx} className="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden border-2 border-primary/30 bg-muted group">
+                {pf.type === "image" ? (
+                  <img src={pf.preview} className="w-full h-full object-cover" alt="" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Video size={24} className="text-white/70" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removePendingFile(idx)}
+                  className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center transition opacity-0 group-hover:opacity-100"
+                >
+                  <X size={10} />
+                </button>
+                {pf.type === "video" && (
+                  <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-[8px] font-bold text-white">
+                    فيديو
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* لوحة الإيموجي مدمجة */}
       <EmojiPanel
         onEmojiSelect={(emoji) => setMessage((prev) => prev + emoji)}
+        onAnimatedFaceSelect={onSendAnimatedFace}
         search={emojiSearch}
         setSearch={setEmojiSearch}
         activeCategory={activeEmojiCat}
@@ -253,10 +566,124 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
         isOpen={showEmoji}
       />
 
+      {/* لوحة الملصقات */}
+      {showStickers && (
+        <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+          {/* أقسام الملصقات */}
+          <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
+            {stickerCategories.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveStickerCat(cat.id)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                  activeStickerCat === cat.id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
+              >
+                <img src={cat.icon} className="w-5 h-5 rounded-md object-cover" alt="" />
+                {cat.name}
+              </button>
+            ))}
+          </div>
+          {/* شبكة الملصقات */}
+          <div className="flex flex-wrap gap-2 p-3 max-h-[250px] overflow-y-auto">
+            {stickerCategories.find((c) => c.id === activeStickerCat)?.stickers.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleSendSticker(s.image_url)}
+                className="w-[120px] h-[120px] flex items-center justify-center rounded-xl hover:bg-muted transition active:scale-90 overflow-hidden shrink-0"
+              >
+                <img src={s.image_url} alt={s.name} className="w-full h-full object-contain" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* لوحة الفيسات المتحركة */}
+      {showFaces && (
+        <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+          <div className="p-2 text-[10px] text-muted-foreground font-bold">
+            اكتب الاختصار في حقل الكتابة (مثال: ف1)
+          </div>
+          <div className="flex flex-wrap gap-2 p-3 max-h-[200px] overflow-y-auto">
+            {animatedFaces.map((face) => (
+              <button
+                key={face.id}
+                type="button"
+                onClick={() => {
+                  onSendAnimatedFace?.(face.image_url);
+                  setShowFaces(false);
+                }}
+                className="flex flex-col items-center gap-1 shrink-0 rounded-xl hover:bg-muted transition active:scale-90 p-1"
+              >
+                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+                <span className="text-[10px] font-bold text-primary">{face.shortcut}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="flex items-center gap-2 p-3">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+        />
         <div className="flex gap-1">
-          <Button type="button" variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-primary">
-            <Plus size={20} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={isSending || isUploading}
+            className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-green-500"
+            onClick={() => fileInputRef.current?.click()}
+            title="إرسال صورة أو فيديو"
+          >
+            <ImagePlus size={20} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={isSending || isUploading}
+            className={`h-10 w-10 rounded-xl transition-colors ${showStickers ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-yellow-500"}`}
+            onClick={() => {
+              if (showStickers) {
+                closeAllPanels();
+              } else {
+                closeAllPanels();
+                setShowStickers(true);
+              }
+            }}
+            title="ملصقات"
+          >
+            🖼️
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={isSending || isUploading}
+            className={`h-10 w-10 rounded-xl transition-colors ${showFaces ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-orange-500"}`}
+            onClick={() => {
+              if (showFaces) {
+                closeAllPanels();
+              } else {
+                closeAllPanels();
+                setShowFaces(true);
+              }
+            }}
+            title="فيسات متحركة"
+          >
+            <Smile size={20} />
           </Button>
           <Button type="button" variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-pink-500">
             <Gift size={20} />
@@ -267,12 +694,35 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
             size="icon"
             className={`h-10 w-10 rounded-xl transition-colors ${showYouTubeSearch ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "text-muted-foreground hover:bg-muted hover:text-red-500"}`}
             onClick={() => {
-              setShowYouTubeSearch(!showYouTubeSearch);
-              setShowEmoji(false);
+              if (showYouTubeSearch) {
+                closeAllPanels();
+              } else {
+                closeAllPanels();
+                setShowYouTubeSearch(true);
+              }
             }}
             title="بحث YouTube"
           >
             <Youtube size={20} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={isSending || isUploading || (message.trim().length > 0)}
+            className={`h-10 w-10 rounded-xl transition-colors ${recorder.isRecording ? "bg-red-500 text-white animate-pulse shadow-md shadow-red-500/30" : "text-muted-foreground hover:bg-muted hover:text-red-500"}`}
+            onClick={() => {
+              if (recorder.isRecording) {
+                recorder.stopRecording();
+              } else {
+                recorder.startRecording();
+                setShowEmoji(false);
+                setShowYouTubeSearch(false);
+              }
+            }}
+            title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}
+          >
+            {recorder.isRecording ? <MicOff size={20} /> : <AudioLines size={20} />}
           </Button>
           {showEmoji ? (
             <button
@@ -290,8 +740,12 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
               size="icon"
               className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-yellow-500"
               onClick={() => {
-                setShowEmoji(true);
-                setShowYouTubeSearch(false);
+                if (showEmoji) {
+                  closeAllPanels();
+                } else {
+                  closeAllPanels();
+                  setShowEmoji(true);
+                }
               }}
               title="إيموجي"
             >
@@ -309,7 +763,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, replyToMsg, onCancelR
             maxLength={1000}
           />
         </div>
-        <Button type="submit" disabled={(!message.trim() && !selectedVideo) || isSending} className={`h-10 w-10 rounded-xl p-0 shadow-lg ${message.trim() || selectedVideo ? "bg-primary shadow-primary/20" : "bg-slate-100 text-muted-foreground"}`}>
+        <Button type="submit" disabled={(!message.trim() && !selectedVideo && pendingFiles.length === 0) || isSending || isUploading} className={`h-10 w-10 rounded-xl p-0 shadow-lg ${message.trim() || selectedVideo || pendingFiles.length > 0 ? "bg-primary shadow-primary/20" : "bg-slate-100 text-muted-foreground"}`}>
           {isSending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
         </Button>
       </form>
@@ -591,7 +1045,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
     }
   }, [messages]);
 
-  const handleSendMessage = useCallback(async (text: string) => {
+  const handleSendMessage = useCallback(async (text: string, animatedFaceUrls?: string[]) => {
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const currentReplyTo = replyToMsg;
@@ -614,6 +1068,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
       replyToId: currentReplyTo?.id || undefined,
       replyToText: currentReplyTo?.text || undefined,
       replyToSenderName: currentReplyTo?.user || undefined,
+      animatedFaces: animatedFaceUrls && animatedFaceUrls.length > 0 ? animatedFaceUrls : undefined,
       createdAt: new Date().toISOString(),
       pending: true,
     };
@@ -646,6 +1101,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
         replyToId: currentReplyTo?.id || undefined,
         replyToText: currentReplyTo?.text || undefined,
         replyToSenderName: currentReplyTo?.user || undefined,
+        animatedFaces: animatedFaceUrls && animatedFaceUrls.length > 0 ? animatedFaceUrls : undefined,
       }, (res: any) => {
         if (settled) return;
         settled = true;
@@ -662,6 +1118,224 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
             ),
           );
           setError(res?.message || "فشل إرسال الرسالة");
+        }
+        resolve();
+      });
+    });
+  }, [roomId, mergeMessages, replyToMsg]);
+
+  const handleSendMedia = useCallback(async (mediaUrl: string, mediaType: "image" | "video" | "audio", text?: string, mediaUrls?: string[]) => {
+    const user = getStoredUser();
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const currentReplyTo = replyToMsg;
+
+    const pendingMessage: ChatMessage = {
+      id: clientId,
+      clientId,
+      user: user.name,
+      role: user.role,
+      text: text || (mediaType === "audio" ? "🎤 رسالة صوتية" : ""),
+      avatar: user.avatar,
+      countryCode: user.countryCode,
+      avatarFrameUrl: user.avatarFrameUrl,
+      giftIconUrl: user.giftIconUrl,
+      messageBubbleStyle: user.messageBubbleStyle,
+      color: user.role === "admin" ? "text-red-600" : "text-foreground",
+      isOwner: user.role === "admin",
+      reactions: {},
+      replyToId: currentReplyTo?.id || undefined,
+      replyToText: currentReplyTo?.text || undefined,
+      replyToSenderName: currentReplyTo?.user || undefined,
+      mediaUrl,
+      mediaUrls,
+      mediaType,
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+
+    mergeMessages([pendingMessage]);
+    setReplyToMsg(null);
+
+    return new Promise<void>((resolve) => {
+      const socket = getSocket();
+      let settled = false;
+
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        setMessages((current) =>
+          current.map((item) =>
+            item.clientId === clientId
+              ? { ...item, pending: false, failed: true, text: `${item.text} - لم يصل رد السيرفر` }
+              : item,
+          ),
+        );
+        setError("تعذر إرسال الرسالة. تحقق من اتصال السيرفر.");
+        resolve();
+      }, 8000);
+
+      socket.emit("room_message", {
+        roomId,
+        text: text || "",
+        clientId,
+        replyToId: currentReplyTo?.id || undefined,
+        replyToText: currentReplyTo?.text || undefined,
+        replyToSenderName: currentReplyTo?.user || undefined,
+        mediaUrl,
+        mediaUrls,
+        mediaType,
+      }, (res: any) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+
+        if (res?.success && res.message) {
+          mergeMessages([res.message]);
+        } else {
+          setMessages((current) =>
+            current.map((item) =>
+              item.clientId === clientId
+                ? { ...item, pending: false, failed: true, text: `${item.text} - فشل الإرسال` }
+                : item,
+            ),
+          );
+          setError(res?.message || "فشل إرسال الرسالة");
+        }
+        resolve();
+      });
+    });
+  }, [roomId, mergeMessages, replyToMsg]);
+
+  const handleSendAnimatedFace = useCallback(async (faceUrl: string) => {
+    const user = getStoredUser();
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const currentReplyTo = replyToMsg;
+
+    const pendingMessage: ChatMessage = {
+      id: clientId,
+      clientId,
+      user: user.name,
+      role: user.role,
+      text: "",
+      avatar: user.avatar,
+      countryCode: user.countryCode,
+      avatarFrameUrl: user.avatarFrameUrl,
+      giftIconUrl: user.giftIconUrl,
+      messageBubbleStyle: user.messageBubbleStyle,
+      color: user.role === "admin" ? "text-red-600" : "text-foreground",
+      isOwner: user.role === "admin",
+      reactions: {},
+      replyToId: currentReplyTo?.id || undefined,
+      replyToText: currentReplyTo?.text || undefined,
+      replyToSenderName: currentReplyTo?.user || undefined,
+      animatedFaces: [faceUrl],
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+
+    mergeMessages([pendingMessage]);
+    setReplyToMsg(null);
+
+    return new Promise<void>((resolve) => {
+      const socket = getSocket();
+      let settled = false;
+
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        setMessages((current) =>
+          current.map((item) =>
+            item.clientId === clientId
+              ? { ...item, pending: false, failed: true }
+              : item,
+          ),
+        );
+        resolve();
+      }, 8000);
+
+      socket.emit("room_message", {
+        roomId,
+        text: "",
+        clientId,
+        replyToId: currentReplyTo?.id || undefined,
+        replyToText: currentReplyTo?.text || undefined,
+        replyToSenderName: currentReplyTo?.user || undefined,
+        animatedFaces: [faceUrl],
+      }, (res: any) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+
+        if (res?.success && res.message) {
+          mergeMessages([res.message]);
+        }
+        resolve();
+      });
+    });
+  }, [roomId, mergeMessages, replyToMsg]);
+
+  const handleSendSticker = useCallback(async (stickerUrl: string) => {
+    const user = getStoredUser();
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const currentReplyTo = replyToMsg;
+
+    const pendingMessage: ChatMessage = {
+      id: clientId,
+      clientId,
+      user: user.name,
+      role: user.role,
+      text: "",
+      avatar: user.avatar,
+      countryCode: user.countryCode,
+      avatarFrameUrl: user.avatarFrameUrl,
+      giftIconUrl: user.giftIconUrl,
+      messageBubbleStyle: user.messageBubbleStyle,
+      color: user.role === "admin" ? "text-red-600" : "text-foreground",
+      isOwner: user.role === "admin",
+      reactions: {},
+      replyToId: currentReplyTo?.id || undefined,
+      replyToText: currentReplyTo?.text || undefined,
+      replyToSenderName: currentReplyTo?.user || undefined,
+      sticker: stickerUrl,
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+
+    mergeMessages([pendingMessage]);
+    setReplyToMsg(null);
+
+    return new Promise<void>((resolve) => {
+      const socket = getSocket();
+      let settled = false;
+
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        setMessages((current) =>
+          current.map((item) =>
+            item.clientId === clientId
+              ? { ...item, pending: false, failed: true }
+              : item,
+          ),
+        );
+        resolve();
+      }, 8000);
+
+      socket.emit("room_message", {
+        roomId,
+        text: "",
+        clientId,
+        replyToId: currentReplyTo?.id || undefined,
+        replyToText: currentReplyTo?.text || undefined,
+        replyToSenderName: currentReplyTo?.user || undefined,
+        sticker: stickerUrl,
+      }, (res: any) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+
+        if (res?.success && res.message) {
+          mergeMessages([res.message]);
         }
         resolve();
       });
@@ -812,6 +1486,19 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
               </div>
 
               <div className="flex items-center gap-2 mt-1">
+                {msg.animatedFaces && msg.animatedFaces.length > 0 && !msg.text && !msg.replyToId && !msg.mediaUrl && !msg.mediaUrls?.length ? (
+                  /* فيس متحرك - بدون فقاعة */
+                  <div className="py-0.5 flex items-center gap-0.5">
+                    {msg.animatedFaces.map((faceUrl, i) => (
+                      <img key={i} src={faceUrl} alt="فيس متحرك" className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+                    ))}
+                  </div>
+                ) : msg.sticker && !msg.text && !msg.replyToId && !msg.mediaUrl && !msg.mediaUrls?.length ? (
+                  /* ملصق فقط - بدون فقاعة */
+                  <div className="py-0.5">
+                    <img src={msg.sticker} alt="ملصق" className="w-[120px] h-[120px] object-contain" />
+                  </div>
+                ) : (
                 <div className={`relative inline-block max-w-[90%] rounded-2xl rounded-tl-none border p-2.5 shadow-sm ${getMessageBubbleClass(msg)}`}>
                   {/* اقتباس الرد */}
                   {msg.replyToId && (
@@ -828,7 +1515,68 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
                     </div>
                   )}
 
-                  <p className="break-words text-xs font-bold leading-relaxed">{msg.text}</p>
+                  {/* ملصق */}
+                  {msg.sticker && (
+                    <div className="py-1">
+                      {msg.sticker.startsWith("/") || msg.sticker.startsWith("http") ? (
+                        <img src={msg.sticker} alt="ملصق" className="w-[100px] h-[100px] object-contain" />
+                      ) : (
+                        <span className="text-5xl leading-none select-none">{msg.sticker}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* صورة أو فيديو */}
+                  {msg.mediaType === "image" && (msg.mediaUrls?.length || msg.mediaUrl) && (
+                    <div className="mb-2">
+                      {msg.mediaUrls && msg.mediaUrls.length > 1 ? (
+                        <div className={`grid gap-1 ${msg.mediaUrls.length === 2 ? "grid-cols-2" : msg.mediaUrls.length <= 4 ? "grid-cols-2" : "grid-cols-3"}`}>
+                          {msg.mediaUrls.map((url, idx) => (
+                            <div
+                              key={idx}
+                              className="relative rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition bg-muted"
+                              onClick={() => window.open(url, "_blank")}
+                            >
+                              <img
+                                src={url}
+                                alt={`صورة ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                                style={{ minHeight: 80, maxHeight: 180 }}
+                                loading="lazy"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <img
+                          src={msg.mediaUrls?.[0] || msg.mediaUrl}
+                          alt="صورة"
+                          className="max-w-[250px] max-h-[250px] rounded-xl object-cover cursor-pointer hover:opacity-90 transition"
+                          onClick={() => window.open(msg.mediaUrls?.[0] || msg.mediaUrl || "", "_blank")}
+                          loading="lazy"
+                        />
+                      )}
+                    </div>
+                  )}
+                  {msg.mediaType === "video" && msg.mediaUrl && (
+                    <div className="mb-2">
+                      <video
+                        controls
+                        preload="metadata"
+                        className="max-w-[280px] max-h-[250px] rounded-xl"
+                        src={msg.mediaUrl}
+                      />
+                    </div>
+                  )}
+
+                  {/* مشغل الصوت */}
+                  {msg.mediaType === "audio" && msg.mediaUrl && (
+                    <div className="mb-2 min-w-[200px]">
+                      <VoiceMessagePlayer src={msg.mediaUrl} />
+                    </div>
+                  )}
+
+                  {msg.text && <p className="break-words text-xs font-bold leading-relaxed inline">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
                   {!isSystem && findYouTubeLinks(msg.text).map((link) => (
                     <YouTubePreviewCard
                       key={link}
@@ -864,6 +1612,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* أزرار التفاعل والرد */}
                 {!isSystem && !msg.pending && !msg.failed && (
@@ -958,6 +1707,9 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
       <ChatInputArea
         roomId={roomId}
         onSendMessage={handleSendMessage}
+        onSendMedia={handleSendMedia}
+        onSendSticker={handleSendSticker}
+        onSendAnimatedFace={handleSendAnimatedFace}
         replyToMsg={replyToMsg}
         onCancelReply={() => setReplyToMsg(null)}
       />

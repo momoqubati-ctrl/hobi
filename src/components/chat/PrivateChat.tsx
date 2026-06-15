@@ -8,9 +8,34 @@ import { ArrowRight, Loader2, Send, Wifi, WifiOff, ImagePlus, X, SmilePlus, Repl
 import EmojiPickerPopover, { EmojiPanel } from "./EmojiPickerPopover";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
 import { compressImage, COMPRESS_PRESETS } from "@/lib/image-compress";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
+
+const FACE_MARKER_RE = /\u200B\[\[FACE:(\d+)\]\]\u200B/g;
+
+const renderTextWithFaces = (text: string, faceUrls?: string[]) => {
+  if (!faceUrls || faceUrls.length === 0) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  FACE_MARKER_RE.lastIndex = 0;
+  while ((match = FACE_MARKER_RE.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`t${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+    const idx = parseInt(match[1], 10);
+    if (faceUrls[idx]) {
+      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "1.4rem", height: "1.4rem" }} />);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(<span key={`t${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+  return <>{parts}</>;
+};
 
 // ─── أنواع البيانات ──────────────────────────────────────────────────────────
 
@@ -42,6 +67,7 @@ interface PMMessage {
   replyToSenderName?: string;
   replyToMediaUrl?: string;
   replyToMediaType?: "image" | "video";
+  animatedFaces?: string[];
   createdAt: string;
   read: boolean;
   pending?: boolean;
@@ -53,6 +79,33 @@ interface PendingMedia {
   previewUrl: string;
   type: "image" | "video";
 }
+
+const normalizePrivateMessage = (
+  raw: any,
+  fallback: Pick<PMMessage, "clientId" | "conversationId" | "senderId" | "senderName" | "senderAvatar" | "receiverId" | "text" | "mediaUrl" | "mediaType" | "replyToId" | "replyToText" | "replyToSenderName" | "replyToMediaUrl" | "replyToMediaType" | "animatedFaces">,
+): PMMessage => ({
+  id: String(raw?.id || fallback.clientId || `pm_${Date.now()}`),
+  clientId: fallback.clientId,
+  conversationId: String(raw?.conversationId || raw?.conversation_id || fallback.conversationId),
+  senderId: String(raw?.senderId || raw?.sender_id || fallback.senderId),
+  senderName: String(raw?.senderName || fallback.senderName || ""),
+  senderAvatar: String(raw?.senderAvatar || fallback.senderAvatar || ""),
+  receiverId: String(raw?.receiverId || raw?.receiver_id || fallback.receiverId),
+  text: String(raw?.text ?? raw?.body ?? fallback.text ?? ""),
+  mediaUrl: raw?.mediaUrl || fallback.mediaUrl,
+  mediaType: raw?.mediaType || fallback.mediaType,
+  reactions: raw?.reactions || {},
+  replyToId: raw?.replyToId || fallback.replyToId,
+  replyToText: raw?.replyToText || fallback.replyToText,
+  replyToSenderName: raw?.replyToSenderName || fallback.replyToSenderName,
+  replyToMediaUrl: raw?.replyToMediaUrl || fallback.replyToMediaUrl,
+  replyToMediaType: raw?.replyToMediaType || fallback.replyToMediaType,
+  animatedFaces: raw?.animatedFaces || fallback.animatedFaces,
+  createdAt: String(raw?.createdAt || raw?.created_at || new Date().toISOString()),
+  read: Boolean(raw?.read || raw?.readAt || raw?.read_at),
+  pending: false,
+  failed: false,
+});
 
 interface PrivateChatProps {
   conversationId: string;
@@ -82,21 +135,44 @@ const PrivateChat = ({
   const [sending, setSending] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [socketConnected, setSocketConnected] = useState(true);
+  const [otherUserData, setOtherUserData] = useState(otherUser);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [uploading, setUploading] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [replyToMsg, setReplyToMsg] = useState<PMMessage | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
-  const [activeEmojiCat, setActiveEmojiCat] = useState("smileys");
+  const [activeEmojiCat, setActiveEmojiCat] = useState("animated");
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reactionPickerRef = useRef<HTMLDivElement>(null);
-  const { setPmUnreadCount } = useRealtimeStore();
+  const { setPmUnreadCount, onlineUsers } = useRealtimeStore();
   const [selectedVideo, setSelectedVideo] = useState<YTVideo | null>(null);
   const [showYouTubeSearch, setShowYouTubeSearch] = useState(false);
   const [activeYouTubeEmbedUrl, setActiveYouTubeEmbedUrl] = useState<string | null>(null);
+  const inputAreaRef = useRef<HTMLDivElement>(null);
+  const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+
+  useEffect(() => {
+    fetchAnimatedFaces().then((f) => { if (f.length > 0) setAnimatedFaces(f); });
+  }, []);
+
+  const closeAllPanels = useCallback(() => {
+    setShowEmoji(false);
+    setShowYouTubeSearch(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showEmoji && !showYouTubeSearch) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (inputAreaRef.current && !inputAreaRef.current.contains(e.target as Node)) {
+        closeAllPanels();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showEmoji, showYouTubeSearch, closeAllPanels]);
 
   useEffect(() => {
     setSelectedVideo(null);
@@ -223,6 +299,32 @@ const PrivateChat = ({
       const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
       msgText = msgText ? `${msgText}\n${videoUrl}` : videoUrl;
     }
+
+    // Check for animated face shortcuts within text
+    let animatedFaceUrls: string[] | undefined;
+    if (animatedFaces.length > 0 && msgText) {
+      const matchedUrls: string[] = [];
+      let processedText = msgText;
+      for (const face of animatedFaces) {
+        const regex = new RegExp(face.shortcut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        if (regex.test(processedText)) {
+          const faceIdx = matchedUrls.length;
+          const matches = processedText.match(regex);
+          if (matches) {
+            for (let i = 0; i < matches.length; i++) {
+              matchedUrls.push(face.image_url);
+            }
+          }
+          let counter = 0;
+          processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
+        }
+      }
+      if (matchedUrls.length > 0) {
+        msgText = processedText;
+        animatedFaceUrls = matchedUrls;
+      }
+    }
+
     const clientId = `pending_${Date.now()}_${Math.random()}`;
 
     let mediaUrl = "";
@@ -257,6 +359,7 @@ const PrivateChat = ({
       replyToSenderName: replyToMsg?.senderName || undefined,
       replyToMediaUrl: replyToMsg?.mediaUrl || undefined,
       replyToMediaType: replyToMsg?.mediaType || undefined,
+      animatedFaces: animatedFaceUrls,
       createdAt: new Date().toISOString(),
       read: false,
       pending: true,
@@ -264,6 +367,23 @@ const PrivateChat = ({
     };
 
     const currentReplyTo = replyToMsg;
+    const messageFallback = {
+      clientId,
+      conversationId,
+      senderId: currentUserId,
+      senderName: currentUser?.name || currentUser?.username || "",
+      senderAvatar: myAvatar,
+      receiverId: otherUser.id,
+      text: msgText,
+      mediaUrl: mediaUrl || undefined,
+      mediaType,
+      replyToId: currentReplyTo?.id || undefined,
+      replyToText: currentReplyTo?.text || undefined,
+      replyToSenderName: currentReplyTo?.senderName || undefined,
+      replyToMediaUrl: currentReplyTo?.mediaUrl || undefined,
+      replyToMediaType: currentReplyTo?.mediaType || undefined,
+      animatedFaces: animatedFaceUrls,
+    };
     setMessages(prev => [...prev, pendingMsg]);
     setText("");
     setPendingMedia(null);
@@ -274,7 +394,10 @@ const PrivateChat = ({
 
     socket.emit("pm:stop_typing", { toUserId: otherUser.id });
 
-    socket.emit(
+    const socketWithTimeout =
+      typeof (socket as any).timeout === "function" ? (socket as any).timeout(8000) : socket;
+
+    socketWithTimeout.emit(
       "pm:send",
       {
         toUserId: otherUser.id,
@@ -283,18 +406,50 @@ const PrivateChat = ({
         mediaUrl: mediaUrl || undefined,
         mediaType,
         replyToId: currentReplyTo?.id || undefined,
+        animatedFaces: animatedFaceUrls && animatedFaceUrls.length > 0 ? animatedFaceUrls : undefined,
       },
-      (res: any) => {
+      async (ackErrorOrRes: any, ackRes?: any) => {
+        const res = ackRes ?? (ackErrorOrRes?.message === "operation has timed out" ? null : ackErrorOrRes);
         setSending(false);
         if (res?.success && res.message) {
+          const sentMessage = normalizePrivateMessage(res.message, messageFallback);
           setMessages(prev =>
             prev.map(m =>
               m.clientId === clientId
-                ? { ...res.message, pending: false, failed: false }
+                ? sentMessage
                 : m,
             ),
           );
         } else {
+          if (!mediaUrl) {
+            try {
+              const apiRes = await fetch("/api/pm/send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  senderId: currentUserId,
+                  receiverId: otherUser.id,
+                  text: msgText,
+                  clientId,
+                  animatedFaces: animatedFaceUrls && animatedFaceUrls.length > 0 ? animatedFaceUrls : undefined,
+                }),
+              });
+              const apiData = await apiRes.json();
+              if (apiRes.ok && apiData?.success && apiData.message) {
+                const sentMessage = normalizePrivateMessage(apiData.message, messageFallback);
+                setMessages(prev =>
+                  prev.map(m =>
+                    m.clientId === clientId
+                      ? sentMessage
+                      : m,
+                  ),
+                );
+                return;
+              }
+            } catch {
+              // keep failed state below
+            }
+          }
           setMessages(prev =>
             prev.map(m =>
               m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
@@ -303,7 +458,7 @@ const PrivateChat = ({
         }
       },
     );
-  }, [text, pendingMedia, sending, conversationId, currentUserId, otherUser.id, uploadFile, replyToMsg, selectedVideo]);
+  }, [text, pendingMedia, sending, conversationId, currentUserId, otherUser.id, uploadFile, replyToMsg, selectedVideo, animatedFaces, currentUser?.name, currentUser?.username, myAvatar]);
 
   // ─── جلب السجل التاريخي ──────────────────────────────────────────────────
 
@@ -415,6 +570,17 @@ const PrivateChat = ({
     socket.on("disconnect", onDisconnect);
     setSocketConnected(socket.connected);
 
+    // تحديث بيانات المستخدم الآخر عند تغيير البروفايل
+    const onUserProfileUpdated = (data: any) => {
+      if (!data?.userId || String(data.userId) !== String(otherUser.id)) return;
+      setOtherUserData(prev => ({
+        ...prev,
+        name: data.username || prev.name,
+        avatar: data.avatar || data.avatarUrl || prev.avatar,
+      }));
+    };
+    socket.on("user_profile_updated", onUserProfileUpdated);
+
     return () => {
       socket.off("pm:message", onMessage);
       socket.off("pm:typing", onTyping);
@@ -423,6 +589,7 @@ const PrivateChat = ({
       socket.off("pm:reaction", onReaction);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
+      socket.off("user_profile_updated", onUserProfileUpdated);
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     };
   }, [conversationId, otherUser.id, loadHistory]);
@@ -597,6 +764,11 @@ const PrivateChat = ({
 
   const canSend = (text.trim().length > 0 || !!pendingMedia || !!selectedVideo) && !sending && !uploading;
 
+  // استخدام بيانات الأونلاين إذا كانت محدثة (أولوية أعلى)
+  const onlineUser = onlineUsers.find(u => String(u.id) === String(otherUserData.id));
+  const resolvedAvatar = onlineUser?.avatar || otherUserData.avatar || "/pic.png";
+  const resolvedName = onlineUser?.username || onlineUser?.name || otherUserData.name;
+
   return (
     <div className="flex flex-col h-full" dir="rtl">
 
@@ -607,16 +779,16 @@ const PrivateChat = ({
         </Button>
         <Avatar
           className="w-10 h-10 rounded-xl cursor-pointer transition hover:scale-105 shrink-0"
-          onClick={() => onOpenProfile?.(otherUser.id)}
+          onClick={() => onOpenProfile?.(otherUserData.id)}
         >
-          <AvatarImage src={otherUser.avatar || "/pic.png"} />
-          <AvatarFallback className="rounded-xl">{otherUser.name?.[0]}</AvatarFallback>
+          <AvatarImage src={resolvedAvatar} />
+          <AvatarFallback className="rounded-xl">{resolvedName?.[0]}</AvatarFallback>
         </Avatar>
         <div
           className="flex-1 min-w-0 cursor-pointer"
-          onClick={() => onOpenProfile?.(otherUser.id)}
+          onClick={() => onOpenProfile?.(otherUserData.id)}
         >
-          <h4 className="font-black text-sm hover:underline truncate">{otherUser.name}</h4>
+          <h4 className="font-black text-sm hover:underline truncate">{resolvedName}</h4>
           {isTyping ? (
             <p className="text-[10px] text-primary font-bold animate-pulse">يكتب...</p>
           ) : (
@@ -665,7 +837,7 @@ const PrivateChat = ({
               <Send size={24} className="text-primary" />
             </div>
             <p className="text-sm font-bold text-foreground">ابدأ المحادثة</p>
-            <p className="text-[11px] text-muted-foreground mt-1">أرسل رسالة لبدء الدردشة مع {otherUser.name}</p>
+            <p className="text-[11px] text-muted-foreground mt-1">أرسل رسالة لبدء الدردشة مع {resolvedName}</p>
           </div>
         ) : (
           groupedMessages.map(group => (
@@ -774,7 +946,7 @@ const PrivateChat = ({
                           )}
 
                           {renderMedia(msg)}
-                          {msg.text && <p dir="auto">{msg.text}</p>}
+                          {msg.text && <p dir="auto">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
                           {msg.text && findYouTubeLinks(msg.text).map((link) => (
                             <YouTubePreviewCard
                               key={link}
@@ -809,10 +981,10 @@ const PrivateChat = ({
                       {!isMine && (
                         <Avatar
                           className="w-7 h-7 rounded-lg shrink-0 cursor-pointer hover:scale-110 transition"
-                          onClick={() => onOpenProfile?.(otherUser.id)}
+                          onClick={() => onOpenProfile?.(otherUserData.id)}
                         >
-                          <AvatarImage src={otherUser.avatar || "/pic.png"} />
-                          <AvatarFallback className="text-[9px]">{otherUser.name?.[0]}</AvatarFallback>
+                          <AvatarImage src={resolvedAvatar} />
+                          <AvatarFallback className="text-[9px]">{resolvedName?.[0]}</AvatarFallback>
                         </Avatar>
                       )}
                     </div>
@@ -826,8 +998,8 @@ const PrivateChat = ({
         {isTyping && (
           <div className="flex justify-end items-end gap-2">
             <Avatar className="w-7 h-7 rounded-lg shrink-0">
-              <AvatarImage src={otherUser.avatar || "/pic.png"} />
-              <AvatarFallback className="text-[9px]">{otherUser.name?.[0]}</AvatarFallback>
+              <AvatarImage src={resolvedAvatar} />
+              <AvatarFallback className="text-[9px]">{resolvedName?.[0]}</AvatarFallback>
             </Avatar>
             <div className="bg-white dark:bg-slate-800 rounded-2xl rounded-bl-sm px-4 py-3 border border-border shadow-sm">
               <div className="flex gap-1 items-center">
@@ -898,7 +1070,7 @@ const PrivateChat = ({
       )}
 
       {/* حقل الإدخال */}
-      <div className="flex flex-col border-t bg-white dark:bg-slate-900 shadow-sm relative">
+      <div ref={inputAreaRef} className="flex flex-col border-t bg-white dark:bg-slate-900 shadow-sm relative">
         {/* معاينة الفيديو المختار من يوتيوب */}
         {selectedVideo && (
           <div className="px-4 pt-2 border-b bg-white dark:bg-slate-900">
@@ -970,8 +1142,12 @@ const PrivateChat = ({
             size="icon"
             className={`rounded-xl h-10 w-10 shrink-0 transition-colors ${showYouTubeSearch ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "text-muted-foreground hover:text-red-500"}`}
             onClick={() => {
-              setShowYouTubeSearch(!showYouTubeSearch);
-              setShowEmoji(false);
+              if (showYouTubeSearch) {
+                closeAllPanels();
+              } else {
+                closeAllPanels();
+                setShowYouTubeSearch(true);
+              }
             }}
             disabled={!socketConnected}
             title="بحث YouTube"
@@ -994,8 +1170,12 @@ const PrivateChat = ({
               size="icon"
               className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-yellow-500 shrink-0"
               onClick={() => {
-                setShowEmoji(true);
-                setShowYouTubeSearch(false);
+                if (showEmoji) {
+                  closeAllPanels();
+                } else {
+                  closeAllPanels();
+                  setShowEmoji(true);
+                }
               }}
               title="إيموجي"
             >

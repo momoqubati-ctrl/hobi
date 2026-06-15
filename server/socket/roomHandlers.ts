@@ -232,7 +232,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   /**
    * إرسال رسالة في غرفة (مع الفلترة)
    */
-  socket.on("room_message", async (data: { roomId: string; text: string; clientId?: string; replyToId?: string; replyToText?: string; replyToSenderName?: string }, callback?: (res: any) => void) => {
+  socket.on("room_message", async (data: { roomId: string; text: string; clientId?: string; replyToId?: string; replyToText?: string; replyToSenderName?: string; mediaUrl?: string; mediaUrls?: string[]; mediaType?: "image" | "video" | "audio"; sticker?: string; animatedFaces?: string[] }, callback?: (res: any) => void) => {
     try {
       const roomId = String(data?.roomId || "").trim();
       const text = String(data?.text || "").trim();
@@ -240,22 +240,25 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const replyToId = data?.replyToId || "";
       const clientReplyToText = data?.replyToText || "";
       const clientReplyToSenderName = data?.replyToSenderName || "";
+      const mediaUrl = data?.mediaUrl || "";
+      const mediaType = data?.mediaType;
 
-      if (!roomId || !text) {
+      if (!roomId || (!text && !mediaUrl && !data?.sticker && !data?.animatedFaces?.length)) {
         callback?.({ success: false, message: "البيانات ناقصة" });
         return;
       }
 
       // --- تطبيق الفلترة الذكية ---
-      const filterResult = await processText({
-        text,
+      const finalText = text || (mediaType === "audio" ? "🎤 رسالة صوتية" : "");
+      const filterResult = finalText ? await processText({
+        text: finalText,
         source: roomId,
         user: {
           username: user.username,
           topic: user.username,
           ip: socket.handshake.address || "127.0.0.1",
         },
-      });
+      }) : { filteredText: finalText };
 
       // ─── جلب بيانات الرسالة المردود عليها ──────────────────────────────────
       let replyToText = "";
@@ -288,6 +291,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         replyToId: replyToId || undefined,
         replyToText: replyToText || undefined,
         replyToSenderName: replyToSenderName || undefined,
+        mediaUrl: mediaUrl || undefined,
+        mediaUrls: data?.mediaUrls || undefined,
+        mediaType: mediaType || undefined,
+        sticker: data?.sticker || undefined,
+        animatedFaces: data?.animatedFaces && data.animatedFaces.length > 0 ? data.animatedFaces : undefined,
       });
 
       publishSocketEvent(roomId, "new_message", {

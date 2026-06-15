@@ -104,6 +104,7 @@ const NotificationsList = ({ compact, onClose }: NotificationsListProps) => {
     isLoadingNotifications: loading,
     markNotificationRead,
     markAllNotificationsRead,
+    onlineUsers,
   } = useRealtimeStore();
 
   const handleMarkAllRead = () => {
@@ -182,7 +183,7 @@ const NotificationsList = ({ compact, onClose }: NotificationsListProps) => {
                   onClick={() => { if (!isRead) handleMarkRead(n.id); }}
                 >
                   <Avatar className="w-9 h-9 rounded-xl shrink-0">
-                    <AvatarImage src={n.actor?.avatar || "/pic.png"} />
+                    <AvatarImage src={onlineUsers.find(u => String(u.id) === String(n.actorId))?.avatar || n.actor?.avatar || "/pic.png"} />
                     <AvatarFallback className="rounded-xl text-[10px]">{n.actor?.name?.[0]}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">

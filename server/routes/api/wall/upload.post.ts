@@ -13,6 +13,7 @@ const verifySignature = (payload: string, signature: string) => {
 
 const ALLOWED_IMAGE = ["jpg", "jpeg", "png", "webp", "gif"];
 const ALLOWED_VIDEO = ["mp4", "webm", "mov", "avi"];
+const ALLOWED_AUDIO = ["mp3", "wav", "ogg", "m4a", "webm"];
 
 export default defineEventHandler(async (event) => {
   try {
@@ -38,15 +39,16 @@ export default defineEventHandler(async (event) => {
     const extension = matches ? matches[1].toLowerCase() : "";
     const isImage = ALLOWED_IMAGE.includes(extension);
     const isVideo = ALLOWED_VIDEO.includes(extension);
+    const isAudio = ALLOWED_AUDIO.includes(extension);
 
-    if (!isImage && !isVideo) {
+    if (!isImage && !isVideo && !isAudio) {
       return { success: false, message: "نوع الملف غير مدعوم" };
     }
 
     const buffer = Buffer.from(body.file, "base64");
-    const maxSize = isVideo ? 50 * 1024 * 1024 : 5 * 1024 * 1024;
+    const maxSize = isVideo ? 50 * 1024 * 1024 : isAudio ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
     if (buffer.length > maxSize) {
-      return { success: false, message: isVideo ? "حجم الفيديو يتجاوز 50 ميجابايت" : "حجم الصورة يتجاوز 5 ميجابايت" };
+      return { success: false, message: isVideo ? "حجم الفيديو يتجاوز 50 ميجابايت" : isAudio ? "حجم الصوت يتجاوز 10 ميجابايت" : "حجم الصورة يتجاوز 5 ميجابايت" };
     }
 
     const savedPath = saveUploadBuffer({
@@ -60,7 +62,7 @@ export default defineEventHandler(async (event) => {
       return { success: false, message: "فشل حفظ الملف" };
     }
 
-    return { success: true, url: savedPath, type: isImage ? "image" : "video" };
+    return { success: true, url: savedPath, type: isImage ? "image" : isAudio ? "audio" : "video" };
   } catch (err) {
     console.error("[Wall Upload] Error:", err);
     return { success: false, message: "حدث خطأ أثناء رفع الملف" };

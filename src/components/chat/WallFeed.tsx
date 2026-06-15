@@ -470,8 +470,8 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
       <div className="p-3">
         <div className="flex gap-2 mb-3">
           <Avatar className="w-9 h-9 rounded-lg">
-            <AvatarImage src={currentUser.avatar || "/pic.png"} />
-            <AvatarFallback>{currentUser.name?.[0]}</AvatarFallback>
+            <AvatarImage src={currentUser?.avatar || "/pic.png"} />
+            <AvatarFallback>{currentUser?.name?.[0]}</AvatarFallback>
           </Avatar>
           <Input
             placeholder="بماذا تفكر؟"

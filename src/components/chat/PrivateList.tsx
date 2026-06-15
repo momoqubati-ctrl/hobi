@@ -83,6 +83,27 @@ const PrivateList = ({
         setConversations(res.conversations);
         const total = res.conversations.reduce((s: number, c: Conversation) => s + c.unreadCount, 0);
         setPmUnreadCount(total);
+
+        // جلب البيانات الحديثة لكل مستخدم لديه اسم "عضو" أو صورة افتراضية
+        for (const conv of res.conversations) {
+          const other = conv.otherUser;
+          if (other?.id && (other.name === "عضو" || other.name === "..." || other.avatar === "/pic.png")) {
+            fetch(`/api/pm/user?userId=${other.id}`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.success && data.user) {
+                  setConversations(prev =>
+                    prev.map(c =>
+                      c.conversationId === conv.conversationId
+                        ? { ...c, otherUser: data.user }
+                        : c,
+                    ),
+                  );
+                }
+              })
+              .catch(() => {});
+          }
+        }
       }
       setLoading(false);
       hasLoadedRef.current = true;
@@ -130,6 +151,23 @@ const PrivateList = ({
               : { id: msg.senderId, name: msg.senderName || "عضو", avatar: msg.senderAvatar || "/pic.png" },
             unreadCount: isOpen ? 0 : (msg.receiverId === currentUser?.id ? 1 : 0),
           };
+          // جلب البيانات الحقيقية للمستخدم الآخر إذا كان المرسل هو الحالي
+          if (msg.senderId === currentUser?.id && msg.receiverId) {
+            fetch(`/api/pm/user?userId=${msg.receiverId}`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.success && data.user) {
+                  setConversations(prev =>
+                    prev.map(c =>
+                      c.conversationId === msg.conversationId
+                        ? { ...c, otherUser: data.user }
+                        : c,
+                    ),
+                  );
+                }
+              })
+              .catch(() => {});
+          }
           return [newConv, ...prev];
         }
       });
@@ -142,6 +180,27 @@ const PrivateList = ({
 
     socket.on("pm:message", onNewMessage);
 
+    // تحديث بيانات المستخدمين عند تغيير البروفايل
+    const onUserProfileUpdated = (data: any) => {
+      if (!data?.userId) return;
+      setConversations(prev =>
+        prev.map(c => {
+          if (String(c.otherUser.id) === String(data.userId)) {
+            return {
+              ...c,
+              otherUser: {
+                ...c.otherUser,
+                name: data.username || c.otherUser.name,
+                avatar: data.avatar || data.avatarUrl || c.otherUser.avatar,
+              },
+            };
+          }
+          return c;
+        }),
+      );
+    };
+    socket.on("user_profile_updated", onUserProfileUpdated);
+
     // إعادة الجلب عند إعادة الاتصال (بعد انقطاع)
     const onReconnect = () => {
       fetchConversations();
@@ -150,6 +209,7 @@ const PrivateList = ({
 
     return () => {
       socket.off("pm:message", onNewMessage);
+      socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("connect", onReconnect);
     };
   }, [fetchConversations, currentUser?.id, setPmUnreadCount]);
@@ -207,6 +267,26 @@ const PrivateList = ({
     );
     if (conv.unreadCount > 0) {
       setPmUnreadCount(Math.max(0, pmUnreadRef.current - conv.unreadCount));
+    }
+    // جلب البيانات الحديثة للمستخدم الآخر من قاعدة البيانات
+    const otherId = conv.otherUser?.id;
+    if (otherId && otherId !== "0") {
+      fetch(`/api/pm/user?userId=${otherId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.user) {
+            setSelectedOtherUser(data.user);
+            // تحديث البيانات في قائمة المحادثات أيضاً
+            setConversations(prev =>
+              prev.map(c =>
+                c.conversationId === conv.conversationId
+                  ? { ...c, otherUser: data.user }
+                  : c,
+              ),
+            );
+          }
+        })
+        .catch(() => {});
     }
   }, [setPmUnreadCount]);
 
@@ -304,13 +384,16 @@ const PrivateList = ({
           </div>
         ) : (
           filtered.map(conv => {
-            const onlineUser = onlineUsers.find(u => String(u.id) === String(conv.otherUser.id));
-            const resolvedStatus = onlineUser ? (onlineUser.status || "online") : "offline";
-            const resolvedAvatarFrame = onlineUser?.avatarFrameUrl || "";
-            const resolvedCountry = onlineUser?.countryCode || "";
-            const resolvedIdreg = onlineUser?.idreg || "";
-            const resolvedSiteBadge = onlineUser?.siteBadge || "";
-            const resolvedGiftIcon = onlineUser?.giftIconUrl || "";
+                const onlineUser = onlineUsers.find(u => String(u.id) === String(conv.otherUser.id));
+                const resolvedStatus = onlineUser ? (onlineUser.status || "online") : "offline";
+                const resolvedAvatarFrame = onlineUser?.avatarFrameUrl || "";
+                const resolvedCountry = onlineUser?.countryCode || "";
+                const resolvedIdreg = onlineUser?.idreg || "";
+                const resolvedSiteBadge = onlineUser?.siteBadge || "";
+                const resolvedGiftIcon = onlineUser?.giftIconUrl || "";
+                // استخدام صورة الأونلاين إذا كانت محدثة (أولوية أعلى من الكاش)
+                const resolvedAvatar = onlineUser?.avatar || conv.otherUser.avatar || "/pic.png";
+                const resolvedName = onlineUser?.username || conv.otherUser.name;
             const statusCfg = getStatusConfig(resolvedStatus);
 
             return (
@@ -338,9 +421,9 @@ const PrivateList = ({
                       }
                     >
                       <Avatar className="w-11 h-11 rounded-full border-2 border-background shadow-sm">
-                        <AvatarImage src={conv.otherUser.avatar || "/pic.png"} />
+                        <AvatarImage src={resolvedAvatar} />
                         <AvatarFallback className="rounded-full font-bold">
-                          {conv.otherUser.name?.[0]}
+                          {resolvedName?.[0]}
                         </AvatarFallback>
                       </Avatar>
                     </div>
@@ -361,7 +444,7 @@ const PrivateList = ({
                         className="font-black text-sm text-foreground truncate hover:underline max-w-[130px]"
                         onClick={e => { e.stopPropagation(); onOpenProfile?.(conv.otherUser.id); }}
                       >
-                        {conv.otherUser.name}
+                        {resolvedName}
                       </h4>
                       {resolvedSiteBadge && (
                         <Badge className="h-3.5 text-[7px] px-1 bg-blue-600 text-white border-none rounded font-black shrink-0">

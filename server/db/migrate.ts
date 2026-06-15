@@ -585,6 +585,44 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "files_folder_idx" ON "files" ("folder_path");
     `);
 
+    // ========== جداول الملصقات ==========
+    console.log("[Migration] جاري إنشاء جداول الملصقات...");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "sticker_categories" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(100) NOT NULL,
+        "icon" text DEFAULT '😀',
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS "stickers" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "category_id" uuid NOT NULL REFERENCES "sticker_categories"("id") ON DELETE CASCADE,
+        "name" varchar(100) DEFAULT '',
+        "image_url" text NOT NULL,
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS "stickers_category_idx" ON "stickers" ("category_id");
+    `);
+
+    // ========== جداول الفيسات المتحركة ==========
+    console.log("[Migration] جاري إنشاء جدول الفيسات المتحركة...");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "animated_faces" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "shortcut" varchar(10) NOT NULL UNIQUE,
+        "name" varchar(100) DEFAULT '',
+        "image_url" text NOT NULL,
+        "is_active" boolean DEFAULT true,
+        "sort_order" integer DEFAULT 0,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
     // ========== فهارس الأداء الحرجة ==========
     console.log("[Migration] جاري إنشاء فهارس الأداء...");
 

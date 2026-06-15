@@ -37,6 +37,7 @@ interface PMMessage {
   replyToSenderName?: string;
   replyToMediaUrl?: string;
   replyToMediaType?: "image" | "video";
+  animatedFaces?: string[];
   createdAt: string;
   read: boolean;
 }
@@ -67,8 +68,9 @@ const getOrCreateConv = (userA: PMUser, userB: PMUser): Conversation => {
   }
   const conv = pmStore.get(id)!;
   // تحديث معلومات المستخدمين دائماً بأحدث بيانات
-  if (conv.userA.id === userA.id) conv.userA = userA;
-  else conv.userB = userA;
+  const sorted = [userA, userB].sort((a, b) => a.id.localeCompare(b.id));
+  conv.userA = sorted[0];
+  conv.userB = sorted[1];
   return conv;
 };
 
@@ -112,7 +114,7 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
   // ─── إرسال رسالة خاصة ─────────────────────────────────────────────────────
 
   socket.on("pm:send", async (
-    data: { toUserId: string; text: string; clientId?: string; mediaUrl?: string; mediaType?: "image" | "video"; replyToId?: string },
+    data: { toUserId: string; text: string; clientId?: string; mediaUrl?: string; mediaType?: "image" | "video"; replyToId?: string; animatedFaces?: string[] },
     callback?: (res: any) => void,
   ) => {
     try {
@@ -123,7 +125,7 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
       const mediaType = data?.mediaType;
       const replyToId = data?.replyToId || "";
 
-      if (!toUserId || (!text && !mediaUrl)) {
+      if (!toUserId || (!text && !mediaUrl && !data?.animatedFaces?.length)) {
         return callback?.({ success: false, error: "بيانات الرسالة ناقصة" });
       }
       if (text.length > 1000) {
@@ -191,6 +193,7 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
         replyToSenderName: replyToSenderName || undefined,
         replyToMediaUrl: replyToMediaUrl || undefined,
         replyToMediaType: replyToMediaType || undefined,
+        animatedFaces: data?.animatedFaces && data.animatedFaces.length > 0 ? data.animatedFaces : undefined,
         createdAt: new Date().toISOString(),
         read: false,
       };

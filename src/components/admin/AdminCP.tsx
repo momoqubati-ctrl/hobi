@@ -4,7 +4,7 @@ import React from 'react';
 import { 
   ShieldCheck, Users, MessageSquare, Settings, BarChart3, Lock, Globe, Activity,
   Ban, ShieldAlert, Cpu, Mic, Key, Link as LinkIcon, Database, HardDrive, ListFilter,
-  BadgeAlert, Award, Gift, Wallet, Calculator, Wrench, RefreshCw, Zap
+  BadgeAlert, Award, Gift, Wallet, Calculator, Wrench, RefreshCw, Zap, Sticker, Smile
 } from 'lucide-react';
 
 interface AdminCPProps {
@@ -41,6 +41,8 @@ const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
 
         <NavGroup title="الغرف والتواصل">
           <AdminAction id="rooms" icon={<MessageSquare size={16} />} label="الغرف" activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="stickers" icon={<Sticker size={16} />} label="الملصقات" activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="animatedfaces" icon={<Smile size={16} />} label="فيسات متحركة" activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="roomBadges" icon={<BadgeAlert size={16} />} label="شارات الغرف" activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="siteBadges" icon={<Award size={16} />} label="شارات الموقع" activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="shrt" icon={<MessageSquare size={16} />} label="الإختصارات" activeSection={activeSection} onClick={onChangeSection} />

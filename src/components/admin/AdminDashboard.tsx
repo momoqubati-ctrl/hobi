@@ -14,6 +14,8 @@ import SettingsSection from './sections/SettingsSection';
 import DatabaseSection from './sections/DatabaseSection';
 import BotsAdminSection from './sections/BotsAdminSection';
 import FiltersAdminSection from './sections/FiltersAdminSection';
+import StickersSection from './sections/StickersSection';
+import AnimatedFacesSection from './sections/AnimatedFacesSection';
 import LegacyCpSection from './sections/LegacyCpSection';
 
 // New Modular Sections
@@ -53,6 +55,10 @@ const AdminDashboard = ({ section }: AdminDashboardProps) => {
         return <BotsAdminSection />;
       case "fltr":
         return <FiltersAdminSection />;
+      case "stickers":
+        return <StickersSection />;
+      case "animatedfaces":
+        return <AnimatedFacesSection />;
       case "hostin":
         return <AuditLogsSection />;
       default:

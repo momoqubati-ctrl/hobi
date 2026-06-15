@@ -195,6 +195,30 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
     if (isOpen && !loaded) fetchComments();
   }, [isOpen]);
 
+  // تحديث صورة المؤلف في التعليقات عند تغيير البروفايل
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const onUserProfileUpdated = (data: any) => {
+      if (!data?.userId) return;
+      const currentComments = wallComments[postId] || [];
+      if (currentComments.length === 0) return;
+
+      const updateAuthor = (c: any): any => ({
+        ...c,
+        author: String(c.author?.id) === String(data.userId)
+          ? { ...c.author, name: data.username || c.author.name, avatar: data.avatar || c.author.avatar }
+          : c.author,
+        replies: c.replies?.map(updateAuthor) || [],
+      });
+
+      setComments(postId, currentComments.map(updateAuthor));
+    };
+    socket.on("user_profile_updated", onUserProfileUpdated);
+    return () => { socket.off("user_profile_updated", onUserProfileUpdated); };
+  }, [postId, wallComments, setComments]);
+
   const fetchComments = async () => {
     if (loaded) return;
     setIsLoading(true);

@@ -39,6 +39,11 @@ export type ChatMessage = {
   replyToId?: string;
   replyToText?: string;
   replyToSenderName?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: "image" | "video" | "audio";
+  sticker?: string;
+  animatedFaces?: string[];
   createdAt: string;
 };
 
@@ -211,6 +216,11 @@ export const addMessage = (input: {
   replyToId?: string;
   replyToText?: string;
   replyToSenderName?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: "image" | "video" | "audio";
+  sticker?: string;
+  animatedFaces?: string[];
 }) => {
   // Keep room messages live-only: create the payload, emit it, and discard it.
   const message: ChatMessage = {
@@ -225,7 +235,7 @@ export const addMessage = (input: {
     avatarFrameUrl: input.avatarFrameUrl?.trim().slice(0, 255) || "",
     giftIconUrl: input.giftIconUrl?.trim().slice(0, 255) || "",
     messageBubbleStyle: input.messageBubbleStyle?.trim().slice(0, 64) || "default",
-    text: input.text.trim().slice(0, 1000),
+    text: input.text.trim().slice(0, 1000) || (input.mediaType === "audio" ? "🎤 رسالة صوتية" : ""),
     color: input.role === "admin" ? "text-red-600" : "text-slate-700",
     isOwner: input.role === "admin",
     isSystem: input.isSystem || false,
@@ -233,6 +243,11 @@ export const addMessage = (input: {
     replyToId: input.replyToId || undefined,
     replyToText: input.replyToText || undefined,
     replyToSenderName: input.replyToSenderName || undefined,
+    mediaUrl: input.mediaUrl || undefined,
+    mediaUrls: input.mediaUrls && input.mediaUrls.length > 0 ? input.mediaUrls : undefined,
+    mediaType: input.mediaType || undefined,
+    sticker: input.sticker || undefined,
+    animatedFaces: input.animatedFaces && input.animatedFaces.length > 0 ? input.animatedFaces : undefined,
     createdAt: new Date().toISOString(),
   };
 

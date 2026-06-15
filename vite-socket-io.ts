@@ -24,7 +24,7 @@ export function viteSocketIO(): Plugin {
         allowUpgrades: true,
         pingInterval: 20000,
         pingTimeout: 180000,
-        maxHttpBufferSize: 1e6,
+        maxHttpBufferSize: 5e6,
         cors: {
           origin: "*",
           methods: ["GET", "POST"],
@@ -56,7 +56,7 @@ export function viteSocketIO(): Plugin {
       import("./server/socket/mailHandlers").then(m => { mailHandlers = m; });
       // Private message handlers
       let privateHandlers: any;
-      import("./server/socket/privateHandlers").then(m => { privateHandlers = m; });
+      import("./server/socket/privateHandlers").then(m => { privateHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load privateHandlers:", e));
 
       // ========== Presence Manager (inline) ==========
       type OnlineUser = {
@@ -446,15 +446,20 @@ export function viteSocketIO(): Plugin {
           const roomId = String(data?.roomId || "").trim();
           const text = String(data?.text || "").trim();
           if (!roomId) { callback?.({ success: false, message: "معرف الغرفة مطلوب" }); return; }
-          if (!text) { callback?.({ success: false, message: "نص الرسالة مطلوب" }); return; }
+          if (!text && !data?.mediaUrl && !data?.sticker && !data?.animatedFaces?.length) { callback?.({ success: false, message: "نص الرسالة مطلوب" }); return; }
           if (text.length > 1000) { callback?.({ success: false, message: "الرسالة طويلة جداً" }); return; }
 
           try {
             // --- تطبيق الفلترة ---
             let finalChatText = text;
-            if (filterService) {
+            if (!finalChatText && data?.sticker) {
+              finalChatText = "";
+            } else if (!finalChatText && data?.mediaType === "audio") {
+              finalChatText = "🎤 رسالة صوتية";
+            }
+            if (filterService && finalChatText) {
               const filterRes = await filterService.processText({
-                text,
+                text: finalChatText,
                 source: roomId,
                 user: { username, topic: username, ip: socket.handshake.address || "127.0.0.1" }
               });
@@ -491,6 +496,11 @@ export function viteSocketIO(): Plugin {
               replyToId: replyToId || undefined,
               replyToText: replyToText || undefined,
               replyToSenderName: replyToSenderName || undefined,
+              mediaUrl: data?.mediaUrl || undefined,
+              mediaUrls: data?.mediaUrls || undefined,
+              mediaType: data?.mediaType || undefined,
+              sticker: data?.sticker || undefined,
+              animatedFaces: data?.animatedFaces && data.animatedFaces.length > 0 ? data.animatedFaces : undefined,
             });
 
             io!.to(`room:${roomId}`).emit("new_message", { roomId, message: msg });
