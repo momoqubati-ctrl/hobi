@@ -124,7 +124,11 @@ const AccessLogsSection = () => {
   const formatTime = (ts: string) => {
     if (!ts) return "-";
     const date = new Date(Number(ts));
-    return date.toLocaleTimeString('ar-EG', { hour12: false });
+    return date.toLocaleString('en-US', { 
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false 
+    });
   };
 
   const getUserType = (state: string, username: string) => {
@@ -183,7 +187,7 @@ const AccessLogsSection = () => {
     {
       key: "device",
       label: "الجهاز",
-      render: (val: any) => <span className="text-[9px] font-bold text-slate-400 truncate max-w-[120px] block" title={val}>{val}</span>
+      render: (val: any) => <span className="text-[9px] font-bold text-slate-400 whitespace-nowrap" title={val}>{val || "-"}</span>
     },
     {
       key: "isin",

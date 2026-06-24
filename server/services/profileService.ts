@@ -2,6 +2,9 @@ import { db, dbPool } from "../db";
 import { userProfiles, users, profileVisits, socialEdges } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { redis } from "./redis";
+import { findInMemoryUser } from "./authService";
+import { findSharedUser } from "./sharedUserStore";
+import { normalizeMinioUrl } from "./minioClient";
 
 type ProfileVisitor = {
   id: string;
@@ -31,7 +34,7 @@ const toIsoDate = (value: unknown) => {
 };
 
 const createLegacyProfileResult = (row: any) => {
-  const userId = String(row.uid || row.id || row.idreg || "");
+  const userId = String(row.id || row.uid || row.idreg || "");
   const displayName = String(row.topic || row.username || "");
 
   return {
@@ -41,7 +44,7 @@ const createLegacyProfileResult = (row: any) => {
     displayName,
     role: normalizeRole(row.power, row.username),
     status: "active",
-    avatarUrl: row.pic || "/pic.png",
+    avatarUrl: normalizeMinioUrl(row.pic || "/pic.png"),
     coverUrl: row.pich || "/pich.png",
     countryCode: "SA",
     presence: "online",
@@ -59,7 +62,7 @@ const createLegacyProfileResult = (row: any) => {
       stealth: false,
       youtubeUrl: String(row.youtub || ""),
       autoplayEnabled: false,
-      avatarUrl: row.pic || "/pic.png",
+      avatarUrl: normalizeMinioUrl(row.pic || "/pic.png"),
       bannerUrl: row.pich || "/pich.png",
       themeId: String(row.them || ""),
       avatarFrameUrl: String(row.cover || ""),
@@ -104,8 +107,8 @@ const findLegacyUserProfile = async (profileId: string) => {
   const result = await dbPool.query(
     `SELECT *
      FROM users
-     WHERE uid = $1
-        OR id = $1
+     WHERE CAST(uid AS text) = $1
+        OR CAST(id AS text) = $1
         OR CAST(idreg AS varchar) = $1
         OR CONCAT('#', CAST(idreg AS varchar)) = $1
         OR lower(username) = lower($1)
@@ -123,8 +126,8 @@ const getLegacyProfileStats = async (profileId: string) => {
   const result = await dbPool.query(
     `SELECT rep, coins, evaluation, wall_post_likes, gifts_received_count
      FROM users
-     WHERE uid = $1
-        OR id = $1
+     WHERE CAST(uid AS text) = $1
+        OR CAST(id AS text) = $1
         OR CAST(idreg AS varchar) = $1
         OR CONCAT('#', CAST(idreg AS varchar)) = $1
         OR lower(username) = lower($1)
@@ -277,23 +280,55 @@ export class ProfileService {
       }
     }
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-    });
-
-    if (!user) return null;
-
+    // Fallback to Drizzle
     try {
-      const profile = await db.query.userProfiles.findFirst({
-        where: eq(userProfiles.userId, userId),
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId),
       });
-      return { ...user, profile };
-    } catch (error: any) {
-      if (error?.code === "42P01" || (typeof error?.message === "string" && error.message.includes("user_profiles"))) {
-        console.error("[ProfileService] user_profiles table missing, returning base user data only.");
-        return { ...user, profile: null };
+      if (user) {
+        const profile = await db.query.userProfiles.findFirst({
+          where: eq(userProfiles.userId, userId),
+        });
+        return { ...user, profile };
       }
-      throw error;
+    } catch {}
+
+    // Fallback to in-memory users
+    const memUser = findInMemoryUser(userId);
+    if (memUser) {
+      return {
+        id: memUser.id,
+        username: memUser.username,
+        displayName: memUser.displayName,
+        role: memUser.role,
+        avatarUrl: memUser.profile?.avatar || "/pic.png",
+        coverUrl: memUser.profile?.profileCover || "/pich.png",
+        countryCode: memUser.countryCode,
+        presence: "online",
+        createdAt: memUser.createdAt,
+        updatedAt: memUser.createdAt,
+        profile: memUser.profile || null,
+      };
     }
+
+    // Fallback to shared store (accessible across all contexts via globalThis)
+    const shared = findSharedUser(userId);
+    if (shared) {
+      return {
+        id: shared.id,
+        username: shared.username,
+        displayName: shared.displayName,
+        role: shared.role,
+        avatarUrl: shared.avatar || "/pic.png",
+        coverUrl: "/pich.png",
+        countryCode: shared.countryCode || "SA",
+        presence: shared.presence || "online",
+        createdAt: shared.connectedAt,
+        updatedAt: shared.connectedAt,
+        profile: null,
+      };
+    }
+
+    return null;
   }
 }

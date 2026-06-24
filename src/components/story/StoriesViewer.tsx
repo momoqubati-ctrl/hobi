@@ -5,6 +5,7 @@ import { getSocket } from "@/lib/socket";
 import ViewerOverlay from "./ViewerOverlay";
 
 const STORY_DURATION_MS = 5000;
+const MAX_STORY_DURATION_MS = 60000;
 
 const StoriesViewer = () => {
   const {
@@ -18,9 +19,11 @@ const StoriesViewer = () => {
   const [viewers, setViewers] = useState<any[]>([]);
   const [likers, setLikers] = useState<any[]>([]);
   const [liked, setLiked] = useState(false);
+  const [mediaDuration, setMediaDuration] = useState(STORY_DURATION_MS);
   const progressRef = useRef<number>(0);
   const animRef = useRef<number>(0);
   const startTimeRef = useRef<number>(0);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const socket = getSocket();
 
   const currentUser = React.useMemo(() => {
@@ -43,10 +46,11 @@ const StoriesViewer = () => {
     if (!viewerOpen || paused || !currentStory) return;
     resetProgress();
     startTimeRef.current = Date.now();
+    const duration = mediaDuration;
 
     const animate = () => {
       const elapsed = Date.now() - startTimeRef.current;
-      const pct = Math.min(100, (elapsed / STORY_DURATION_MS) * 100);
+      const pct = Math.min(100, (elapsed / duration) * 100);
       progressRef.current = pct;
       setProgress(pct);
 
@@ -63,13 +67,14 @@ const StoriesViewer = () => {
 
     animRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animRef.current);
-  }, [viewerOpen, paused, currentStory?.id, viewerStoryIndex, viewerUserIndex]);
+  }, [viewerOpen, paused, currentStory?.id, viewerStoryIndex, viewerUserIndex, mediaDuration]);
 
   useEffect(() => {
     setShowViewers(false);
     setViewers([]);
     setLikers([]);
     setPaused(false);
+    setMediaDuration(STORY_DURATION_MS);
   }, [viewerOpen]);
 
   useEffect(() => {
@@ -80,7 +85,42 @@ const StoriesViewer = () => {
     }
     resetProgress();
     setLiked(currentStory?.likedByMe || false);
+    if (currentStory.mediaType === "text" || currentStory.mediaType === "image") {
+      setMediaDuration(STORY_DURATION_MS);
+    }
   }, [currentStory?.id, viewerOpen]);
+
+  useEffect(() => {
+    if (!viewerOpen) return;
+
+    const onUserProfileUpdated = (data: any) => {
+      if (!data?.userId) return;
+      
+      const newAvatar = data.avatar || data.avatarUrl;
+      const newUsername = data.username;
+
+      setViewers((prev) =>
+        prev.map((v) =>
+          String(v.id) === String(data.userId)
+            ? { ...v, username: newUsername || v.username, avatar: newAvatar || v.avatar }
+            : v
+        )
+      );
+
+      setLikers((prev) =>
+        prev.map((l) =>
+          String(l.id) === String(data.userId)
+            ? { ...l, username: newUsername || l.username, avatar: newAvatar || l.avatar }
+            : l
+        )
+      );
+    };
+
+    socket.on("user_profile_updated", onUserProfileUpdated);
+    return () => {
+      socket.off("user_profile_updated", onUserProfileUpdated);
+    };
+  }, [viewerOpen, socket]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -195,11 +235,27 @@ const StoriesViewer = () => {
         ) : isVideo ? (
           <div className="relative h-full w-full">
             <video
+              ref={videoRef}
               src={currentStory.mediaUrl || ""}
               className="h-full w-full object-contain"
               autoPlay
               playsInline
               controls
+              onLoadedMetadata={(e) => {
+                const dur = (e.target as HTMLVideoElement).duration;
+                if (dur && isFinite(dur) && dur > 0) {
+                  const capped = Math.min(dur * 1000, MAX_STORY_DURATION_MS);
+                  setMediaDuration(capped);
+                  resetProgress();
+                }
+              }}
+              onEnded={() => {
+                if (viewerStoryIndex < userStories.length - 1) {
+                  nextStory();
+                } else {
+                  nextUser();
+                }
+              }}
             />
             {currentStory.caption && (
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent p-6 pt-12">

@@ -7,6 +7,8 @@ import type { Server, Socket } from "socket.io";
 import { randomUUID } from "node:crypto";
 import { getAllOnlineUsers } from "./presenceManager";
 import { SOCKET_CHANNELS } from "./SocketChannels";
+import { processText } from "../services/filterService";
+import { applyShortcuts } from "../services/shortcutService";
 
 // ─── أنواع البيانات ────────────────────────────────────────────────────────────
 
@@ -135,6 +137,21 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
         return callback?.({ success: false, error: "لا يمكنك مراسلة نفسك" });
       }
 
+      // تطبيق الاختصارات ثم الفلتر على النص
+      let filteredText = text;
+      if (text) {
+        try {
+          const expanded = await applyShortcuts(text);
+          const filterRes = await processText({
+            text: expanded,
+            source: `محادثة خاصة مع ${receiverInfo.name}`,
+            user: { username: myInfo.name, topic: myInfo.name, ip: socket.handshake.address || "127.0.0.1" },
+            target: toUserId,
+          });
+          filteredText = filterRes.filteredText;
+        } catch {}
+      }
+
       // جلب معلومات المستقبل — مع timeout 1.5s لتجنب التعليق
       let receiverInfo: PMUser = { id: toUserId, name: "عضو", avatar: "/pic.png" };
       try {
@@ -185,7 +202,7 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
         senderName: myInfo.name,
         senderAvatar: myInfo.avatar,
         receiverId: toUserId,
-        text,
+        text: filteredText,
         mediaUrl: mediaUrl || undefined,
         mediaType: mediaType || undefined,
         replyToId: replyToId || undefined,
@@ -204,6 +221,11 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
 
       // إيصال الرسالة للمستقبل عبر قناته الاجتماعية
       io.to(SOCKET_CHANNELS.social(toUserId)).emit("pm:message", msg);
+
+      // إرسال الرسالة للمرسل أيضاً حتى تتحدث قائمة المحادثات لحظياً
+      if (toUserId !== myId) {
+        io.to(SOCKET_CHANNELS.social(myId)).emit("pm:message", msg);
+      }
 
       callback?.({ success: true, message: msg });
     } catch (err) {

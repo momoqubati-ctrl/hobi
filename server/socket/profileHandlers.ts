@@ -72,36 +72,91 @@ const findOnlineUser = async (profileId: string, username?: string) => {
 };
 
 const applyLegacyProfileUpdate = async (profileId: string, updates: Record<string, unknown>) => {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  let index = 1;
+  const normalizedProfileId = normalizeId(profileId);
+  if (!normalizedProfileId) return false;
 
-  const addField = (column: string, value: unknown) => {
-    fields.push(`${column} = $${index++}`);
-    values.push(value);
+  const profileLookup = await dbPool.query(
+    `SELECT "id"
+     FROM "users"
+     WHERE CAST("uid" AS text) = $1
+        OR CAST("id" AS text) = $1
+        OR CAST("idreg" AS text) = $1
+        OR lower("username") = lower($1)
+     LIMIT 1`,
+    [normalizedProfileId],
+  );
+  const actualUserId = String(profileLookup.rows[0]?.id || normalizedProfileId);
+
+  const profileFields: string[] = [];
+  const profileValues: unknown[] = [];
+  const legacyFields: string[] = [];
+  const legacyValues: unknown[] = [];
+  let profileIndex = 1;
+  let legacyIndex = 1;
+
+  const addProfileField = (column: string, value: unknown) => {
+    profileFields.push(`"${column}" = $${profileIndex++}`);
+    profileValues.push(value);
   };
 
-  if (updates.topic !== undefined) addField("topic", String(updates.topic).slice(0, 120));
-  if (updates.msg !== undefined) addField("msg", String(updates.msg).slice(0, 500));
-  if (updates.wall_post_likes !== undefined) addField("wall_post_likes", Number(updates.wall_post_likes) || 0);
-  if (updates.site_badge !== undefined) addField("site_badge", String(updates.site_badge).slice(0, 120));
-  if (updates.power !== undefined) addField("power", String(updates.power).slice(0, 80));
-  if (updates.pic !== undefined) addField("pic", String(updates.pic).slice(0, 255));
-  if (updates.muted !== undefined) addField("muted", updates.muted ? 1 : 0);
+  const addLegacyField = (column: string, value: unknown) => {
+    legacyFields.push(`"${column}" = $${legacyIndex++}`);
+    legacyValues.push(value);
+  };
 
-  if (fields.length === 0) return false;
+  if (updates.topic !== undefined) addLegacyField("topic", String(updates.topic).slice(0, 120));
+  if (updates.msg !== undefined) {
+    const message = String(updates.msg).slice(0, 500);
+    addLegacyField("msg", message);
+    addProfileField("profile_msg", message);
+  }
+  if (updates.wall_post_likes !== undefined) {
+    const value = Number(updates.wall_post_likes) || 0;
+    addLegacyField("wall_post_likes", value);
+    addProfileField("wall_post_likes", value);
+  }
+  if (updates.site_badge !== undefined) {
+    const value = String(updates.site_badge).slice(0, 120);
+    addLegacyField("site_badge", value);
+    addProfileField("site_badge", value);
+  }
+  if (updates.power !== undefined) {
+    const value = String(updates.power).slice(0, 80);
+    addLegacyField("power", value);
+    addProfileField("power", value);
+  }
+  if (updates.pic !== undefined) {
+    const value = String(updates.pic).slice(0, 255);
+    addLegacyField("pic", value);
+    addProfileField("avatar_url", value);
+  }
+  if (updates.muted !== undefined) {
+    const value = updates.muted ? 1 : 0;
+    addLegacyField("muted", value);
+    addProfileField("muted", Boolean(updates.muted));
+  }
 
-  values.push(profileId);
-  const idParam = `$${index}`;
-  await dbPool.query(
-    `UPDATE users
-     SET ${fields.join(", ")}
-     WHERE uid = ${idParam}
-        OR id = ${idParam}
-        OR CAST(idreg AS varchar) = ${idParam}
-        OR lower(username) = lower(${idParam})`,
-    values,
-  );
+  if (legacyFields.length > 0) {
+    await dbPool.query(
+      `UPDATE "users"
+       SET ${legacyFields.join(", ")}
+       WHERE CAST("uid" AS text) = $${legacyIndex}
+          OR CAST("id" AS text) = $${legacyIndex}
+          OR CAST("idreg" AS text) = $${legacyIndex}
+          OR lower("username") = lower($${legacyIndex})`,
+      [...legacyValues, actualUserId],
+    );
+  }
+
+  if (profileFields.length > 0) {
+    await dbPool.query(`INSERT INTO "user_profiles" ("user_id") VALUES ($1) ON CONFLICT ("user_id") DO NOTHING`, [actualUserId]);
+    await dbPool.query(
+      `UPDATE "user_profiles"
+       SET ${profileFields.join(", ")}
+       WHERE "user_id" = $${profileIndex}`,
+      [...profileValues, actualUserId],
+    );
+  }
 
   return true;
 };
@@ -133,7 +188,32 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       const requestedProfileId = normalizeId(data?.profileId);
       if (!requestedProfileId) return callback?.({ error: "Profile not found" });
 
-      const profile = await ProfileService.getFullProfile(requestedProfileId);
+      let profile = await ProfileService.getFullProfile(requestedProfileId);
+
+      if (!profile) {
+        const allSockets = await io.fetchSockets();
+        const targetSocket = allSockets.find(s => {
+          const uid = String(s.data?.user?.id || "").trim().toLowerCase();
+          return uid === requestedProfileId.toLowerCase();
+        });
+        if (targetSocket?.data?.user) {
+          const su = targetSocket.data.user;
+          profile = {
+            id: su.id,
+            username: su.username,
+            displayName: su.displayName || su.username,
+            role: su.role,
+            avatarUrl: su.avatar || "/pic.png",
+            coverUrl: "/pich.png",
+            countryCode: su.countryCode || "SA",
+            presence: su.status || "online",
+            createdAt: su.connectedAt || new Date().toISOString(),
+            updatedAt: su.connectedAt || new Date().toISOString(),
+            profile: null,
+          };
+        }
+      }
+
       if (!profile) return callback?.({ error: "Profile not found" });
 
       const resolvedProfileId = normalizeId(profile.id || requestedProfileId);
@@ -272,6 +352,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         avatar: updates.pic ? "/pic.png" : undefined,
         avatarUrl: updates.pic ? "/pic.png" : undefined,
         profileMsg: updates.msg,
+        statusMsg: updates.msg || "",
         siteBadge: updates.site_badge,
       });
 

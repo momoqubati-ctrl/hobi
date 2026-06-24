@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
         l.device,
         l.isin,
         l."time" as "createdAt",
-        COALESCE(u.documentationc, 0) as "isVerified"
+        CASE WHEN u.documentationc = true THEN 1 ELSE 0 END as "isVerified"
        FROM logs l
        LEFT JOIN users u ON l.username = u.username
        ${where}
@@ -41,6 +41,7 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, logs: result.rows };
   } catch (error: any) {
+    console.error("[access-logs] Error:", error?.message || error);
     setResponseStatus(event, 500);
     return { success: false, message: error.message };
   }

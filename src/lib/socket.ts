@@ -8,6 +8,8 @@ function readSocketAuth(): Record<string, string> {
     if (!raw) return {};
 
     const user = JSON.parse(raw);
+    const profileMsg = typeof user.profileMsg === "string" ? user.profileMsg : "";
+    const statusMsg = typeof user.statusMsg === "string" ? user.statusMsg : profileMsg;
     return {
       userId: user.id || "",
       username: user.name || "زائر",
@@ -17,8 +19,10 @@ function readSocketAuth(): Record<string, string> {
       avatarFrameUrl: user.avatarFrameUrl || "",
       giftIconUrl: user.giftIconUrl || "",
       messageBubbleStyle: user.messageBubbleStyle || "default",
-      idreg: typeof user.idreg === "string" ? user.idreg : "",
+      idreg: typeof user.idreg === "string" ? user.idreg : user.idreg ? `#${user.idreg}` : "",
       siteBadge: typeof user.siteBadge === "string" ? user.siteBadge : "",
+      profileMsg: profileMsg,
+      statusMsg,
     };
   } catch {
     return {};
@@ -50,6 +54,19 @@ export function refreshSocketAuth(): void {
 
 export function disconnectSocket(): void {
   if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
+}
+
+export function logoutSocket(): void {
+  if (socket) {
+    try {
+      socket.emit("user_logout");
+    } catch {}
+    socket.removeAllListeners();
+    socket.off();
     socket.disconnect();
     socket = null;
   }

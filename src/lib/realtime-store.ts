@@ -62,12 +62,14 @@ interface RealtimeState {
   removeOnlineUser: (target: { id?: string; socketId?: string; username?: string; role?: string }) => void;
   setLoadingOnlineUsers: (val: boolean) => void;
   setIsOnlineUsersLoaded: (val: boolean) => void;
+  resetPresence: () => void;
+  resetSession: () => void;
 
   // Actions for Wall Posts
   setWallPosts: (posts: any[]) => void;
   addWallPost: (post: any) => void;
   removeWallPost: (postId: string) => void;
-  updateWallAuthorProfile: (userId: string, username: string, avatar: string) => void;
+  updateWallAuthorProfile: (userId: string, username: string, avatar: string, previousUsername?: string) => void;
   setLoadingWallPosts: (val: boolean) => void;
   setHasNewWallPosts: (val: boolean) => void;
   setIsWallLoaded: (val: boolean) => void;
@@ -107,6 +109,7 @@ interface RealtimeState {
   wallCommentLikeCounts: Record<string, number>;
   toggleCommentLike: (commentId: string, liked: boolean) => void;
   updateCommentLikeCount: (commentId: string, count: number) => void;
+  setCommentLiked: (commentId: string, liked: boolean) => void;
 }
 
 const getPresenceKey = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
@@ -208,15 +211,39 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       found = true;
       const updated = { ...user } as any;
       for (const [key, value] of Object.entries(incoming)) {
-        if (value !== undefined) {
+        // Only overwrite when incoming value is defined and not an empty string (avoid clobbering existing data)
+        if (value !== undefined && !(typeof value === 'string' && value === '')) {
           updated[key] = value;
         }
       }
       return updated;
     });
-
     if (!found) {
-      next.push(incoming);
+      // Try to find a best-effort match when identities differ (e.g. incoming has id but existing entry used username/socketId)
+      let merged = false;
+      if (incoming && incoming.id) {
+        const incomingId = String(incoming.id).trim();
+        for (let i = 0; i < next.length; i++) {
+          const u = next[i];
+          // match by socketId or username to attach the id to the existing entry
+          const sameSocket = u.socketId && incoming.socketId && u.socketId === incoming.socketId;
+          const sameUsername = u.username && incoming.username && String(u.username).trim().toLowerCase() === String(incoming.username).trim().toLowerCase();
+          const sameId = u.id && incoming.id && String(u.id).trim() === incomingId;
+          if (sameSocket || sameUsername || sameId) {
+            const updated = { ...u } as any;
+            for (const [key, value] of Object.entries(incoming)) {
+              if (value !== undefined && !(typeof value === 'string' && value === '')) updated[key] = value;
+            }
+            next[i] = updated;
+            merged = true;
+            break;
+          }
+        }
+      }
+
+      if (!merged) {
+        next.push(incoming);
+      }
     }
     return { onlineUsers: next };
   }),
@@ -228,6 +255,38 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   }),
   setLoadingOnlineUsers: (val) => set({ isLoadingOnlineUsers: val }),
   setIsOnlineUsersLoaded: (val) => set({ isOnlineUsersLoaded: val }),
+  resetPresence: () => set({
+    onlineUsers: [],
+    onlineCount: 0,
+    isOnlineUsersLoaded: false,
+    isLoadingOnlineUsers: false,
+  }),
+  resetSession: () => set({
+    presence: {},
+    onlineUsers: [],
+    onlineCount: 0,
+    notifications: [],
+    notificationUnreadCount: 0,
+    inbox: [],
+    outbox: [],
+    mailUnreadCount: 0,
+    pmUnreadCount: 0,
+    wallPosts: [],
+    wallComments: {},
+    wallCommentCounts: {},
+    wallLikedPosts: new Set<string>(),
+    wallCommentLiked: new Set<string>(),
+    wallCommentLikeCounts: {},
+    wallLikeCounts: {},
+    isOnlineUsersLoaded: false,
+    isWallLoaded: false,
+    isNotificationsLoaded: false,
+    isMailLoaded: false,
+    hasNewWallPosts: false,
+    isLoadingOnlineUsers: false,
+    isLoadingNotifications: false,
+    isLoadingMail: false,
+  }),
 
   // Wall Posts Actions
   setWallPosts: (posts) => set((state) => {
@@ -335,7 +394,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   setMail: (inbox, outbox) => set({
     inbox,
     outbox,
-    mailUnreadCount: inbox.filter(m => !m.isRead).length,
+    mailUnreadCount: inbox.filter(m => !m.readAt).length,
     isMailLoaded: true,
     isLoadingMail: false
   }),
@@ -344,7 +403,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     const nextList = [mail, ...state.inbox];
     return {
       inbox: nextList,
-      mailUnreadCount: nextList.filter(m => !m.isRead).length
+      mailUnreadCount: nextList.filter(m => !m.readAt).length
     };
   }),
   addMailToOutbox: (mail) => set((state) => {
@@ -355,11 +414,11 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   }),
   markMailRead: (mailId) => set((state) => {
     const nextList = state.inbox.map(m =>
-      String(m.id) === String(mailId) ? { ...m, isRead: true } : m
+      String(m.id) === String(mailId) ? { ...m, readAt: new Date().toISOString() } : m
     );
     return {
       inbox: nextList,
-      mailUnreadCount: nextList.filter(m => !m.isRead).length
+      mailUnreadCount: nextList.filter(m => !m.readAt).length
     };
   }),
   deleteMail: (mailId, boxType) => set((state) => {
@@ -367,7 +426,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       const nextList = state.inbox.filter(m => String(m.id) !== String(mailId));
       return {
         inbox: nextList,
-        mailUnreadCount: nextList.filter(m => !m.isRead).length
+        mailUnreadCount: nextList.filter(m => !m.readAt).length
       };
     } else {
       return {
@@ -477,4 +536,11 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   updateCommentLikeCount: (commentId, count) => set((state) => ({
     wallCommentLikeCounts: { ...state.wallCommentLikeCounts, [String(commentId)]: count }
   })),
+  setCommentLiked: (commentId, liked) => set((state) => {
+    const nextSet = new Set(state.wallCommentLiked);
+    const strId = String(commentId);
+    if (liked) { nextSet.add(strId); }
+    else { nextSet.delete(strId); }
+    return { wallCommentLiked: nextSet };
+  }),
 }));

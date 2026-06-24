@@ -2,9 +2,20 @@ import { dbPool } from "../db";
 import fs from "node:fs";
 import path from "node:path";
 import { saveUploadBuffer, normalizeUploadExtension } from "./uploadStorage";
+import { isMinioEnabled, uploadToMinio, deleteFromMinio } from "./minioClient";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const ALLOWED_TYPES = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi", "pdf", "doc", "docx", "xls", "xlsx", "zip", "rar", "txt", "csv", "json", "xml"]);
+
+const MIME_MAP: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+  gif: "image/gif", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm",
+  mov: "video/quicktime", avi: "video/x-msvideo", pdf: "application/pdf",
+  doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  zip: "application/zip", rar: "application/vnd.rar", txt: "text/plain",
+  csv: "text/csv", json: "application/json", xml: "application/xml",
+};
 
 const getUploadDir = () => {
   const cwd = process.cwd();
@@ -19,23 +30,40 @@ const getUploadDir = () => {
   return Array.from(new Set(dirs));
 };
 
-const saveFileToDisk = (userId: string, extension: string, buffer: Buffer): string | null => {
-  if (!ALLOWED_TYPES.has(extension)) return null;
-  if (buffer.length > MAX_FILE_SIZE) return null;
-
+const getFilename = (userId: string, extension: string) => {
   const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) || "user";
-  const filename = `file_${safeUserId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${extension}`;
-  const dirs = getUploadDir();
+  return `file_${safeUserId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${extension}`;
+};
 
+const saveFileToDisk = (filename: string, buffer: Buffer) => {
+  const dirs = getUploadDir();
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, filename), buffer);
   }
-
   return `uploads/files/${filename}`;
 };
 
-const deleteFileFromDisk = (storagePath: string) => {
+const saveFileToStorage = async (userId: string, extension: string, buffer: Buffer): Promise<string | null> => {
+  if (!ALLOWED_TYPES.has(extension)) return null;
+  if (buffer.length > MAX_FILE_SIZE) return null;
+
+  const filename = getFilename(userId, extension);
+
+  if (isMinioEnabled()) {
+    const contentType = MIME_MAP[extension] || "application/octet-stream";
+    const url = await uploadToMinio(`files/${filename}`, buffer, contentType);
+    if (url) return `uploads/files/${filename}`;
+  }
+
+  return saveFileToDisk(filename, buffer);
+};
+
+const deleteFileFromStorage = async (storagePath: string) => {
+  if (isMinioEnabled()) {
+    await deleteFromMinio(storagePath);
+  }
+
   const cwd = process.cwd();
   const dirs = [
     path.join(cwd, "public"),
@@ -140,9 +168,9 @@ export const deleteFile = async (fileId: string, userId: string) => {
 
   const row = result.rows[0];
 
-  // Delete from disk if it's a file
+  // Delete from storage if it's a file
   if (!row.is_folder && row.storage_path) {
-    deleteFileFromDisk(row.storage_path);
+    await deleteFileFromStorage(row.storage_path);
   }
 
   // If it's a folder, delete all children
@@ -153,7 +181,7 @@ export const deleteFile = async (fileId: string, userId: string) => {
       [userId, `${childFolderPath}%`],
     );
     for (const child of children.rows) {
-      if (child.storage_path) deleteFileFromDisk(child.storage_path);
+      if (child.storage_path) await deleteFileFromStorage(child.storage_path);
     }
     await dbPool.query(
       `DELETE FROM files WHERE user_id = $1 AND folder_path LIKE $2`,
@@ -174,20 +202,10 @@ export const uploadFile = async (userId: string, base64Data: string, filename: s
   const finalExt = ext || extension;
   const buffer = Buffer.from(base64Data, "base64");
 
-  const storagePath = saveFileToDisk(userId, finalExt, buffer);
+  const storagePath = await saveFileToStorage(userId, finalExt, buffer);
   if (!storagePath) throw new Error("فشل حفظ الملف على القرص");
 
-  // Detect mime type
-  const mimeMap: Record<string, string> = {
-    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
-    gif: "image/gif", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm",
-    mov: "video/quicktime", avi: "video/x-msvideo", pdf: "application/pdf",
-    doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    zip: "application/zip", rar: "application/vnd.rar", txt: "text/plain",
-    csv: "text/csv", json: "application/json", xml: "application/xml",
-  };
-  const mimeType = mimeMap[finalExt] || "application/octet-stream";
+  const mimeType = MIME_MAP[finalExt] || "application/octet-stream";
 
   const result = await dbPool.query(
     `INSERT INTO files (user_id, name, folder_path, mime_type, size, storage_path)

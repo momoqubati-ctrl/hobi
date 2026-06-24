@@ -24,9 +24,9 @@ export const hasPermission = async (userId: string, permission: AdminPermission)
       `SELECT rp.permission_value 
        FROM user_role_assignments ura
        JOIN role_permissions rp ON rp.role_id = ura.role_id
-       WHERE ura.user_idreg = (SELECT idreg FROM users WHERE idreg = $1::integer OR id = $2 OR uid = $2 LIMIT 1)
+       WHERE ura.user_idreg = (SELECT idreg FROM users WHERE CAST(idreg AS text) = $1 OR CAST(id AS text) = $2 OR CAST(uid AS text) = $2 LIMIT 1)
        AND rp.permission_key = $3`,
-      [Number.isInteger(Number(userId)) ? Number(userId) : 0, String(userId), permission]
+      [String(userId), String(userId), permission]
     );
 
     if (result.rowCount === 0) return false;
@@ -74,9 +74,9 @@ export const logAdminAudit = async (params: {
   try {
     await dbPool.query(
       `INSERT INTO admin_audit_logs (actor_id, action, target_type, target_id, metadata)
-       VALUES ((SELECT id FROM users WHERE idreg = $1::integer OR id = $2 OR uid = $2 LIMIT 1), $3, $4, $5, $6::jsonb)`,
+       VALUES ((SELECT id FROM users WHERE CAST(idreg AS text) = $1 OR CAST(id AS text) = $2 OR CAST(uid AS text) = $2 LIMIT 1), $3, $4, $5, $6::jsonb)`,
       [
-        Number.isInteger(Number(params.actorId)) ? Number(params.actorId) : 0,
+        String(params.actorId),
         String(params.actorId),
         params.action,
         params.targetType || null,

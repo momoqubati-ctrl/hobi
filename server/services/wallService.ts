@@ -1,4 +1,5 @@
 import { dbPool } from "../db";
+import { normalizeMinioUrl } from "./minioClient";
 
 const WALL_CACHE_TTL_MS = 30_000;
 const WALL_CACHE_LIMIT = 50;
@@ -9,8 +10,7 @@ let pendingWallPostsLoad: Promise<any[]> | null = null;
 const normalizeAssetPath = (value?: string | null, fallback = "/pic.png") => {
   const path = String(value || "").trim();
   if (!path) return fallback;
-  if (/^(https?:|data:|\/)/i.test(path)) return path;
-  return `/${path}`;
+  return normalizeMinioUrl(path);
 };
 
 const normalizeAuthorName = (value?: string | null) => {
@@ -29,11 +29,22 @@ const mapWallPost = (row: any) => {
     mediaUrls = null;
   }
 
+  let animatedFaces: string[] | null = null;
+  try {
+    if (row.animatedFaces) {
+      animatedFaces = typeof row.animatedFaces === "string" ? JSON.parse(row.animatedFaces) : row.animatedFaces;
+      if (!Array.isArray(animatedFaces)) animatedFaces = null;
+    }
+  } catch {
+    animatedFaces = null;
+  }
+
   return {
     id: String(row.id),
     body: row.body,
     mediaUrl: row.mediaUrl ? normalizeAssetPath(row.mediaUrl, "") : null,
     mediaUrls: mediaUrls || (row.mediaUrl ? [normalizeAssetPath(row.mediaUrl, "")] : null),
+    animatedFaces,
     createdAt: row.createdAt || new Date().toISOString(),
     author: {
       id: String(row.authorId || ""),
@@ -66,7 +77,7 @@ export const listWallPosts = async () => {
 
   pendingWallPostsLoad = (async () => {
     const result = await dbPool.query(`
-      SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.media_urls as "mediaUrls",
+      SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.media_urls as "mediaUrls", b.animated_faces as "animatedFaces",
              b.uid as "authorId", b.topic as "fallbackAuthorName",
              COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as "authorName",
              NULLIF(u.pic, '') as "authorAvatar"
@@ -94,6 +105,7 @@ export const createWallPost = async (
   mediaUrl?: string,
   authorDisplayName?: string,
   authorRole?: string,
+  animatedFaces?: string[],
 ) => {
   const isGuestAuthor = authorRole === "guest" || String(authorId).startsWith("guest-");
   const userRes = isGuestAuthor
@@ -101,7 +113,7 @@ export const createWallPost = async (
     : await dbPool.query(
         `SELECT uid, id, idreg, username, topic, pic
          FROM users
-         WHERE uid = $1 OR id = $1 OR idreg::text = $1 OR lower(username) = lower($1)
+         WHERE CAST(uid AS text) = $1 OR CAST(id AS text) = $1 OR CAST(idreg AS text) = $1 OR lower(username) = lower($1)
          LIMIT 1`,
         [authorId],
       );
@@ -110,10 +122,10 @@ export const createWallPost = async (
   const authorName = normalizeAuthorName(isGuestAuthor ? authorDisplayName : user?.topic || user?.username || authorDisplayName) || authorId;
 
   const result = await dbPool.query(
-    `INSERT INTO bars (uid, msg, pic, topic) 
-     VALUES ($1, $2, $3, $4) 
-     RETURNING id, msg as body, pic as "mediaUrl", uid as "authorId", topic as "fallbackAuthorName"`,
-    [legacyUserId, body, mediaUrl || null, authorName]
+    `INSERT INTO bars (uid, msg, pic, topic, animated_faces) 
+     VALUES ($1, $2, $3, $4, $5) 
+     RETURNING id, msg as body, pic as "mediaUrl", uid as "authorId", topic as "fallbackAuthorName", animated_faces as "animatedFaces"`,
+    [legacyUserId, body, mediaUrl || null, authorName, animatedFaces && animatedFaces.length > 0 ? JSON.stringify(animatedFaces) : null]
   );
   
   const row = result.rows[0];
@@ -191,7 +203,7 @@ export const createWallComment = async (
 
 export const listPostComments = async (postId: string) => {
   const result = await dbPool.query(
-    `SELECT id, body, created_at as "createdAt",
+    `SELECT id, body, COALESCE(created_at, NOW()) as "createdAt",
             author_topic as "authorName", author_pic as "authorAvatar",
             author_id as "authorId", parent_id as "parentId"
      FROM bar_comments

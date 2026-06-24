@@ -180,7 +180,7 @@ const CommentThread = ({
 };
 
 const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen, onToggle, onOpenProfile }: WallCommentsProps) => {
-  const { wallComments, setComments } = useRealtimeStore();
+  const { wallComments, setComments, setCommentLiked, updateCommentLikeCount } = useRealtimeStore();
   const comments = wallComments[postId] || [];
   
   const [internalOpen, setInternalOpen] = useState(false);
@@ -223,11 +223,21 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
     if (loaded) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/wall/comments?postId=${postId}`);
+      const userIdParam = currentUser?.id ? `&userId=${encodeURIComponent(currentUser.id)}` : "";
+      const res = await fetch(`/api/wall/comments?postId=${postId}${userIdParam}`);
       const data = await res.json();
       if (data.success) {
         setComments(postId, data.comments || []);
         setLoaded(true);
+
+        const walk = (list: any[]) => {
+          for (const c of list) {
+            if (c.likeCount !== undefined) updateCommentLikeCount(c.id, c.likeCount);
+            if (c.userLiked !== undefined) setCommentLiked(c.id, c.userLiked);
+            if (c.replies?.length) walk(c.replies);
+          }
+        };
+        walk(data.comments || []);
       }
     } catch (err) {
       console.error("Failed to fetch comments", err);

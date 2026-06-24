@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Plus, Trash2, Upload, Save, X, Image, FolderOpen } from "lucide-react";
+import { toast } from "sonner";
 
 interface StickerCategory {
   id: string;
@@ -32,9 +33,10 @@ const StickersSection = () => {
   const [uploadingCatIcon, setUploadingCatIcon] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const catIconInputRef = useRef<HTMLInputElement>(null);
-  const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : "";
-
-  const authHeaders = () => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
+  const authHeaders = useCallback(() => {
+    const t = localStorage.getItem("authToken") || "";
+    return { Authorization: `Bearer ${t}`, "Content-Type": "application/json" };
+  }, []);
 
   const fetchCategories = async () => {
     try {
@@ -62,7 +64,10 @@ const StickersSection = () => {
   }, [selectedCategoryId]);
 
   const handleCreateCategory = async () => {
-    if (!newCatName.trim()) return;
+    if (!newCatName.trim()) {
+      toast.error("الرجاء إدخال اسم القسم");
+      return;
+    }
     try {
       const res = await fetch("/api/admin/sticker-categories", {
         method: "POST",
@@ -75,8 +80,14 @@ const StickersSection = () => {
         setNewCatName("");
         setNewCatIcon("");
         setShowNewCat(false);
+        toast.success("تم إنشاء القسم بنجاح");
+      } else {
+        toast.error(data.message || "فشل إنشاء القسم");
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast.error("حدث خطأ في الاتصال");
+    }
   };
 
   const handleUploadCatIcon = async (file: File) => {
@@ -90,12 +101,20 @@ const StickersSection = () => {
       });
       const res = await fetch("/api/wall/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("authToken") || ""}` },
         body: JSON.stringify({ file: base64, filename: file.name, contentType: file.type }),
       });
       const data = await res.json();
-      if (data.success) setNewCatIcon(data.url);
-    } catch (e) { console.error(e); }
+      if (data.success) {
+        setNewCatIcon(data.url);
+        toast.success("تم رفع الأيقونة");
+      } else {
+        toast.error(data.message || "فشل رفع الأيقونة");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("حدث خطأ في رفع الأيقونة");
+    }
     setUploadingCatIcon(false);
   };
 
@@ -111,14 +130,22 @@ const StickersSection = () => {
         setCategories((prev) => prev.filter((c) => c.id !== id));
         if (selectedCategoryId === id) setSelectedCategoryId(null);
         fetchStickers();
+        toast.success("تم حذف القسم");
+      } else {
+        toast.error(data.message || "فشل حذف القسم");
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast.error("حدث خطأ في الاتصال");
+    }
   };
 
   const handleUploadStickers = async (files: FileList) => {
     if (!selectedCategoryId || files.length === 0) return;
     setUploading(true);
+    let uploaded = 0;
     try {
+      const t = localStorage.getItem("authToken") || "";
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const base64 = await new Promise<string>((resolve, reject) => {
@@ -129,12 +156,12 @@ const StickersSection = () => {
         });
         const uploadRes = await fetch("/api/wall/upload", {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
           body: JSON.stringify({ file: base64, filename: file.name, contentType: file.type }),
         });
         const uploadData = await uploadRes.json();
         if (uploadData.success) {
-          await fetch("/api/admin/stickers", {
+          const stickerRes = await fetch("/api/admin/stickers", {
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({
@@ -143,10 +170,17 @@ const StickersSection = () => {
               image_url: uploadData.url,
             }),
           });
+          const stickerData = await stickerRes.json();
+          if (stickerData.success) uploaded++;
         }
       }
       fetchStickers(selectedCategoryId);
-    } catch (e) { console.error(e); }
+      if (uploaded > 0) toast.success(`تم رفع ${uploaded} ملصق${uploaded > 1 ? "ات" : ""} بنجاح`);
+      else toast.error("لم يتم رفع أي ملصق");
+    } catch (e) {
+      console.error(e);
+      toast.error("حدث خطأ في رفع الملصقات");
+    }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -160,8 +194,14 @@ const StickersSection = () => {
       const data = await res.json();
       if (data.success) {
         setStickers((prev) => prev.filter((s) => s.id !== id));
+        toast.success("تم حذف الملصق");
+      } else {
+        toast.error(data.message || "فشل حذف الملصق");
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast.error("حدث خطأ في الاتصال");
+    }
   };
 
   if (loading) {

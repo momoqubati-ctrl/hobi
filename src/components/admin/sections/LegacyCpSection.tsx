@@ -27,9 +27,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import AdminDataTable from "../shared/AdminDataTable";
 import { getAdminHeaders } from "../utils";
-import { FIELD_TRANSLATIONS } from "../constants";
+import { FIELD_TRANSLATIONS, setFieldLanguage, getFieldLanguage } from "../constants";
 import { showSuccess, showError } from "@/utils/toast";
-import { Edit2, Trash2, Plus, Search, ChevronRight, ChevronLeft, RefreshCw, Database } from "lucide-react";
+import { Edit2, Trash2, Plus, Search, ChevronRight, ChevronLeft, RefreshCw, Database, Globe } from "lucide-react";
 
 interface LegacyCpSectionProps {
   config: {
@@ -63,6 +63,14 @@ const LegacyCpSection = ({ config }: LegacyCpSectionProps) => {
   // Delete Alert State
   const [deleteAlertOpen, setDeleteAlertOpen] = useState(false);
   const [rowToDelete, setRowToDelete] = useState<any>(null);
+  const [lang, setLang] = useState<"ar" | "en">(getFieldLanguage);
+
+  const toggleLang = () => {
+    const next = lang === "ar" ? "en" : "ar";
+    setLang(next);
+    setFieldLanguage(next);
+    loadTable(activeTable, offset);
+  };
 
   const loadTable = async (table: string, currentOffset = 0) => {
     setActiveTable(table);
@@ -317,9 +325,19 @@ const LegacyCpSection = ({ config }: LegacyCpSectionProps) => {
               }}
               className="rounded-2xl font-bold text-xs whitespace-nowrap px-4 py-2"
             >
-              {table}
+              {FIELD_TRANSLATIONS[table] || table}
             </Button>
           ))}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleLang}
+            className="rounded-2xl font-bold text-xs whitespace-nowrap px-3 py-2 gap-1"
+            title={lang === "ar" ? "Switch to English" : "التبديل إلى العربية"}
+          >
+            <Globe size={14} />
+            {lang === "ar" ? "EN" : "عربي"}
+          </Button>
         </div>
       </div>
 

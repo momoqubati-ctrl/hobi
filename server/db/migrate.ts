@@ -7,7 +7,9 @@ import { dbPool } from "./index";
 export async function runAutoMigrations() {
   const client = await dbPool.connect();
   try {
-    console.log("[Migration] بدء فحص الجداول الناقصة...");
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] بدء فحص الجداول الناقصة...");
+    }
 
     // 1. إنشاء أنواع الـ Enum أولاً إذا لم تكن موجودة
     const enumQueries = [
@@ -59,7 +61,82 @@ export async function runAutoMigrations() {
       WHERE u.idreg = dup.idreg AND dup.rn > 1;
     `);
 
-    // 6. التأكد من وجود قيد فريد على حقل id في جدول users لتمكين الجداول الأخرى من الإشارة إليه كمفتاح خارجي
+    // 6. إضافة الأعمدة القديمة المتوقعة من الكود (uid, topic, pic, idreg, power, ...)
+    await client.query(`
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "uid" varchar(255);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "idreg" integer;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "topic" varchar(255);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "pic" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "pich" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "power" varchar(80);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "msg" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "password" varchar(255);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "ucol" varchar(20);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "mcol" varchar(20);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "them" varchar(80);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "cover" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "ico" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "gift_ico" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "bg" varchar(20);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "gcol" varchar(20);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastssen" bigint;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "joinuser" bigint;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" integer DEFAULT 0;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "rep" integer DEFAULT 0;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "evaluation" integer DEFAULT 0;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "site_badge" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "site_badge_id" varchar(80);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "wall_post_likes" integer DEFAULT 0;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "gifts_received_count" integer DEFAULT 0;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lid" varchar(40);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "ip" varchar(45);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "fp" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "documentationc" boolean DEFAULT false;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "muted" integer DEFAULT 0;
+    `);
+
+    // تعبئة uid من id للمستخدمين الجدد
+    await client.query(`
+      UPDATE "users" SET "uid" = "id", "topic" = "display_name" WHERE "uid" IS NULL AND "id" IS NOT NULL;
+    `);
+
+      // 6c. Ensure legacy numeric idreg column has a sequence default so new users get an idreg
+      // Create a sequence if it doesn't exist and set users.idreg default to nextval of that sequence.
+      await client.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'users_idreg_seq') THEN
+            CREATE SEQUENCE users_idreg_seq START 1000;
+          END IF;
+          -- Ensure the idreg column has a default pointing to the sequence
+          ALTER TABLE "users" ALTER COLUMN "idreg" SET DEFAULT nextval('users_idreg_seq');
+        END $$;
+      `);
+
+      // Backfill existing rows where idreg is NULL or 0 with values from the sequence
+      await client.query(`
+        WITH missing AS (
+          SELECT id FROM users WHERE COALESCE(idreg, 0) = 0 OR idreg IS NULL
+          FOR UPDATE
+        )
+        UPDATE users u
+        SET idreg = nextval('users_idreg_seq')
+        FROM missing m
+        WHERE u.id = m.id;
+      `);
+
+    // 6ب. إضافة الأعمدة القديمة المتوقعة لجدول الغرف (rooms)
+    await client.query(`
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "idroom" SERIAL;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "topic" varchar(255);
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "about" text;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "owner" varchar(255);
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "pic" text;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "mic" integer DEFAULT 0;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "needpass" integer DEFAULT 0;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "deleted" integer DEFAULT 0;
+    `);
+
+    // 7. التأكد من وجود قيد فريد على حقل id في جدول users لتمكين الجداول الأخرى من الإشارة إليه كمفتاح خارجي
     await client.query(`
       DO $$
       BEGIN
@@ -123,6 +200,24 @@ export async function runAutoMigrations() {
       );
     `);
 
+    await client.query(`
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "profile_msg" text;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "avatar_url" text;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "banner_url" text;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "site_badge" text;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "site_badge_id" varchar(80);
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "power" varchar(80);
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "wall_post_likes" integer DEFAULT 0;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "gifts_received_count" integer DEFAULT 0;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "rep" integer DEFAULT 0;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "coins" integer DEFAULT 0;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "evaluation" integer DEFAULT 0;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "muted" boolean DEFAULT false;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "documents" boolean DEFAULT false;
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "room_id" varchar(128);
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "updated_at" timestamptz DEFAULT now();
+    `);
+
     // إنشاء سجل بروفايل فارغ لكل مستخدم ليس لديه بروفايل بعد
     await client.query(`
       INSERT INTO "user_profiles" ("user_id")
@@ -132,9 +227,36 @@ export async function runAutoMigrations() {
       );
     `);
 
-    // --- 2. جدول profile_visits (إعادة إنشائه ليتوافق مع Drizzle والأنواع الجديدة) ---
     await client.query(`
-      DROP TABLE IF EXISTS "profile_visits" CASCADE;
+      UPDATE "user_profiles" p
+      SET
+        "profile_msg" = COALESCE(NULLIF(p."profile_msg", ''), u."msg"),
+        "avatar_url" = COALESCE(NULLIF(p."avatar_url", ''), u."pic"),
+        "banner_url" = COALESCE(NULLIF(p."banner_url", ''), u."pich"),
+        "site_badge" = COALESCE(NULLIF(p."site_badge", ''), u."site_badge"),
+        "site_badge_id" = COALESCE(NULLIF(p."site_badge_id", ''), u."site_badge_id"),
+        "power" = COALESCE(NULLIF(p."power", ''), u."power"),
+        "wall_post_likes" = COALESCE(p."wall_post_likes", 0),
+        "gifts_received_count" = COALESCE(p."gifts_received_count", 0),
+        "rep" = COALESCE(p."rep", 0),
+        "coins" = COALESCE(p."coins", 0),
+        "evaluation" = COALESCE(p."evaluation", 0),
+        "muted" = COALESCE(p."muted", false) OR COALESCE(u."muted", 0) = 1,
+        "documents" = COALESCE(p."documents", false) OR COALESCE(u."documentationc", false)
+      FROM "users" u
+      WHERE p."user_id" = u."id"
+        AND (
+          p."profile_msg" IS NULL
+          OR p."profile_msg" = ''
+          OR p."avatar_url" IS NULL
+          OR p."banner_url" IS NULL
+          OR p."site_badge" IS NULL
+          OR p."site_badge_id" IS NULL
+        );
+    `);
+
+    // --- 2. جدول profile_visits ---
+    await client.query(`
       CREATE TABLE IF NOT EXISTS "profile_visits" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "visitor_id" varchar(255) REFERENCES "users"("id") ON DELETE CASCADE,
@@ -146,6 +268,7 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "profile_visits_profile_idx" ON "profile_visits" ("profile_id");
       CREATE INDEX IF NOT EXISTS "profile_visits_visitor_idx" ON "profile_visits" ("visitor_id");
     `);
+    await client.query(`ALTER TABLE "profile_visits" ADD COLUMN IF NOT EXISTS "source" varchar(80);`);
 
     // --- 3. جدول user_verifications ---
     await client.query(`
@@ -327,13 +450,38 @@ export async function runAutoMigrations() {
     await client.query(`CREATE INDEX IF NOT EXISTS "wall_comments_post_idx" ON "wall_comments" ("post_id")`);
     await client.query(`CREATE INDEX IF NOT EXISTS "wall_comments_parent_idx" ON "wall_comments" ("parent_id")`);
 
-    // ----- ترحيل التعليقات القديمة من bar_comments إلى wall_comments -----
-    // إضافة أعمدة parent_id و author_id إلى جدول bar_comments (legacy)
+    // ----- إنشاء جداول الحائط القديمة (bars / bar_comments) إن لم توجد -----
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "bars" (
+        "id" SERIAL PRIMARY KEY,
+        "uid" varchar(255),
+        "msg" text,
+        "pic" text,
+        "media_urls" text,
+        "topic" varchar(255)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "bar_comments" (
+        "id" SERIAL PRIMARY KEY,
+        "bar_id" integer REFERENCES "bars"("id") ON DELETE CASCADE,
+        "author_id" varchar(255),
+        "author_topic" varchar(255),
+        "author_pic" text,
+        "body" text,
+        "parent_id" integer REFERENCES "bar_comments"("id") ON DELETE CASCADE
+      );
+    `);
+
+    // إضافة أعمدة parent_id و author_id إلى جدول bar_comments إن لم توجد
     try { await client.query(`ALTER TABLE "bar_comments" ADD COLUMN IF NOT EXISTS "parent_id" integer`); } catch (_) {}
     try { await client.query(`ALTER TABLE "bar_comments" ADD COLUMN IF NOT EXISTS "author_id" varchar(255)`); } catch (_) {}
 
     // إضافة عمود media_urls لتخزين عدة صور/فيديو في المنشورات
     try { await client.query(`ALTER TABLE "bars" ADD COLUMN IF NOT EXISTS "media_urls" text`); } catch (_) {}
+    // إضافة عمود animated_faces لتخزين روابط الفيسات المتحركة
+    try { await client.query(`ALTER TABLE "bars" ADD COLUMN IF NOT EXISTS "animated_faces" text`); } catch (_) {}
     // تعبئة author_id من جدول users (حيثما أمكن)
     try {
       await client.query(`
@@ -549,6 +697,58 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "internal_mail_created_idx" ON "internal_mail" ("created_at");
     `);
 
+    // --- CUTS (Shortcuts) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "cuts" (
+        "id" SERIAL PRIMARY KEY,
+        "shortcut" varchar(255) NOT NULL,
+        "replacement" text NOT NULL,
+        "description" varchar(500),
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "cuts_shortcut_idx" ON "cuts" ("shortcut");
+    `);
+
+    // --- NOTEXT (Filter Rules) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "notext" (
+        "id" SERIAL PRIMARY KEY,
+        "type" varchar(255),
+        "path" varchar(50),
+        "v" text
+      );
+    `);
+
+    // --- HISTLETTER (Filter Logs) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "histletter" (
+        "id" SERIAL PRIMARY KEY,
+        "ip" varchar(255),
+        "msg" text,
+        "topic" varchar(255),
+        "v" varchar(255),
+        "time" varchar(255),
+        "target" varchar(255),
+        "source" varchar(255),
+        "path" varchar(50)
+      );
+    `);
+
+    // --- LOGS (Access/Activity Logs) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "logs" (
+        "id" SERIAL PRIMARY KEY,
+        "state" varchar(255),
+        "topic" varchar(255),
+        "username" varchar(255),
+        "ip" varchar(255),
+        "code" varchar(10),
+        "device" varchar(500),
+        "isin" varchar(255),
+        "time" varchar(255)
+      );
+    `);
+
     // --- NOTIFICATIONS ---
     await client.query(`
       CREATE TABLE IF NOT EXISTS "notifications" (
@@ -586,7 +786,9 @@ export async function runAutoMigrations() {
     `);
 
     // ========== جداول الملصقات ==========
-    console.log("[Migration] جاري إنشاء جداول الملصقات...");
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جداول الملصقات...");
+    }
     await client.query(`
       CREATE TABLE IF NOT EXISTS "sticker_categories" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -610,7 +812,9 @@ export async function runAutoMigrations() {
     `);
 
     // ========== جداول الفيسات المتحركة ==========
-    console.log("[Migration] جاري إنشاء جدول الفيسات المتحركة...");
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول الفيسات المتحركة...");
+    }
     await client.query(`
       CREATE TABLE IF NOT EXISTS "animated_faces" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -624,7 +828,9 @@ export async function runAutoMigrations() {
     `);
 
     // ========== فهارس الأداء الحرجة ==========
-    console.log("[Migration] جاري إنشاء فهارس الأداء...");
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء فهارس الأداء...");
+    }
 
     const safeIndex = async (name: string, sql: string) => {
       try { await client.query(sql); }
@@ -672,6 +878,7 @@ export async function runAutoMigrations() {
     // --- فهارس سجلات الوصول ---
     await safeIndex("logs_time_idx", `CREATE INDEX IF NOT EXISTS "logs_time_idx" ON "logs" ("time" DESC);`);
     await safeIndex("logs_username_idx", `CREATE INDEX IF NOT EXISTS "logs_username_idx" ON "logs" ("username");`);
+    await safeIndex("logs_state_idx", `CREATE INDEX IF NOT EXISTS "logs_state_idx" ON "logs" ("state");`);
 
     // --- فهارس الهدايا ---
     await safeIndex("gift_catalog_active_price_idx", `CREATE INDEX IF NOT EXISTS "gift_catalog_active_price_idx" ON "gift_catalog" ("is_active", "price") WHERE "is_active" = true;`);
@@ -685,9 +892,10 @@ export async function runAutoMigrations() {
     // --- فهارس إعجابات التعليقات ---
     await safeIndex("bar_comment_likes_comment_idx", `CREATE INDEX IF NOT EXISTS "bar_comment_likes_comment_idx" ON "bar_comment_likes" ("comment_id");`);
 
-    console.log("[Migration] ✅ تم إنشاء فهارس الأداء بنجاح");
-
-    console.log("[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح");
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] ✅ تم إنشاء فهارس الأداء بنجاح");
+      console.log("[Migration] ✅ تم فحص وإنشاء جميع الجداول الناقصة بنجاح");
+    }
   } catch (error) {
     console.error("[Migration] ❌ خطأ أثناء تشغيل الـ migrations:", error);
   } finally {
@@ -703,10 +911,16 @@ export async function verifyDatabaseSchema() {
     "user_verifications",
     "social_edges",
     "social_affinity",
+    "social_clusters",
+    "interaction_heat",
+    "influence_scores",
     "identity_effects",
     "user_identity_state",
     "behavior_scores",
     "activity_stream",
+    "event_store",
+    "event_snapshots",
+    "event_replays",
     "rooms",
     "moderation_events",
     "site_settings",
@@ -726,8 +940,17 @@ export async function verifyDatabaseSchema() {
     "gift_transactions",
     "private_messages",
     "internal_mail",
+    "cuts",
     "files",
     "notifications",
+    "sticker_categories",
+    "stickers",
+    "animated_faces",
+    "bars",
+    "bar_comments",
+    "bars_likes",
+    "bar_comment_likes",
+    "logs",
   ];
 
   const client = await dbPool.connect();

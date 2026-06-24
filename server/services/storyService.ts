@@ -2,6 +2,11 @@ import { db, dbPool } from "../db";
 import { stories, storyViews, storyReactions } from "../db/schema";
 import { eq, and, gt, desc, sql } from "drizzle-orm";
 import { eventBus } from "../core/events/EventBus";
+import { normalizeMinioUrl } from "./minioClient";
+
+function normalizeAvatarUrl(url: string | null | undefined): string {
+  return normalizeMinioUrl(url || "");
+}
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -71,7 +76,7 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
       COALESCE(uv.viewed, false) AS viewed_by_me,
       COALESCE(ul.liked, false) AS liked_by_me
     FROM stories s
-    LEFT JOIN users u ON u.uid = s.author_id
+    LEFT JOIN users u ON u.id = s.author_id
     LEFT JOIN LATERAL (
       SELECT true AS viewed
       FROM story_views sv
@@ -88,6 +93,16 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
     ORDER BY s.created_at DESC
   `, [currentUserId || ""]);
 
+  // DEBUG: log raw pic values for diagnosis
+  if (result.rows.length > 0) {
+    const samples = result.rows.slice(0, 3).map((r: any) => ({
+      author_id: r.author_id,
+      raw_pic: r.pic,
+      raw_author_avatar: r.author_avatar,
+    }));
+    console.log("[Stories DEBUG] raw pic values from DB:", JSON.stringify(samples));
+  }
+
   return result.rows.map(normalizeStoryRow);
 }
 
@@ -102,7 +117,7 @@ export async function getUserStories(userId: string, currentViewerId?: string): 
       COALESCE(uv.viewed, false) AS viewed_by_me,
       COALESCE(ul.liked, false) AS liked_by_me
     FROM stories s
-    LEFT JOIN users u ON u.uid = s.author_id
+    LEFT JOIN users u ON u.id = s.author_id
     LEFT JOIN LATERAL (
       SELECT true AS viewed
       FROM story_views sv
@@ -131,7 +146,7 @@ export async function getStoryById(storyId: string): Promise<any | null> {
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover
     FROM stories s
-    LEFT JOIN users u ON u.uid = s.author_id
+    LEFT JOIN users u ON u.id = s.author_id
     WHERE s.id = $1
     LIMIT 1
   `, [storyId]);
@@ -182,7 +197,7 @@ export async function getStoryViewers(storyId: string): Promise<any[]> {
       COALESCE(NULLIF(u.topic, ''), NULLIF(u.display_name, ''), NULLIF(u.username, ''), sv.viewer_name, 'زائر') AS username,
       COALESCE(u.pic, '/pic.png') AS avatar
     FROM story_views sv
-    LEFT JOIN users u ON u.uid = sv.viewer_id
+    LEFT JOIN users u ON u.id = sv.viewer_id
     WHERE sv.story_id = $1
     ORDER BY sv.viewed_at DESC
   `, [storyId]);
@@ -190,7 +205,7 @@ export async function getStoryViewers(storyId: string): Promise<any[]> {
   return result.rows.map((r: any) => ({
     id: r.id,
     username: r.username,
-    avatar: r.avatar || "/pic.png",
+    avatar: normalizeAvatarUrl(r.avatar),
     viewedAt: r.viewed_at,
   }));
 }
@@ -201,7 +216,7 @@ export async function getStoryReactions(storyId: string, type: string = "like"):
       COALESCE(NULLIF(u.topic, ''), NULLIF(u.display_name, ''), NULLIF(u.username, ''), sr.user_name, 'زائر') AS username,
       COALESCE(u.pic, '/pic.png') AS avatar
     FROM story_reactions sr
-    LEFT JOIN users u ON u.uid = sr.user_id
+    LEFT JOIN users u ON u.id = sr.user_id
     WHERE sr.story_id = $1 AND sr.type = $2
     ORDER BY sr.created_at DESC
   `, [storyId, type]);
@@ -209,7 +224,7 @@ export async function getStoryReactions(storyId: string, type: string = "like"):
   return result.rows.map((r: any) => ({
     id: r.id,
     username: r.username,
-    avatar: r.avatar || "/pic.png",
+    avatar: normalizeAvatarUrl(r.avatar),
     viewedAt: r.created_at,
   }));
 }
@@ -275,8 +290,8 @@ function normalizeStoryRow(row: any): any {
     authorId: row.author_id,
     authorUsername: row.author_username,
     authorRole: row.author_role,
-    authorAvatar: row.author_avatar || "/pic.png",
-    authorCover: row.author_cover || "/pich.png",
+    authorAvatar: normalizeAvatarUrl(row.author_avatar),
+    authorCover: normalizeAvatarUrl(row.author_cover) || "/pich.png",
     mediaUrl: row.media_url,
     mediaType: row.media_type || "text",
     caption: row.caption,

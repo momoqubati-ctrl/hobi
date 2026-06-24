@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Mail, Search, Send, Trash2, Loader2, Inbox, ArrowUpRight, X, ChevronRight } from 'lucide-react';
+import { Mail, Search, Send, Trash2, Loader2, Inbox, ArrowUpRight, X, ChevronRight, Reply } from 'lucide-react';
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { optimisticSendMail } from "@/lib/optimistic-actions";
@@ -37,6 +37,7 @@ const InternalMail = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMail, setSelectedMail] = useState<MailItem | null>(null);
   const [composing, setComposing] = useState(false);
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string; avatar: string } | null>(null);
 
   const {
     inbox,
@@ -123,6 +124,20 @@ const InternalMail = () => {
           >
             <Trash2 size={16} />
           </button>
+          <button
+            onClick={() => {
+              setReplyTo({
+                id: isIncoming ? selectedMail.senderId : selectedMail.recipientId,
+                name: name || "",
+                avatar: avatar || "/pic.png",
+              });
+              setSelectedMail(null);
+              setComposing(true);
+            }}
+            className="text-slate-300 hover:text-primary p-1"
+          >
+            <Reply size={16} />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div className="flex items-center gap-3">
@@ -144,14 +159,16 @@ const InternalMail = () => {
   if (composing) {
     return (
       <ComposeForm
+        preselectedUser={replyTo}
         onSend={async (recipientId, body) => {
           const result = await handleSend(recipientId, body);
           if (result.success) {
             setComposing(false);
+            setReplyTo(null);
           }
           return result;
         }}
-        onCancel={() => setComposing(false)}
+        onCancel={() => { setComposing(false); setReplyTo(null); }}
       />
     );
   }
@@ -235,6 +252,22 @@ const InternalMail = () => {
                         {mail.body}
                       </p>
                     </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReplyTo({
+                          id: isIncoming ? mail.senderId : mail.recipientId,
+                          name: name || "",
+                          avatar: avatar || "/pic.png",
+                        });
+                        setComposing(true);
+                      }}
+                      className="text-slate-300 hover:text-primary shrink-0"
+                      disabled={mail.isOptimistic}
+                    >
+                      <Reply size={13} />
+                    </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(mail.id, isIncoming ? 'inbox' : 'outbox'); }}
                       className="text-slate-300 hover:text-red-500 shrink-0"
@@ -242,6 +275,7 @@ const InternalMail = () => {
                     >
                       <Trash2 size={13} />
                     </button>
+                    </div>
                   </div>
                 );
               })}
@@ -260,13 +294,16 @@ const InternalMail = () => {
   );
 };
 
-const ComposeForm = ({ onSend, onCancel }: {
+const ComposeForm = ({ preselectedUser, onSend, onCancel }: {
+  preselectedUser?: { id: string; name: string; avatar: string } | null;
   onSend: (recipientId: string, body: string) => Promise<any>;
   onCancel: () => void;
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [users, setUsers] = useState<any[]>([]);
-  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+  const [selectedUser, setSelectedUser] = useState<any | null>(
+    preselectedUser ? { id: preselectedUser.id, username: preselectedUser.name, topic: preselectedUser.name, pic: preselectedUser.avatar } : null
+  );
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");

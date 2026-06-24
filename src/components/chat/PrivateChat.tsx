@@ -4,11 +4,15 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, Send, Wifi, WifiOff, ImagePlus, X, SmilePlus, Reply, ArrowLeft, Youtube } from "lucide-react";
+import { ArrowRight, Loader2, Send, Wifi, WifiOff, ImagePlus, X, SmilePlus, Reply, ArrowLeft, Youtube, Smile, Plus, Mic, MicOff } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
+import VoiceMessagePlayer from "./VoiceMessagePlayer";
 import EmojiPickerPopover, { EmojiPanel } from "./EmojiPickerPopover";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
+import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { compressImage, COMPRESS_PRESETS } from "@/lib/image-compress";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
@@ -27,7 +31,7 @@ const renderTextWithFaces = (text: string, faceUrls?: string[]) => {
     }
     const idx = parseInt(match[1], 10);
     if (faceUrls[idx]) {
-      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "1.4rem", height: "1.4rem" }} />);
+      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "40px", height: "40px" }} />);
     }
     lastIndex = match.index + match[0].length;
   }
@@ -60,7 +64,7 @@ interface PMMessage {
   receiverId: string;
   text: string;
   mediaUrl?: string;
-  mediaType?: "image" | "video";
+  mediaType?: "image" | "video" | "audio";
   reactions?: Record<string, ReactionType>;
   replyToId?: string;
   replyToText?: string;
@@ -141,6 +145,11 @@ const PrivateChat = ({
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [replyToMsg, setReplyToMsg] = useState<PMMessage | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [showFaces, setShowFaces] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [stickerCategories, setStickerCategories] = useState<StickerCategory[]>([]);
+  const [activeStickerCat, setActiveStickerCat] = useState<string | null>(null);
   const [emojiSearch, setEmojiSearch] = useState("");
   const [activeEmojiCat, setActiveEmojiCat] = useState("animated");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -153,6 +162,7 @@ const PrivateChat = ({
   const [activeYouTubeEmbedUrl, setActiveYouTubeEmbedUrl] = useState<string | null>(null);
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+  const recorder = useVoiceRecorder();
 
   useEffect(() => {
     fetchAnimatedFaces().then((f) => { if (f.length > 0) setAnimatedFaces(f); });
@@ -160,11 +170,13 @@ const PrivateChat = ({
 
   const closeAllPanels = useCallback(() => {
     setShowEmoji(false);
+    setShowFaces(false);
+    setShowStickers(false);
     setShowYouTubeSearch(false);
   }, []);
 
   useEffect(() => {
-    if (!showEmoji && !showYouTubeSearch) return;
+    if (!showEmoji && !showYouTubeSearch && !showStickers && !showFaces) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (inputAreaRef.current && !inputAreaRef.current.contains(e.target as Node)) {
         closeAllPanels();
@@ -172,13 +184,24 @@ const PrivateChat = ({
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showEmoji, showYouTubeSearch, closeAllPanels]);
+  }, [showEmoji, showYouTubeSearch, showStickers, showFaces, closeAllPanels]);
 
   useEffect(() => {
     setSelectedVideo(null);
     setShowYouTubeSearch(false);
     setActiveYouTubeEmbedUrl(null);
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!showStickers) return;
+    let cancelled = false;
+    fetchStickerCategories().then((cats) => {
+      if (cancelled) return;
+      setStickerCategories(cats);
+      if (cats.length > 0 && !activeStickerCat) setActiveStickerCat(cats[0].id);
+    });
+    return () => { cancelled = true; };
+  }, [showStickers, activeStickerCat]);
 
   // ─── إغلاق قائمة التفاعل عند النقر خارجها ────────────────────────────────
 
@@ -253,6 +276,86 @@ const PrivateChat = ({
       return null;
     }
   }, []);
+
+  const uploadAudio = useCallback(async (blob: Blob): Promise<string | undefined> => {
+    try {
+      const token = localStorage.getItem("authToken");
+      if (!token) throw new Error("جلسة غير صالحة");
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(new Error("فشل قراءة الملف"));
+        reader.readAsDataURL(blob);
+      });
+      const ext = blob.type.includes("webm") ? "webm" : "mp3";
+      const res = await fetch("/api/pm/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: blob.type }),
+      });
+      const data = await res.json();
+      if (data.success) return data.url;
+      throw new Error(data.message || "فشل رفع التسجيل");
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  const handleSendVoice = useCallback(async () => {
+    if (!recorder.audioBlob || !otherUser?.id) return;
+    setSending(true);
+    try {
+      const url = await uploadAudio(recorder.audioBlob);
+      if (url) {
+        const clientId = `pending_${Date.now()}_${Math.random()}`;
+        const pendingMsg: PMMessage = {
+          id: clientId,
+          clientId,
+          conversationId,
+          senderId: currentUserId,
+          senderName: currentUser?.name || currentUser?.username || "",
+          senderAvatar: myAvatar,
+          receiverId: otherUser.id,
+          text: "",
+          mediaUrl: url,
+          mediaType: "audio" as const,
+          reactions: {},
+          createdAt: new Date().toISOString(),
+          read: false,
+          pending: true,
+          failed: false,
+        };
+        setMessages(prev => [...prev, pendingMsg]);
+
+        const socket = getSocket();
+        if (socket?.connected) {
+          socket.emit("pm:send", {
+            toUserId: otherUser.id,
+            text: "",
+            clientId,
+            mediaUrl: url,
+            mediaType: "audio",
+          }, (ackErrorOrRes: any, ackRes?: any) => {
+            const res = ackRes ?? (ackErrorOrRes?.message === "operation has timed out" ? null : ackErrorOrRes);
+            if (res?.success && res.message) {
+              const sentMessage = normalizePrivateMessage(res.message, {
+                clientId, conversationId, senderId: currentUserId,
+                senderName: currentUser?.name || currentUser?.username || "",
+                senderAvatar: myAvatar, receiverId: otherUser.id,
+                text: "", mediaUrl: url, mediaType: "audio" as const,
+              });
+              setMessages(prev => prev.map(m => m.clientId === clientId ? sentMessage : m));
+            } else {
+              setMessages(prev => prev.map(m => m.clientId === clientId ? { ...m, pending: false, failed: true } : m));
+            }
+          });
+        }
+      }
+    } finally {
+      setSending(false);
+      recorder.clearRecording();
+    }
+  }, [recorder.audioBlob, otherUser?.id, uploadAudio, conversationId, currentUserId, currentUser?.name, currentUser?.username, myAvatar]);
 
   // ─── اختيار ملف ───────────────────────────────────────────────────────────
 
@@ -459,6 +562,76 @@ const PrivateChat = ({
       },
     );
   }, [text, pendingMedia, sending, conversationId, currentUserId, otherUser.id, uploadFile, replyToMsg, selectedVideo, animatedFaces, currentUser?.name, currentUser?.username, myAvatar]);
+
+  const handleSendSticker = useCallback(async (stickerUrl: string) => {
+    const socket = getSocket();
+    if (!socket || !socket.connected || !otherUser?.id) return;
+
+    const clientId = `pending_${Date.now()}_${Math.random()}`;
+
+    const pendingMsg: PMMessage = {
+      id: clientId,
+      clientId,
+      conversationId,
+      senderId: currentUserId,
+      senderName: currentUser?.name || currentUser?.username || "",
+      senderAvatar: myAvatar,
+      receiverId: otherUser.id,
+      text: "",
+      mediaUrl: stickerUrl,
+      mediaType: "image",
+      reactions: {},
+      createdAt: new Date().toISOString(),
+      read: false,
+      pending: true,
+      failed: false,
+    };
+
+    setMessages(prev => [...prev, pendingMsg]);
+    setReplyToMsg(null);
+    closeAllPanels();
+
+    const socketWithTimeout =
+      typeof (socket as any).timeout === "function" ? (socket as any).timeout(8000) : socket;
+
+    socketWithTimeout.emit(
+      "pm:send",
+      {
+        toUserId: otherUser.id,
+        text: "",
+        clientId,
+        mediaUrl: stickerUrl,
+        mediaType: "image",
+      },
+      (ackErrorOrRes: any, ackRes?: any) => {
+        const res = ackRes ?? (ackErrorOrRes?.message === "operation has timed out" ? null : ackErrorOrRes);
+        if (res?.success && res.message) {
+          const sentMessage = normalizePrivateMessage(res.message, {
+            clientId,
+            conversationId,
+            senderId: currentUserId,
+            senderName: currentUser?.name || currentUser?.username || "",
+            senderAvatar: myAvatar,
+            receiverId: otherUser.id,
+            text: "",
+            mediaUrl: stickerUrl,
+            mediaType: "image" as const,
+          });
+          setMessages(prev =>
+            prev.map(m =>
+              m.clientId === clientId ? sentMessage : m,
+            ),
+          );
+        } else {
+          setMessages(prev =>
+            prev.map(m =>
+              m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
+            ),
+          );
+        }
+      },
+    );
+  }, [conversationId, currentUserId, otherUser.id, uploadFile, currentUser?.name, currentUser?.username, myAvatar, closeAllPanels]);
 
   // ─── جلب السجل التاريخي ──────────────────────────────────────────────────
 
@@ -718,6 +891,14 @@ const PrivateChat = ({
 
   const renderMedia = (msg: PMMessage) => {
     if (!msg.mediaUrl) return null;
+
+    if (msg.mediaType === "audio") {
+      return (
+        <div className="mb-1.5 overflow-hidden rounded-xl">
+          <VoiceMessagePlayer src={msg.mediaUrl} />
+        </div>
+      );
+    }
 
     if (msg.mediaType === "video") {
       return (
@@ -1118,6 +1299,91 @@ const PrivateChat = ({
           isOpen={showEmoji}
         />
 
+        {/* لوحة الفيسات المتحركة */}
+        {showFaces && (
+          <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+            <div className="p-2 text-[10px] text-muted-foreground font-bold">
+              اكتب الاختصار في حقل الكتابة (مثال: ف1)
+            </div>
+            <div className="flex flex-wrap gap-2 p-3 max-h-[200px] overflow-y-auto">
+              {animatedFaces.map((face) => (
+                <button
+                  key={face.id}
+                  type="button"
+                  onClick={() => {
+                    setText((prev) => prev + face.shortcut);
+                    setShowFaces(false);
+                  }}
+                  className="flex flex-col items-center gap-1 shrink-0 rounded-xl hover:bg-muted transition active:scale-90 p-1"
+                >
+                  <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "40px", height: "40px" }} />
+                  <span className="text-[10px] font-bold text-primary">{face.shortcut}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* لوحة الملصقات */}
+        {showStickers && (
+          <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+            <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
+              {stickerCategories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setActiveStickerCat(cat.id)}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                    activeStickerCat === cat.id
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  <img src={cat.icon} className="w-5 h-5 rounded-md object-cover" alt="" />
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2 p-3 max-h-[250px] overflow-y-auto">
+              {stickerCategories.find((c) => c.id === activeStickerCat)?.stickers.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => handleSendSticker(s.image_url)}
+                  className="w-[120px] h-[120px] flex items-center justify-center rounded-xl hover:bg-muted transition active:scale-90 overflow-hidden shrink-0"
+                >
+                  <img src={s.image_url} alt={s.name} className="w-full h-full object-contain" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* شريط التسجيل الصوتي */}
+        {recorder.isRecording && (
+          <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-red-50 dark:bg-red-950/20">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            <span className="text-[10px] font-bold text-red-600">{formatDuration(recorder.duration)}</span>
+            <button type="button" onClick={recorder.isPaused ? recorder.resumeRecording : recorder.pauseRecording} className="text-xs font-bold text-muted-foreground hover:text-foreground px-2 py-1 rounded-lg hover:bg-muted transition">
+              {recorder.isPaused ? "استئناف" : "إيقاف مؤقت"}
+            </button>
+            <button type="button" onClick={recorder.stopRecording} className="text-xs font-bold text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition">
+              إيقاف
+            </button>
+          </div>
+        )}
+        {recorder.audioBlob && !recorder.isRecording && (
+          <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-muted/50">
+            <audio src={recorder.audioUrl!} controls className="flex-1 h-8" />
+            <button type="button" onClick={recorder.clearRecording} className="text-xs font-bold text-muted-foreground hover:text-red-600 px-2 py-1 rounded-lg hover:bg-muted transition">
+              <X size={14} />
+            </button>
+            <button type="button" onClick={handleSendVoice} disabled={sending} className="text-xs font-bold text-white bg-primary hover:bg-primary/90 px-3 py-1 rounded-lg transition flex items-center gap-1">
+              <Send size={12} /> إرسال
+            </button>
+          </div>
+        )}
+
         <div className="flex gap-2 px-4 py-3 items-center">
           <input
             ref={fileInputRef}
@@ -1126,62 +1392,103 @@ const PrivateChat = ({
             className="hidden"
             onChange={handleFileSelect}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="rounded-xl h-10 w-10 shrink-0 text-muted-foreground hover:text-primary"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading || !socketConnected}
-            title="إرفاق صورة أو فيديو"
-          >
-            <ImagePlus size={18} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={`rounded-xl h-10 w-10 shrink-0 transition-colors ${showYouTubeSearch ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "text-muted-foreground hover:text-red-500"}`}
-            onClick={() => {
-              if (showYouTubeSearch) {
-                closeAllPanels();
-              } else {
-                closeAllPanels();
-                setShowYouTubeSearch(true);
-              }
-            }}
-            disabled={!socketConnected}
-            title="بحث YouTube"
-          >
-            <Youtube size={18} />
-          </Button>
-          {showEmoji ? (
-            <button
-              type="button"
-              onClick={() => setShowEmoji(false)}
-              className="h-10 w-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition shadow-md shrink-0 animate-in zoom-in duration-150"
-              title="إغلاق"
-            >
-              <ArrowLeft size={20} />
-            </button>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-yellow-500 shrink-0"
-              onClick={() => {
-                if (showEmoji) {
-                  closeAllPanels();
-                } else {
-                  closeAllPanels();
-                  setShowEmoji(true);
-                }
-              }}
-              title="إيموجي"
-            >
-              <SmilePlus size={20} />
-            </Button>
-          )}
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`rounded-xl h-10 w-10 shrink-0 transition-colors ${menuOpen || showEmoji || showFaces || showStickers || showYouTubeSearch ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-primary"}`}
+                disabled={uploading || !socketConnected}
+                title="أدوات المراسلة"
+              >
+                {(showEmoji || showFaces || showStickers || showYouTubeSearch) ? <X size={18} /> : <Plus size={18} />}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                  className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90"
+                  title="إرفاق صورة أو فيديو"
+                >
+                  <ImagePlus size={22} className="text-muted-foreground" />
+                  <span className="text-[9px] font-bold">صورة</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    closeAllPanels();
+                    setShowYouTubeSearch(true);
+                  }}
+                  className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90"
+                  title="بحث YouTube"
+                >
+                  <Youtube size={22} className="text-red-500" />
+                  <span className="text-[9px] font-bold">يوتيوب</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    closeAllPanels();
+                    setShowStickers(true);
+                  }}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                  title="ملصقات"
+                >
+                  <span className="text-[20px] leading-none">🖼️</span>
+                  <span className="text-[9px] font-bold">ملصقات</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    closeAllPanels();
+                    setShowFaces(true);
+                  }}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                  title="فيسات متحركة"
+                >
+                  <Smile size={22} className="text-orange-500" />
+                  <span className="text-[9px] font-bold">فيسات</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    closeAllPanels();
+                    setShowEmoji(true);
+                  }}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showEmoji ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                  title="إيموجي"
+                >
+                  <SmilePlus size={22} className="text-yellow-500" />
+                  <span className="text-[9px] font-bold">إيموجي</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (recorder.isRecording) {
+                      recorder.stopRecording();
+                    } else {
+                      recorder.startRecording();
+                    }
+                  }}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`}
+                  title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}
+                >
+                  {recorder.isRecording ? <MicOff size={22} /> : <Mic size={22} className="text-red-500" />}
+                  <span className="text-[9px] font-bold">{recorder.isRecording ? "إيقاف" : "صوت"}</span>
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
           <Input
             placeholder="اكتب رسالة..."
             className="h-10 text-xs bg-slate-100 dark:bg-slate-800 border-none rounded-xl flex-1"

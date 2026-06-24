@@ -1,0 +1,1 @@
+import('pg').then(({Pool})=>{const p=new Pool({connectionString:'postgresql://postgres:postgres@localhost:5433/chat_app'});p.query("SELECT id, msg, idreg FROM users WHERE id=$1",["082536d5-3beb-481c-b44f-a67fffb80a98"]).then(r=>{console.log(JSON.stringify(r.rows,null,2));p.end()}).catch(e=>{console.error(e.message);p.end()})})

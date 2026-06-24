@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
     return {
       success: true,
       user: {
-        id: user.uid || user.id,
+        id: user.id || user.uid,
         name: user.topic || user.username,
         avatar: user.pic || "/pic.png",
       },

@@ -86,3 +86,21 @@
 .gradient-text {
   @apply bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600;
 }
+
+@media (max-width: 767px) {
+  .animate-in {
+    animation: none !important;
+  }
+  .animate-out {
+    animation: none !important;
+  }
+}
+
+/* Hide scrollbar for horizontal scrolling elements */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

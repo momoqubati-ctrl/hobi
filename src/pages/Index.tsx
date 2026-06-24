@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Users, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { showSuccess } from "@/utils/toast";
+import { refreshSocketAuth, getSocket } from "@/lib/socket";
 
 type AuthMode = "guest" | "member" | "register";
 type DatabaseStatus = "checking" | "connected" | "disconnected";
@@ -77,8 +79,31 @@ const Index = () => {
         throw new Error(data.message || "تعذر تسجيل الدخول");
       }
 
+      const normalizedUser = {
+        ...data.user,
+        profileMsg: typeof data.user?.profileMsg === "string" && data.user.profileMsg.trim()
+          ? data.user.profileMsg
+          : (typeof data.user?.statusMsg === "string" && data.user.statusMsg.trim() ? data.user.statusMsg : ""),
+        statusMsg: typeof data.user?.statusMsg === "string" && data.user.statusMsg.trim()
+          ? data.user.statusMsg
+          : (typeof data.user?.profileMsg === "string" && data.user.profileMsg.trim() ? data.user.profileMsg : ""),
+      };
       localStorage.setItem("authToken", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      localStorage.setItem("user", JSON.stringify(normalizedUser));
+      // Ensure socket handshake uses latest auth data
+      try {
+        refreshSocketAuth();
+        // Trigger reconnect so server receives updated handshake immediately
+        const s = getSocket();
+        if (s && s.connected) {
+          s.disconnect();
+          // reconnect will use refreshed auth
+          getSocket();
+        }
+      } catch {}
+      if (activeTab === "register") {
+        showSuccess("تم إنشاء الحساب بنجاح");
+      }
       navigate("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر تسجيل الدخول");

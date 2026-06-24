@@ -21,19 +21,23 @@ export function registerMailHandlers(io: Server, socket: Socket): void {
     try {
       const mail = await sendMail(user.id, recipientId, body);
 
-      // بث لحظي للبريد
-      publishGlobalEvent("internal_mail", mail).catch(err => 
+      const enrichedMail = {
+        ...mail,
+        senderName: user.topic || user.username || user.id,
+        senderAvatar: user.avatar || "/pic.png",
+      };
+
+      publishGlobalEvent("internal_mail", enrichedMail).catch(err => 
         console.error("Failed to broadcast mail:", err)
       );
 
-      // إنشاء تنبيه للمستلم
       if (String(user.id) !== recipientId) {
         createNotification(recipientId, user.id, "mail", "internal_mail", mail.id, {
           body: body.slice(0, 100),
         }).catch(err => console.error("Failed to create mail notification:", err));
       }
 
-      callback?.({ success: true, mail });
+      callback?.({ success: true, mail: enrichedMail });
     } catch (err: any) {
       console.error("Error sending mail via socket:", err);
       callback?.({ success: false, error: err.message || "تعذر إرسال البريد" });

@@ -14,6 +14,7 @@ import { registerNotificationHandlers } from "./notificationHandlers";
 import { registerMailHandlers } from "./mailHandlers";
 import { configureSocketGateway, registerSocketConnection } from "./SocketGateway";
 import { initializeSocketBroker } from "./SocketBroker";
+import { normalizeMinioUrl } from "../services/minioClient";
 
 let io: SocketIOServer | null = null;
 
@@ -45,10 +46,24 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   configureSocketGateway(io, { shardId: process.env.SOCKET_SHARD_ID ?? "local" });
   initializeSocketBroker(io);
 
+  // Store io in global for cross-context access (Vite sandbox workaround)
+  (global as any).__socket_io_instance__ = io;
+
   io.on("connection", async (socket) => {
+    // Debug: log incoming handshake auth for tracing (avoid logging secrets)
+    try {
+      const authSnapshot = { ...socket.handshake.auth };
+      console.debug("[socket] connection handshake", socket.id, authSnapshot);
+    } catch (e) {}
+
     const username = socket.handshake.auth?.username || "زائر";
     const role = socket.handshake.auth?.role || "guest";
     const userId = socket.handshake.auth?.userId || socket.id;
+    const handshakeProfileMsg = typeof socket.handshake.auth?.statusMsg === "string" && socket.handshake.auth.statusMsg.trim()
+      ? socket.handshake.auth.statusMsg.trim()
+      : (typeof socket.handshake.auth?.profileMsg === "string" && socket.handshake.auth.profileMsg.trim()
+        ? socket.handshake.auth.profileMsg.trim()
+        : "");
 
     // تحديد كود الدولة الحقيقي بناءً على عنوان الـ IP الخاص بالعضو (مع دعم VPN)
     let detectedCountry = "SA";
@@ -65,14 +80,58 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       id: userId,
       username,
       role,
-      avatar: socket.handshake.auth?.avatar || "/pic.png",
+      avatar: normalizeMinioUrl(socket.handshake.auth?.avatar || "/pic.png"),
       countryCode: detectedCountry,
-      avatarFrameUrl: socket.handshake.auth?.avatarFrameUrl || "",
+      avatarFrameUrl: normalizeMinioUrl(socket.handshake.auth?.avatarFrameUrl || ""),
       giftIconUrl: socket.handshake.auth?.giftIconUrl || "",
       messageBubbleStyle: socket.handshake.auth?.messageBubbleStyle || "default",
       status: socket.handshake.auth?.status || "online",
       connectedAt: new Date().toISOString(),
+      idreg: socket.handshake.auth?.idreg || "",
+      siteBadge: socket.handshake.auth?.siteBadge || "",
+      profileMsg: handshakeProfileMsg,
+      statusMsg: handshakeProfileMsg,
     };
+
+    // Load profile status and idreg from the canonical DB source at connection time
+    try {
+      const { dbPool } = await import("../db");
+      const profileResult = await dbPool.query(
+        `SELECT "profile_msg", "idreg", "uid", "avatar_url", "banner_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        [userId],
+      );
+      const profileRow = profileResult.rows[0];
+      let legacyRow: any = null;
+      if (!profileRow || !String(profileRow.profile_msg || "").trim()) {
+        const legacyResult = await dbPool.query(`SELECT "msg", "idreg", "uid", "pic", "pich" FROM "users" WHERE "id" = $1 LIMIT 1`, [userId]);
+        legacyRow = legacyResult.rows[0];
+      }
+      const row = profileRow && String(profileRow.profile_msg || "").trim() ? profileRow : legacyRow || profileRow;
+      if (row) {
+        const dbProfileMsg = (row.profile_msg || row.msg || "").toString().trim();
+        const dbIdreg = (row.idreg || "").toString().trim();
+        const dbUid = (row.uid || "").toString().trim();
+        if (dbProfileMsg) {
+          socket.data.user.profileMsg = dbProfileMsg;
+          socket.data.user.statusMsg = dbProfileMsg;
+        }
+        if (dbIdreg) socket.data.user.idreg = dbIdreg;
+        if (dbUid && !socket.data.user.idreg) socket.data.user.idreg = dbUid;
+        if (row.avatar_url) socket.data.user.avatar = normalizeMinioUrl(row.avatar_url);
+        if (row.banner_url) socket.data.user.cover = normalizeMinioUrl(row.banner_url);
+        if (!row.avatar_url && legacyRow?.pic) socket.data.user.avatar = normalizeMinioUrl(legacyRow.pic);
+        if (!row.banner_url && legacyRow?.pich) socket.data.user.cover = normalizeMinioUrl(legacyRow.pich);
+      }
+    } catch {}
+    // Also try in-memory as secondary fallback
+    try {
+      const { findInMemoryUser } = await import("../services/authService");
+      const inMemProfile = findInMemoryUser(userId) || findInMemoryUser(username);
+      if (!socket.data.user.statusMsg && inMemProfile?.profile?.profileMsg) {
+        const trimmed = String(inMemProfile.profile.profileMsg).trim();
+        if (trimmed) socket.data.user.statusMsg = trimmed;
+      }
+    } catch {}
 
     // تسجيل أحداث الغرف
     registerSocketConnection(socket, { shardId: process.env.SOCKET_SHARD_ID ?? "local" });
@@ -121,7 +180,8 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
 
 /**
  * يحصل على مثيل Socket.io الحالي
+ * يتحقق أولاً من المتغير المحلي ثم من المخزن العام (لكسر عزلة Vite sandbox)
  */
 export function getIO(): SocketIOServer | null {
-  return io;
+  return io || (global as any).__socket_io_instance__ || null;
 }

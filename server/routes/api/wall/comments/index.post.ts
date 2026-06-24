@@ -1,6 +1,7 @@
 import { defineEventHandler, readBody, setResponseStatus } from "h3";
 import { createWallComment } from "../../../../services/wallService";
 import { processText } from "../../../../services/filterService";
+import { applyShortcuts } from "../../../../services/shortcutService";
 import { createNotification } from "../../../../services/notificationService";
 import { dbPool } from "../../../../db";
 import { publishGlobalEvent } from "../../../../socket/SocketBroker";
@@ -19,15 +20,16 @@ export default defineEventHandler(async (event) => {
     const userRes = isGuest
       ? { rows: [] as any[] }
       : await dbPool.query(
-          "SELECT username, topic, pic FROM users WHERE uid = $1 OR id = $1 OR idreg::text = $1 OR lower(username) = lower($1) LIMIT 1",
+          "SELECT username, topic, pic FROM users WHERE CAST(uid AS text) = $1 OR CAST(id AS text) = $1 OR CAST(idreg AS text) = $1 OR lower(username) = lower($1) LIMIT 1",
           [authorId],
         );
     const user = userRes.rows[0];
     const fallbackName = authorName || authorId;
 
+    const expanded = await applyShortcuts(text);
     const filterRes = await processText({
-      text,
-      source: "wall",
+      text: expanded,
+      source: "تعليق على الحائط",
       user: { username: user?.username || fallbackName, topic: user?.topic || fallbackName, ip: "127.0.0.1" },
     });
 

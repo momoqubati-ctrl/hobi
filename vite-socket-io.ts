@@ -38,6 +38,7 @@ export function viteSocketIO(): Plugin {
 
       // Initialize the SocketBroker with this io instance
       initializeSocketBroker(io);
+      (globalThis as any).__socket_io_instance__ = io;
 
       // Profile handlers
       let profileHandlers: any;
@@ -74,6 +75,7 @@ export function viteSocketIO(): Plugin {
         status: "online" | "idle" | "busy" | "away";
         idreg?: string;
         siteBadge?: string;
+        statusMsg?: string;
       };
 
       const connectedUsers = new Map<string, OnlineUser>();
@@ -99,6 +101,7 @@ export function viteSocketIO(): Plugin {
           status: user.status,
           idreg: user.idreg,
           siteBadge: user.siteBadge,
+          statusMsg: user.statusMsg || "",
           count: connectedUsers.size,
         });
       }
@@ -174,6 +177,8 @@ export function viteSocketIO(): Plugin {
       import("./server/services/powersService").then(m => { powersService = m; });
       let filterService: any;
       import("./server/services/filterService").then(m => { filterService = m; });
+      let shortcutService: any;
+      import("./server/services/shortcutService").then(m => { shortcutService = m; });
       let requestCountry: any;
       import("./server/services/requestCountry").then(m => { requestCountry = m; });
 
@@ -458,9 +463,10 @@ export function viteSocketIO(): Plugin {
               finalChatText = "🎤 رسالة صوتية";
             }
             if (filterService && finalChatText) {
+              const expanded = shortcutService ? await shortcutService.applyShortcuts(finalChatText) : finalChatText;
               const filterRes = await filterService.processText({
-                text: finalChatText,
-                source: roomId,
+                text: expanded,
+                source: `غرفة: ${roomId}`,
                 user: { username, topic: username, ip: socket.handshake.address || "127.0.0.1" }
               });
               finalChatText = filterRes.filteredText;
@@ -729,7 +735,11 @@ export function viteSocketIO(): Plugin {
 
           const oldUsername = user.username;
 
-          if (data.avatar) user.avatar = data.avatar;
+          if (data.avatar) {
+            user.avatar = data.avatar;
+            userData.avatar = data.avatar;
+            socket.data.user.avatar = data.avatar;
+          }
           if (data.avatarFrameUrl) user.avatarFrameUrl = data.avatarFrameUrl;
           if (data.giftIconUrl) user.giftIconUrl = data.giftIconUrl;
           if (data.messageBubbleStyle) user.messageBubbleStyle = data.messageBubbleStyle;
@@ -777,9 +787,10 @@ export function viteSocketIO(): Plugin {
           // --- تطبيق الفلترة في الخاص ---
           let finalPmText = text;
           if (filterService) {
+            const expanded = shortcutService ? await shortcutService.applyShortcuts(text) : text;
             const filterRes = await filterService.processText({
-              text,
-              source: "private",
+              text: expanded,
+              source: `محادثة خاصة مع ${toSocketId}`,
               user: { username, topic: username, ip: socket.handshake.address || "127.0.0.1" },
               target: toSocketId
             });

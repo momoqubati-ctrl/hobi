@@ -2,6 +2,7 @@ import { createHmac, randomUUID, scryptSync, timingSafeEqual } from "node:crypto
 import { normalizeCountryCode } from "./countries";
 import { AuthRole, createUserProfileDefaults, UserProfileDefaults } from "./userProfileDefaults";
 import { canUseDatabaseAuth, createPersistedUser, findPersistedUserByUsername, PersistedUser } from "./userRepository";
+import { addSharedUser } from "./sharedUserStore";
 
 type StoredUser = {
   id: string;
@@ -23,6 +24,24 @@ export type PublicUser = {
 } & UserProfileDefaults;
 
 const usersByUsername = new Map<string, StoredUser>();
+
+/** Look up an in-memory user by id, username, or displayName */
+export const findInMemoryUser = (identifier: string): StoredUser | undefined => {
+  const norm = identifier.trim().toLowerCase();
+  if (!norm) return undefined;
+
+  // search by username first
+  const byUsername = usersByUsername.get(norm);
+  if (byUsername) return byUsername;
+
+  // search by id or displayName
+  for (const user of usersByUsername.values()) {
+    if (user.id.toLowerCase() === norm || user.displayName.toLowerCase() === norm) {
+      return user;
+    }
+  }
+  return undefined;
+};
 
 const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
 
@@ -92,7 +111,7 @@ export const createGuestSession = (displayName?: string, countryCode?: string) =
   const name = displayName?.trim().slice(0, 40) || `زائر ${Math.floor(1000 + Math.random() * 9000)}`;
   const normalizedCountryCode = normalizeCountryCode(countryCode);
 
-  return issueSession({
+  const user: StoredUser = {
     id: randomUUID(),
     username: `guest-${randomUUID()}`,
     displayName: name,
@@ -100,7 +119,22 @@ export const createGuestSession = (displayName?: string, countryCode?: string) =
     countryCode: normalizedCountryCode,
     profile: createUserProfileDefaults("guest"),
     createdAt: new Date().toISOString(),
+  };
+
+  // تخزين الضيوف في الذاكرة لإتاحة فتح بروفايلهم لاحقاً
+  usersByUsername.set(user.username, user);
+  addSharedUser({
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    countryCode: user.countryCode,
+    avatar: user.profile.avatar || "/pic.png",
+    presence: "online",
+    connectedAt: user.createdAt,
   });
+
+  return issueSession(user);
 };
 
 export const registerMember = async (input: { username: string; password: string; displayName?: string; countryCode?: string }) => {
@@ -130,9 +164,20 @@ export const registerMember = async (input: { username: string; password: string
     });
 
     if (persisted) {
+      const storedUser = persistedToStoredUser(persisted);
+      addSharedUser({
+        id: storedUser.id,
+        username: storedUser.username,
+        displayName: storedUser.displayName,
+        role: storedUser.role,
+        countryCode: storedUser.countryCode,
+        avatar: storedUser.profile.avatar || "/pic.png",
+        presence: "online",
+        connectedAt: storedUser.createdAt,
+      });
       return {
         ok: true as const,
-        session: issueSession(persistedToStoredUser(persisted)),
+        session: issueSession(storedUser),
       };
     }
   }
@@ -149,6 +194,16 @@ export const registerMember = async (input: { username: string; password: string
   };
 
   usersByUsername.set(username, user);
+  addSharedUser({
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    countryCode: user.countryCode,
+    avatar: user.profile.avatar || "/pic.png",
+    presence: "online",
+    connectedAt: user.createdAt,
+  });
   return {
     ok: true as const,
     session: issueSession(user),
@@ -157,26 +212,46 @@ export const registerMember = async (input: { username: string; password: string
 
 export const loginMember = async (input: { username: string; password: string; countryCode?: string }) => {
   const username = normalizeUsername(input.username);
-  const persisted = await findPersistedUserByUsername(username);
-  const user = persisted ? persistedToStoredUser(persisted) : usersByUsername.get(username);
 
-  if (!user || !user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
+  // 1. Try database first
+  const persisted = await findPersistedUserByUsername(username);
+  if (persisted) {
+    const user = persistedToStoredUser(persisted);
+    if (!user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
+      return {
+        ok: false as const,
+        code: "INVALID_CREDENTIALS",
+        message: "اسم المستخدم أو كلمة المرور غير صحيحة",
+      };
+    }
+    if (input.countryCode) {
+      user.countryCode = normalizeCountryCode(input.countryCode);
+    }
     return {
-      ok: false as const,
-      code: "INVALID_CREDENTIALS",
-      message: "اسم المستخدم أو كلمة المرور غير صحيحة",
+      ok: true as const,
+      session: issueSession(user),
     };
   }
 
-  // استخدام كود الدولة المكتشف من الـ IP بدلاً من القيمة المخزنة في قاعدة البيانات
-  // حتى يعكس العلم الموقع الحالي للمستخدم وليس مكان التسجيل
-  if (input.countryCode) {
-    user.countryCode = normalizeCountryCode(input.countryCode);
+  // 2. DB unavailable – fall back to in-memory cache
+  if (!canUseDatabaseAuth()) {
+    const user = usersByUsername.get(username);
+    if (user && user.passwordHash && verifyPassword(input.password, user.passwordHash)) {
+      if (input.countryCode) {
+        user.countryCode = normalizeCountryCode(input.countryCode);
+      }
+      return {
+        ok: true as const,
+        session: issueSession(user),
+      };
+    }
   }
 
+  // 3. User not found in DB (DB is working) or bad credentials
   return {
-    ok: true as const,
-    session: issueSession(user),
+    ok: false as const,
+    code: "INVALID_CREDENTIALS",
+    message: "اسم المستخدم أو كلمة المرور غير صحيحة",
   };
 };
 

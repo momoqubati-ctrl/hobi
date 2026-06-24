@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmojiPanel } from "./EmojiPickerPopover";
-import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile } from "lucide-react";
+import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile, LogOut, Menu } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
@@ -15,6 +16,7 @@ import VoiceMessagePlayer from "./VoiceMessagePlayer";
 import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { fetchAnimatedFaces, AnimatedFace, findAnimatedFace } from "@/lib/animatedFaceData";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
+import { NotificationsBell } from "./NotificationsPanel";
 
 type ReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
 
@@ -92,6 +94,14 @@ const getStoredUser = () => {
     const parsed = JSON.parse(raw);
     const role = parsed.role === "admin" ? ("admin" as const) : parsed.role === "guest" ? ("guest" as const) : ("member" as const);
 
+    const resolvedStatusMsg = typeof parsed.statusMsg === "string" && parsed.statusMsg.trim()
+      ? parsed.statusMsg.trim()
+      : typeof parsed.profileMsg === "string" && parsed.profileMsg.trim()
+        ? parsed.profileMsg.trim()
+        : role === "guest"
+          ? "( غير مسجل )"
+          : "(عضو جديد)";
+
     return {
       name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : fallback.name,
       id: String(parsed.id || parsed.idreg || parsed.uid || fallback.id),
@@ -107,12 +117,8 @@ const getStoredUser = () => {
             : "",
       profileThemeId: typeof parsed.profileThemeId === "string" ? parsed.profileThemeId : "",
       messageBubbleStyle: typeof parsed.messageBubbleStyle === "string" ? parsed.messageBubbleStyle : "default",
-      profileMsg:
-        typeof parsed.profileMsg === "string" && parsed.profileMsg.trim()
-          ? parsed.profileMsg
-          : role === "guest"
-            ? "( غير مسجل )"
-            : "(عضو جديد)",
+      profileMsg: resolvedStatusMsg,
+      statusMsg: resolvedStatusMsg,
     };
   } catch {
     return fallback;
@@ -155,7 +161,7 @@ const renderTextWithFaces = (text: string, faceUrls?: string[]) => {
     }
     const idx = parseInt(match[1], 10);
     if (faceUrls[idx]) {
-      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "1.4rem", height: "1.4rem" }} />);
+      parts.push(<img key={`f${match.index}`} src={faceUrls[idx]} alt="فيس متحرك" className="object-contain inline-block align-middle mx-0.5" style={{ width: "40px", height: "40px" }} />);
     }
     lastIndex = match.index + match[0].length;
   }
@@ -192,6 +198,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
   const [activeStickerCat, setActiveStickerCat] = useState<string>("");
   const [showFaces, setShowFaces] = useState(false);
   const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const inputAreaRef = useRef<HTMLDivElement>(null);
 
   const closeAllPanels = useCallback(() => {
@@ -620,7 +627,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
                 }}
                 className="flex flex-col items-center gap-1 shrink-0 rounded-xl hover:bg-muted transition active:scale-90 p-1"
               >
-                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "40px", height: "40px" }} />
                 <span className="text-[10px] font-bold text-primary">{face.shortcut}</span>
               </button>
             ))}
@@ -638,120 +645,52 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
           onChange={handleFileSelect}
         />
         <div className="flex gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={isSending || isUploading}
-            className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-green-500"
-            onClick={() => fileInputRef.current?.click()}
-            title="إرسال صورة أو فيديو"
-          >
-            <ImagePlus size={20} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={isSending || isUploading}
-            className={`h-10 w-10 rounded-xl transition-colors ${showStickers ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-yellow-500"}`}
-            onClick={() => {
-              if (showStickers) {
-                closeAllPanels();
-              } else {
-                closeAllPanels();
-                setShowStickers(true);
-              }
-            }}
-            title="ملصقات"
-          >
-            🖼️
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={isSending || isUploading}
-            className={`h-10 w-10 rounded-xl transition-colors ${showFaces ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-orange-500"}`}
-            onClick={() => {
-              if (showFaces) {
-                closeAllPanels();
-              } else {
-                closeAllPanels();
-                setShowFaces(true);
-              }
-            }}
-            title="فيسات متحركة"
-          >
-            <Smile size={20} />
-          </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-pink-500">
-            <Gift size={20} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={`h-10 w-10 rounded-xl transition-colors ${showYouTubeSearch ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "text-muted-foreground hover:bg-muted hover:text-red-500"}`}
-            onClick={() => {
-              if (showYouTubeSearch) {
-                closeAllPanels();
-              } else {
-                closeAllPanels();
-                setShowYouTubeSearch(true);
-              }
-            }}
-            title="بحث YouTube"
-          >
-            <Youtube size={20} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={isSending || isUploading || (message.trim().length > 0)}
-            className={`h-10 w-10 rounded-xl transition-colors ${recorder.isRecording ? "bg-red-500 text-white animate-pulse shadow-md shadow-red-500/30" : "text-muted-foreground hover:bg-muted hover:text-red-500"}`}
-            onClick={() => {
-              if (recorder.isRecording) {
-                recorder.stopRecording();
-              } else {
-                recorder.startRecording();
-                setShowEmoji(false);
-                setShowYouTubeSearch(false);
-              }
-            }}
-            title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}
-          >
-            {recorder.isRecording ? <MicOff size={20} /> : <AudioLines size={20} />}
-          </Button>
-          {showEmoji ? (
-            <button
-              type="button"
-              onClick={() => setShowEmoji(false)}
-              className="h-10 w-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition shadow-md shrink-0 animate-in zoom-in duration-150"
-              title="إغلاق"
-            >
-              <ArrowLeft size={20} />
-            </button>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-muted hover:text-yellow-500"
-              onClick={() => {
-                if (showEmoji) {
-                  closeAllPanels();
-                } else {
-                  closeAllPanels();
-                  setShowEmoji(true);
-                }
-              }}
-              title="إيموجي"
-            >
-              <SmilePlus size={20} />
-            </Button>
-          )}
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={isSending || isUploading}
+                className={`h-10 w-10 rounded-xl transition-colors ${menuOpen || showEmoji || showFaces || showStickers || showYouTubeSearch ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-primary"}`}
+                title="أدوات الغرفة"
+              >
+                {(showEmoji || showFaces || showStickers || showYouTubeSearch) ? <X size={18} /> : <Plus size={18} />}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
+              <div className="flex gap-1 flex-wrap justify-center">
+                <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرسال صورة أو فيديو">
+                  <ImagePlus size={22} className="text-green-500" />
+                  <span className="text-[9px] font-bold">صورة</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowYouTubeSearch(true); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="بحث YouTube">
+                  <Youtube size={22} className="text-red-500" />
+                  <span className="text-[9px] font-bold">يوتيوب</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
+                  <span className="text-[20px] leading-none">🖼️</span>
+                  <span className="text-[9px] font-bold">ملصقات</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
+                  <Smile size={22} className="text-orange-500" />
+                  <span className="text-[9px] font-bold">فيسات</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowEmoji(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showEmoji ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="إيموجي">
+                  <SmilePlus size={22} className="text-yellow-500" />
+                  <span className="text-[9px] font-bold">إيموجي</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
+                  {recorder.isRecording ? <MicOff size={22} /> : <AudioLines size={22} className="text-red-500" />}
+                  <span className="text-[9px] font-bold">{recorder.isRecording ? "إيقاف" : "صوت"}</span>
+                </button>
+                <button type="button" onClick={() => { setMenuOpen(false); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="هدايا">
+                  <Gift size={22} className="text-pink-500" />
+                  <span className="text-[9px] font-bold">هدايا</span>
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
         <div className="relative flex-1">
           <Input
@@ -771,7 +710,16 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
   );
 });
 
-const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfile }: any) => {
+const RoomPage = ({
+  room,
+  onBack,
+  onSelectRoom,
+  isEmbedded = false,
+  onOpenProfile,
+  onOpenSidebar,
+  onOpenNotifications,
+  onLogout,
+}: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [memberCount, setMemberCount] = useState(0);
@@ -1369,16 +1317,18 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <div className={`mx-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ${isConnected ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
-            <div className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
-            {isConnected ? "متصل" : "غير متصل"}
-          </div>
+          {/* Notifications bell from site header */}
+          {onOpenNotifications && (
+            <NotificationsBell onOpen={onOpenNotifications} />
+          )}
+
           <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)} className={`h-9 w-9 rounded-xl ${isMuted ? "bg-red-50 text-red-500" : "text-muted-foreground"}`}>
             {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setShowMics(!showMics)} className={`h-9 w-9 rounded-xl ${showMics ? "bg-primary/5 text-primary" : "text-muted-foreground"}`}>
             <Mic2 size={18} />
           </Button>
+
           <Button variant="ghost" size="icon" onClick={onBack} className="h-9 w-9 rounded-xl text-red-500 hover:bg-red-50">
             <X size={18} />
           </Button>
@@ -1490,7 +1440,7 @@ const RoomPage = ({ room, onBack, onSelectRoom, isEmbedded = false, onOpenProfil
                   /* فيس متحرك - بدون فقاعة */
                   <div className="py-0.5 flex items-center gap-0.5">
                     {msg.animatedFaces.map((faceUrl, i) => (
-                      <img key={i} src={faceUrl} alt="فيس متحرك" className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+                      <img key={i} src={faceUrl} alt="فيس متحرك" className="object-contain" style={{ width: "40px", height: "40px" }} />
                     ))}
                   </div>
                 ) : msg.sticker && !msg.text && !msg.replyToId && !msg.mediaUrl && !msg.mediaUrls?.length ? (

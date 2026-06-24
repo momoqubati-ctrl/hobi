@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dbPool } from "../db";
 import { AuthRole, UserProfileDefaults } from "./userProfileDefaults";
+import { normalizeMinioUrl } from "./minioClient";
 
 export type PersistedUser = {
   id: string;
@@ -37,7 +38,7 @@ const mapLegacyUser = (row: any): PersistedUser => {
   const idreg = Number(row.idreg || 0);
   const joinTime = Number(row.joinuser || row.lastssen || Date.now());
   return {
-    id: String(row.uid || row.id || row.idreg),
+    id: String(row.id || row.uid || row.idreg),
     username: String(row.username || ""),
     displayName: String(row.topic || row.username || ""),
     role,
@@ -49,9 +50,9 @@ const mapLegacyUser = (row: any): PersistedUser => {
       lid: String(row.lid || ""),
       uid: String(row.uid || row.id || ""),
       profileMsg: String(row.msg || ""),
-      avatar: String(row.pic || "pic.png"),
-      profileCover: String(row.pich || "pich.png"),
-      profileBannerUrl: String(row.pich || "pich.png"),
+      avatar: normalizeMinioUrl(String(row.pic || "/pic.png")),
+      profileCover: normalizeMinioUrl(String(row.pich || "/pich.png")),
+      profileBannerUrl: normalizeMinioUrl(String(row.pich || "/pich.png")),
       profileThemeId: String(row.them || ""),
       avatarFrameUrl: String(row.cover || ""),
       giftIconUrl: String(row.gift_ico || ""),
@@ -93,6 +94,87 @@ const markDbUnavailable = (error: unknown) => {
   console.warn("Legacy users auth store unavailable, using in-memory fallback:", error instanceof Error ? error.message : error);
 };
 
+const resolveUserId = async (userId: string) => {
+  const normalized = String(userId || "").trim();
+  if (!normalized) return null;
+
+  const result = await dbPool.query(
+    `SELECT "id" FROM "users"
+     WHERE CAST("uid" AS text) = $1
+        OR CAST("id" AS text) = $1
+        OR CAST("idreg" AS text) = $1
+        OR lower("username") = lower($1)
+     LIMIT 1`,
+    [normalized],
+  );
+
+  return result.rows[0]?.id || normalized;
+};
+
+const syncProfileToCanonicalStore = async (
+  userId: string,
+  updates: {
+    avatar?: string;
+    cover?: string;
+    profileMsg?: string;
+    displayName?: string;
+  },
+) => {
+  const actualUserId = await resolveUserId(userId);
+  if (!actualUserId) return;
+
+  const profileFields: string[] = [];
+  const profileValues: unknown[] = [];
+  const legacyFields: string[] = [];
+  const legacyValues: unknown[] = [];
+  let profileIndex = 1;
+  let legacyIndex = 1;
+
+  const addProfileField = (column: string, value: unknown) => {
+    profileFields.push(`"${column}" = $${profileIndex++}`);
+    profileValues.push(value);
+  };
+
+  const addLegacyField = (column: string, value: unknown) => {
+    legacyFields.push(`"${column}" = $${legacyIndex++}`);
+    legacyValues.push(value);
+  };
+
+  if (updates.avatar !== undefined) {
+    addProfileField("avatar_url", updates.avatar);
+    addLegacyField("pic", updates.avatar);
+  }
+  if (updates.cover !== undefined) {
+    addProfileField("banner_url", updates.cover);
+    addLegacyField("pich", updates.cover);
+  }
+  if (updates.profileMsg !== undefined) {
+    addProfileField("profile_msg", updates.profileMsg);
+    addLegacyField("msg", updates.profileMsg);
+  }
+  if (updates.displayName !== undefined) {
+    addLegacyField("topic", String(updates.displayName).slice(0, 120));
+  }
+
+  if (profileFields.length > 0) {
+    await dbPool.query(
+      `INSERT INTO "user_profiles" ("user_id") VALUES ($1) ON CONFLICT ("user_id") DO NOTHING`,
+      [actualUserId],
+    );
+    await dbPool.query(
+      `UPDATE "user_profiles" SET ${profileFields.join(", ")} WHERE "user_id" = $${profileIndex}`,
+      [...profileValues, actualUserId],
+    );
+  }
+
+  if (legacyFields.length > 0) {
+    await dbPool.query(
+      `UPDATE "users" SET ${legacyFields.join(", ")} WHERE CAST("uid" AS text) = $${legacyIndex} OR CAST("id" AS text) = $${legacyIndex} OR CAST("idreg" AS text) = $${legacyIndex}`,
+      [...legacyValues, actualUserId],
+    );
+  }
+};
+
 export const canUseDatabaseAuth = () => databaseAvailable !== false;
 
 export const findPersistedUserByUsername = async (username: string): Promise<PersistedUser | null> => {
@@ -124,9 +206,9 @@ export const createPersistedUser = async (input: CreateUserInput): Promise<Persi
     const token = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
     const inserted = await dbPool.query(
       `INSERT INTO users
-        (bg, mcol, ucol, evaluation, ico, ip, fp, id, lid, uid, msg, pic, pich, power, rep, topic, username, password, token, youtub, them, cover, "loginG", muted, documentationc, lastssen, joinuser, site_badge_id, site_badge, coins, gift_ico, gcol, last_eval_login_day, auto_power, wall_post_likes, gifts_received_count, eval_awards_json)
+        (id, display_name, bg, mcol, ucol, evaluation, ico, ip, fp, lid, uid, msg, pic, pich, power, rep, topic, username, password, them, cover, gift_ico, gcol, lastssen, joinuser, coins, site_badge_id, site_badge, wall_post_likes, gifts_received_count, muted, documentationc)
        VALUES
-        ('#FFFFFF', '#000000', '#000000', 0, '', '', '', '', $1, $2, '(عضو جديد)', 'pic.png', 'pich.png', $3, 0, $4, $5, $6, $7, '', '', '', 0, 0, 0, $8, $8, '', '', 0, '', '#FFFFFF', '', '', 0, 0, NULL)
+        (gen_random_uuid(), $4, '#FFFFFF', '#000000', '#000000', 0, '', '', '', $1, $2, '(عضو جديد)', '/pic.png', '/pich.png', $3, 0, $4, $5, $6, '', '', '', '#FFFFFF', $7, $7, 0, '', '', 0, 0, 0, false)
        RETURNING *`,
       [
         lid,
@@ -135,11 +217,18 @@ export const createPersistedUser = async (input: CreateUserInput): Promise<Persi
         input.displayName,
         input.username,
         input.passwordHash,
-        token,
         String(now),
       ],
     );
     databaseAvailable = true;
+
+    await syncProfileToCanonicalStore(inserted.rows[0]?.id || inserted.rows[0]?.uid || input.username, {
+      avatar: "/pic.png",
+      cover: "/pich.png",
+      profileMsg: "(عضو جديد)",
+      displayName: input.displayName,
+    });
+
     return mapLegacyUser(inserted.rows[0]);
   } catch (error) {
     markDbUnavailable(error);
@@ -182,17 +271,13 @@ export const updatePersistedUserProfile = async (
 
     if (fields.length === 0) return true;
 
-    values.push(userId);
-    const userIdParam = `$${paramIndex}`;
+    await syncProfileToCanonicalStore(userId, {
+      avatar: profileUpdates.avatar,
+      cover: profileUpdates.cover,
+      profileMsg: profileUpdates.profileMsg,
+      displayName: profileUpdates.displayName,
+    });
 
-    // Checking both uid = userId and idreg = userId as legacy fallback
-    const query = `
-      UPDATE users
-      SET ${fields.join(", ")}
-      WHERE uid = ${userIdParam} OR CAST(idreg AS VARCHAR) = ${userIdParam}
-    `;
-
-    await dbPool.query(query, values);
     databaseAvailable = true;
     return true;
   } catch (error) {

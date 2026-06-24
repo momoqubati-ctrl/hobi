@@ -6,7 +6,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "next-themes";
 import { useNavigate } from "react-router-dom";
-import { getSocket, disconnectSocket, refreshSocketAuth } from "@/lib/socket";
+import { getSocket, logoutSocket, refreshSocketAuth } from "@/lib/socket";
+import { useRealtimeStore } from "@/lib/realtime-store";
+import { useStoriesStore } from "@/lib/stories-store";
 import { 
   User, 
   Palette, 
@@ -70,6 +72,12 @@ const SettingsPanel = () => {
     try {
       const user = JSON.parse(localStorage.getItem("user") || "null");
       if (!user) return null;
+      const resolvedStatusMsg = typeof user.statusMsg === "string" && user.statusMsg.trim()
+        ? user.statusMsg.trim()
+        : typeof user.profileMsg === "string" && user.profileMsg.trim()
+          ? user.profileMsg.trim()
+          : "( غير مسجل )";
+
       return {
         name: typeof user.name === "string" && user.name.trim() ? user.name : "زائر",
         avatar: (typeof user.avatar === "string" && user.avatar.trim()) || (typeof user.avatarUrl === "string" && user.avatarUrl.trim())
@@ -81,7 +89,8 @@ const SettingsPanel = () => {
             : typeof user.profileCover === "string" && user.profileCover.trim()
               ? user.profileCover
               : "/pich.png",
-        profileMsg: typeof user.profileMsg === "string" && user.profileMsg.trim() ? user.profileMsg : "( غير مسجل )",
+        profileMsg: resolvedStatusMsg,
+        statusMsg: resolvedStatusMsg,
         profileThemeId: typeof user.profileThemeId === "string" && user.profileThemeId.trim() ? user.profileThemeId : "افتراضي",
         giftIconUrl: typeof user.giftIconUrl === "string" && user.giftIconUrl.trim() ? user.giftIconUrl : "",
         coins: Number(user.coins) || 0,
@@ -95,7 +104,8 @@ const SettingsPanel = () => {
   const openEditModal = () => {
     setNewAvatar(null);
     setNewCover(null);
-    setNewStatusMsg(currentUser?.profileMsg === "(عضو جديد)" || currentUser?.profileMsg === "( غير مسجل )" ? "" : currentUser?.profileMsg || "");
+    const isPlaceholder = currentUser?.statusMsg === "(عضو جديد)" || currentUser?.statusMsg === "( غير مسجل )" || currentUser?.profileMsg === "(عضو جديد)" || currentUser?.profileMsg === "( غير مسجل )";
+    setNewStatusMsg(isPlaceholder ? "" : currentUser?.statusMsg || currentUser?.profileMsg || "");
     setNewDisplayName(currentUser?.name || "");
     setIsEditModalOpen(true);
   };
@@ -162,20 +172,41 @@ const SettingsPanel = () => {
       });
 
       const data = await res.json();
-        if (data.success) {
+      if (data.success) {
+        // Use server-normalized avatar URL (guaranteed to be correct format)
+        const normalizedAvatar = data.normalizedAvatar || (data.updates?.avatar
+          ? (() => {
+              const url = data.updates.avatar.trim();
+              if (url.startsWith("http://") || url.startsWith("https://"))
+                return url.replace(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/[^/]+\//i, "/minio/");
+              return url.startsWith("/") ? url : `/${url}`;
+            })()
+          : null);
+        const normalizedCover = data.updates?.cover
+          ? (() => {
+              const url = data.updates.cover.trim();
+              if (url.startsWith("http://") || url.startsWith("https://"))
+                return url.replace(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/[^/]+\//i, "/minio/");
+              return url.startsWith("/") ? url : `/${url}`;
+            })()
+          : null;
+
         // Update local storage user details
         const storedUserRaw = localStorage.getItem("user");
         if (storedUserRaw) {
           const user = JSON.parse(storedUserRaw);
-          if (data.updates.avatar) {
-            user.avatar = data.updates.avatar;
-            user.avatarUrl = data.updates.avatar;
+          if (normalizedAvatar) {
+            user.avatar = normalizedAvatar;
+            user.avatarUrl = normalizedAvatar;
           }
-          if (data.updates.cover) {
-            user.profileCover = data.updates.cover;
-            user.profileBannerUrl = data.updates.cover;
+          if (normalizedCover) {
+            user.profileCover = normalizedCover;
+            user.profileBannerUrl = normalizedCover;
           }
-          if (data.updates.profileMsg !== undefined) user.profileMsg = data.updates.profileMsg;
+          if (data.updates?.profileMsg !== undefined) {
+            user.profileMsg = data.updates.profileMsg;
+            user.statusMsg = data.updates.profileMsg;
+          }
           if (data.displayName) {
             user.name = data.displayName;
           }
@@ -183,15 +214,33 @@ const SettingsPanel = () => {
         }
         refreshSocketAuth();
 
-        // Emit update to other users via socket
+        // Notify server socket to update the in-memory connected user properties
         const socket = getSocket();
-        socket.emit("profile_update", {
-          displayName: data.displayName,
-          avatar: data.updates.avatar,
-          avatarUrl: data.updates.avatar,
-          cover: data.updates.cover,
-          profileMsg: data.updates.profileMsg
-        });
+        if (socket) {
+          socket.emit("profile_update", {
+            avatar: normalizedAvatar || undefined,
+            displayName: data.displayName || undefined,
+            cover: normalizedCover || undefined,
+            ...(data.updates?.profileMsg !== undefined ? { profileMsg: data.updates.profileMsg } : {})
+          });
+        }
+
+        // Update stories store immediately for own stories (before socket event arrives)
+        if (normalizedAvatar) {
+          try {
+            const rawUser = localStorage.getItem("user");
+            const currentUser = rawUser ? JSON.parse(rawUser) : null;
+            if (currentUser?.id) {
+              useStoriesStore.setState((state) => ({
+                stories: state.stories.map((st) =>
+                  st.authorId === String(currentUser.id)
+                    ? { ...st, authorAvatar: normalizedAvatar }
+                    : st
+                ),
+              }));
+            }
+          } catch {}
+        }
 
         showSuccess("تم تحديث الملف الشخصي بنجاح");
         setIsEditModalOpen(false);
@@ -223,10 +272,8 @@ const SettingsPanel = () => {
   };
 
   const handleLogout = () => {
-    // Disconnect the socket connection immediately
-    disconnectSocket();
-
-    // Clear manual status on logout so next login starts as "online"
+    useRealtimeStore.getState().resetSession();
+    logoutSocket();
     sessionStorage.removeItem("manualStatus");
     localStorage.removeItem("authToken");
     localStorage.removeItem("user");
@@ -254,7 +301,7 @@ const SettingsPanel = () => {
             </div>
             <div className="flex-1">
               <h3 className="text-xl font-bold">{currentUser?.name || "زائر"}</h3>
-              <p className="text-white/80 text-sm">{currentUser?.profileMsg || "( غير مسجل )"} • {currentUser?.evaluation || 0} نقطة</p>
+              <p className="text-white/80 text-sm">{currentUser?.statusMsg || currentUser?.profileMsg || "(عضو جديد)"} • {currentUser?.evaluation || 0} نقطة</p>
               <div className="flex items-center gap-2 mt-2">
                 <div className="bg-card/20 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1">
                   <Coins size={12} />

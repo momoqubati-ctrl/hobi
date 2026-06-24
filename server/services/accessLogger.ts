@@ -33,11 +33,9 @@ export const logAccess = async (params: LogParams) => {
     
     const countryCode = detectCountryCode(event);
     const userAgent = getRequestHeader(event, "user-agent") || "Unknown";
-    
-    // تنظيف الـ User Agent ليكون أقصر (كما في النظام القديم)
-    const device = userAgent.split(')')[0].replace('Mozilla/5.0 (', '').slice(0, 255);
+    const device = userAgent.slice(0, 500);
 
-    await dbPool.query(
+    const result = await dbPool.query(
       `INSERT INTO logs (state, topic, username, ip, code, device, isin, "time")
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
@@ -47,10 +45,11 @@ export const logAccess = async (params: LogParams) => {
         ip,
         countryCode,
         device,
-        isin || "1", // 1 تعني الموقع بشكل عام في النظام القديم
+        isin || "1",
         String(Date.now())
       ]
     );
+    console.log(`[accessLogger] ✓ Logged: state=${state} username=${username} ip=${ip}`);
   } catch (error) {
     console.error("Failed to write access log:", error);
   }

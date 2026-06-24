@@ -561,3 +561,35 @@ export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
   }),
 }));
 
+// --- STICKERS ---
+export const stickerCategories = pgTable("sticker_categories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 100 }).notNull(),
+  icon: text("icon").default("😀"),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const stickers = pgTable("stickers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  categoryId: uuid("category_id").references(() => stickerCategories.id, { onDelete: "cascade" }).notNull(),
+  name: varchar("name", { length: 100 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => [
+  index("stickers_category_idx").on(table.categoryId),
+]);
+
+export const animatedFaces = pgTable("animated_faces", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  shortcut: varchar("shortcut", { length: 10 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  isActive: boolean("is_active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+

@@ -5,6 +5,45 @@ import { useRealtimeStore } from '@/lib/realtime-store';
 import { getSocket } from '@/lib/socket';
 
 const PresenceEngine = () => {
+  const getCurrentUserPresenceHint = useCallback(() => {
+    try {
+      const rawUser = localStorage.getItem("user");
+      if (!rawUser) return null;
+      const user = JSON.parse(rawUser);
+      const profileMsg = typeof user?.profileMsg === "string" ? user.profileMsg.trim() : "";
+      const statusMsg = typeof user?.statusMsg === "string" ? user.statusMsg.trim() : profileMsg;
+      return {
+        id: String(user?.id || "").trim(),
+        username: String(user?.name || user?.username || "").trim(),
+        profileMsg,
+        statusMsg,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const hydratePresenceUser = useCallback((user: any) => {
+    if (!user) return user;
+    const hint = getCurrentUserPresenceHint();
+    if (!hint) return user;
+
+    const incomingId = String(user?.id || "").trim();
+    const incomingUsername = String(user?.username || "").trim().toLowerCase();
+    const hintId = String(hint.id || "").trim();
+    const hintUsername = String(hint.username || "").trim().toLowerCase();
+    const matchesCurrentUser = (incomingId && hintId && incomingId === hintId) || (incomingUsername && hintUsername && incomingUsername === hintUsername);
+
+    if (!matchesCurrentUser) return user;
+
+    const resolvedStatusMsg = String(user?.statusMsg || user?.profileMsg || hint.statusMsg || hint.profileMsg || "").trim();
+    return {
+      ...user,
+      profileMsg: resolvedStatusMsg,
+      statusMsg: resolvedStatusMsg,
+    };
+  }, [getCurrentUserPresenceHint]);
+
   const {
     // Online Users state & actions
     onlineUsers,
@@ -107,13 +146,14 @@ const PresenceEngine = () => {
     const socket = getSocket();
     socket.emit("get_online_users", (res: any) => {
       if (res?.success) {
-        setOnlineUsers(res.users || []);
+        const hydratedUsers = (res.users || []).map((user: any) => hydratePresenceUser(user));
+        setOnlineUsers(hydratedUsers);
         setOnlineCount(res.count || 0);
       } else {
         setLoadingOnlineUsers(false);
       }
     });
-  }, [setOnlineUsers, setOnlineCount, setLoadingOnlineUsers]);
+  }, [setOnlineUsers, setOnlineCount, setLoadingOnlineUsers, hydratePresenceUser]);
 
   const fetchRooms = useCallback(async () => {
     if (isRoomsLoadedRef.current) return;
@@ -254,6 +294,7 @@ const PresenceEngine = () => {
     const socket = getSocket();
 
     const handlePresenceUpdate = (data: any) => {
+      console.debug("[socket] presence:update", new Date().toISOString(), data);
       setPresence(data.userId, data);
     };
 
@@ -262,10 +303,12 @@ const PresenceEngine = () => {
     };
 
     const onOnlineCount = (data: { count: number }) => {
+      console.debug("[socket] online_count", new Date().toISOString(), data);
       setOnlineCount(data.count);
     };
 
     const onUserStatusUpdate = (data: any) => {
+      console.debug("[socket] user_status_update", new Date().toISOString(), data);
       if (!data?.userId && !data?.socketId) return;
       
       const toMerge: any = {
@@ -282,23 +325,24 @@ const PresenceEngine = () => {
       if (data.idreg !== undefined) toMerge.idreg = data.idreg;
       if (data.siteBadge !== undefined) toMerge.siteBadge = data.siteBadge;
 
-      mergeOnlineUser(toMerge);
+      mergeOnlineUser(hydratePresenceUser(toMerge));
     };
 
     const onUserCountryUpdate = (data: { userId: string; socketId?: string; username?: string; role?: string; countryCode: string }) => {
       if (!data?.userId && !data?.socketId) return;
-      mergeOnlineUser({
+      mergeOnlineUser(hydratePresenceUser({
         id: data.userId || "0",
         socketId: data.socketId,
         username: data.username || "",
         role: data.role || "guest",
         countryCode: data.countryCode,
-      });
+      }));
     };
 
     const onUserConnected = (data: any) => {
+      console.debug("[socket] user_connected", new Date().toISOString(), data);
       if (data?.userId || data?.socketId || data?.username) {
-        mergeOnlineUser({
+        mergeOnlineUser(hydratePresenceUser({
           id: data.userId || "0",
           socketId: data.socketId,
           username: data.username || "زائر",
@@ -309,13 +353,15 @@ const PresenceEngine = () => {
           giftIconUrl: data.giftIconUrl || "",
           roomId: data.roomId || "",
           status: data.status || "online",
-          idreg: data.idreg,
-          siteBadge: data.siteBadge,
-        });
+          idreg: data.idreg || "",
+          siteBadge: data.siteBadge || "",
+          statusMsg: data.statusMsg || data.profileMsg || "",
+        }));
       }
     };
 
     const onUserDisconnected = (data: any) => {
+      console.debug("[socket] user_disconnected", new Date().toISOString(), data);
       if (data?.userId || data?.socketId || data?.username) {
         removeOnlineUser({ id: data.userId, socketId: data.socketId, username: data.username, role: data.role });
         if (typeof data.count === "number") {
@@ -325,17 +371,20 @@ const PresenceEngine = () => {
     };
 
     const onUserProfileUpdated = (data: any) => {
+      console.debug("[socket] user_profile_updated", new Date().toISOString(), data);
       if (!data?.userId) return;
 
       // Update online user (including display name)
-      mergeOnlineUser({
+      mergeOnlineUser(hydratePresenceUser({
         id: data.userId,
         username: data.username,
         avatar: data.avatar || data.avatarUrl,
         avatarUrl: data.avatar || data.avatarUrl,
         profileCover: data.profileCover,
-        statusMsg: data.profileMsg,
-      });
+        statusMsg: data.statusMsg || data.profileMsg || "",
+        siteBadge: data.siteBadge || "",
+        idreg: data.idreg || "",
+      }));
 
       // Update wall post author (avatar + display name)
       updateWallAuthorProfile(
@@ -493,7 +542,7 @@ const PresenceEngine = () => {
     socket.on("private_message", onPrivateMessage);
 
     // Idle Detection
-    let idleTimer: NodeJS.Timeout;
+    let idleTimer: ReturnType<typeof setTimeout>;
     const resetTimer = () => {
       clearTimeout(idleTimer);
       socket.emit('presence:state', { status: 'active' });
@@ -542,6 +591,7 @@ const PresenceEngine = () => {
     setOnlineCount, 
     mergeOnlineUser, 
     removeOnlineUser, 
+    hydratePresenceUser,
     updateWallAuthorProfile, 
     updateRoomMemberCount, 
     addWallPost,

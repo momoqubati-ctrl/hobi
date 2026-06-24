@@ -7,6 +7,7 @@ import { joinRoom, leaveRoom, getRoomMembers, getRoomMemberCount, pendingDisconn
 import { publishSocketEvent, publishGlobalEvent } from "./SocketBroker";
 import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, type RoomReactionType, ROOM_REACTIONS } from "../services/chatStore";
 import { processText } from "../services/filterService";
+import { applyShortcuts } from "../services/shortcutService";
 import { eventBus } from "../core/events/EventBus";
 import { bootstrapWorkers } from "../workers";
 
@@ -57,8 +58,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       pendingLeaves.delete(socket.id);
     }
 
-    const userKey = user.username;
-    const pendingDisconnect = pendingDisconnects.get(userKey);
+  const userKey = user.id;
+  const pendingDisconnect = pendingDisconnects.get(userKey);
     let isReconnect = false;
 
     if (pendingDisconnect) {
@@ -67,7 +68,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       if (pendingDisconnect.presenceTimeout) {
         clearTimeout(pendingDisconnect.presenceTimeout);
       }
-      pendingDisconnects.delete(userKey);
+  pendingDisconnects.delete(userKey);
 
       // إزالة السوكت القديم من الحضور فوراً لمنع الازدواجية
       const oldSocketId = pendingDisconnect.socketId;
@@ -248,11 +249,18 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-      // --- تطبيق الفلترة الذكية ---
-      const finalText = text || (mediaType === "audio" ? "🎤 رسالة صوتية" : "");
+      // --- تطبيق الاختصارات ثم الفلترة الذكية ---
+      const rawText = text || (mediaType === "audio" ? "🎤 رسالة صوتية" : "");
+      const finalText = rawText ? await applyShortcuts(rawText) : rawText;
+      let roomDisplayName = roomId;
+      try {
+        const rooms = await listRooms();
+        const found = rooms.find((r: any) => r.id === roomId);
+        if (found) roomDisplayName = found.name;
+      } catch {}
       const filterResult = finalText ? await processText({
         text: finalText,
-        source: roomId,
+        source: `غرفة: ${roomDisplayName}`,
         user: {
           username: user.username,
           topic: user.username,
@@ -485,9 +493,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       if (existing) {
         existing.timeout = timeout;
       } else {
+        // presenceTimeout is required by the pendingDisconnects shape; reuse the same timeout as a placeholder
         pendingDisconnects.set(userKey, {
           roomId,
           timeout,
+          presenceTimeout: timeout,
           socketId: socket.id,
           userData: { ...user }
         });

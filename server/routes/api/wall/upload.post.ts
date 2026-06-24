@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
       return { success: false, message: isVideo ? "حجم الفيديو يتجاوز 50 ميجابايت" : isAudio ? "حجم الصوت يتجاوز 10 ميجابايت" : "حجم الصورة يتجاوز 5 ميجابايت" };
     }
 
-    const savedPath = saveUploadBuffer({
+    const savedPath = await saveUploadBuffer({
       kind: "wall",
       userId,
       extension,

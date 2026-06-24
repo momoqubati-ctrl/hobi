@@ -79,12 +79,35 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
       }));
     };
 
+    const onUserProfileUpdated = (data: any) => {
+      if (data && String(data.userId) === String(profileId)) {
+        setProfileData((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            username: data.username || prev.username,
+            displayName: data.username || prev.displayName,
+            avatarUrl: data.avatar || data.avatarUrl || prev.avatarUrl,
+            coverUrl: data.profileCover || data.cover || prev.coverUrl,
+            profile: prev.profile ? {
+              ...prev.profile,
+              profileMsg: data.profileMsg !== undefined ? data.profileMsg : prev.profile.profileMsg,
+              avatarUrl: data.avatar || data.avatarUrl || prev.profile.avatarUrl,
+              bannerUrl: data.profileCover || data.cover || prev.profile.bannerUrl,
+            } : null,
+          };
+        });
+      }
+    };
+
     socket.on("profile:updated", onProfileUpdated);
+    socket.on("user_profile_updated", onUserProfileUpdated);
 
     return () => {
       active = false;
       clearTimeout(timeoutId);
       socket.off("profile:updated", onProfileUpdated);
+      socket.off("user_profile_updated", onUserProfileUpdated);
     };
   }, [profileId, isAdmin, onClose, socket]);
 

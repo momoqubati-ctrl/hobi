@@ -9,11 +9,11 @@ function generateTempId(): string {
 /**
  * إرسال منشور حائط — البث المباشر من السيرفر يضيفه للمخزن
  */
-export function optimisticCreatePost(content: string, currentUser: any, mediaUrls?: string[]): Promise<any> {
+export function optimisticCreatePost(content: string, currentUser: any, mediaUrls?: string[], animatedFaces?: string[]): Promise<any> {
   const socket = getSocket();
 
   return new Promise((resolve, reject) => {
-    socket.emit("wall:create_post", { content, mediaUrls }, (res: any) => {
+    socket.emit("wall:create_post", { content, mediaUrls, animatedFaces }, (res: any) => {
       if (res?.success && res?.post) {
         resolve(res.post);
       } else {

@@ -1,8 +1,8 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings as SettingsIcon } from 'lucide-react';
-import { LEGACY_CP_SECTIONS } from './constants';
+import { LEGACY_CP_SECTIONS, getSectionTranslation, getFieldLanguage } from './constants';
 
 // Import Sections
 import OverviewSection from './sections/OverviewSection';
@@ -29,7 +29,24 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard = ({ section }: AdminDashboardProps) => {
-  const legacySection = LEGACY_CP_SECTIONS[section];
+  const [langKey, setLangKey] = useState(0);
+  const rawSection = LEGACY_CP_SECTIONS[section];
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLangKey((k) => k + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const legacySection = rawSection ? (() => {
+    const translated = getSectionTranslation(section);
+    return {
+      ...rawSection,
+      title: translated?.title || rawSection.title,
+      description: translated?.description || rawSection.description,
+    };
+  })() : undefined;
   
   const renderSection = () => {
     switch (section) {

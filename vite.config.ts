@@ -9,7 +9,7 @@ import { viteSocketIO } from "./vite-socket-io";
 export default defineConfig(() => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 3000,
     allowedHosts: ["ch.alhawia.store"],
   },
   plugins: [dyadComponentTagger(), react(), nitro(), viteSocketIO()],

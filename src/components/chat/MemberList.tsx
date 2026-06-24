@@ -78,16 +78,21 @@ const getCurrentMember = () => {
     const user = JSON.parse(raw);
     const name = typeof user.name === "string" && user.name.trim() ? user.name : "زائر";
     const role = user.role === "admin" ? "admin" : user.role === "guest" ? "guest" : "member";
-    const profileMsg =
-      typeof user.profileMsg === "string" && user.profileMsg.trim()
-        ? user.profileMsg
-        : role === "guest"
-          ? "( غير مسجل )"
-          : "(عضو جديد)";
+    const rawProfileMsg = typeof user.profileMsg === "string" ? user.profileMsg.trim() : "";
+    const rawStatusMsg = typeof user.statusMsg === "string" ? user.statusMsg.trim() : "";
+    const resolvedStatusMsg = rawStatusMsg || rawProfileMsg || (role === "guest" ? "( غير مسجل )" : "(عضو جديد)");
 
     return {
       id: user.id || "0",
-      idreg: typeof user.idreg === "string" && user.idreg.trim() ? user.idreg : role === "guest" ? "#300" : "#101",
+      idreg: (() => {
+        const raw = user.idreg;
+        if (typeof raw === "string" && raw.trim()) {
+          // إذا كانت تحتوي رقماً فقط، نضيف #
+          return raw.startsWith("#") ? raw : `#${raw}`;
+        }
+        if (typeof raw === "number") return `#${raw}`;
+        return role === "guest" ? "#300" : "#101";
+      })(),
       name,
       role,
       rank: role === "admin" ? 100 : 0,
@@ -121,8 +126,8 @@ const getCurrentMember = () => {
       messageBubbleStyle: typeof user.messageBubbleStyle === "string" ? user.messageBubbleStyle : "default",
       profileAccentColor: typeof user.profileAccentColor === "string" ? user.profileAccentColor : "#2563EB",
       power: typeof user.power === "string" ? user.power : "",
-      siteBadge: typeof user.siteBadge === "string" && user.siteBadge.trim() ? user.siteBadge : role === "admin" ? "مالك الموقع" : "",
-      statusMsg: profileMsg,
+      siteBadge: typeof user.siteBadge === "string" && user.siteBadge.trim() ? user.siteBadge : "",
+      statusMsg: resolvedStatusMsg,
       isLogin: typeof user.isLogin === "string" ? user.isLogin : role === "guest" ? "زائر" : "عضو",
     };
   } catch {
@@ -254,23 +259,49 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
   // ===== Build members list =====
   const members = useMemo(() => {
     const membersList: any[] = [];
-    const seen = new Set<string>();
+    // نستخدم مجموعتين للمفاتيح: بالـ id والـ username لضمان عدم التكرار
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
 
     // المستخدم الحالي أولاً
     if (currentMember) {
-      const resolvedCountry = userCountries.get(currentMember.id) || currentMember.country;
+      const resolvedCountry = userCountries.get(`id:${currentMember.id}`) || userCountries.get(getMemberIdentity(currentMember)) || currentMember.country;
       membersList.push({ ...currentMember, status: myStatus, country: resolvedCountry });
-      seen.add(getMemberIdentity(currentMember));
+      if (currentMember.id && currentMember.id !== "0") seenIds.add(String(currentMember.id));
+      if (currentMember.name) seenNames.add(String(currentMember.name).trim().toLowerCase());
     }
 
     // المستخدمون المتصلون (بدون تكرار الحالي)
     for (const user of onlineUsers) {
-      const presenceIdentity = getPresenceKey(user);
-      if (seen.has(presenceIdentity)) continue;
-      seen.add(presenceIdentity);
+      // تحقق مزدوج: بالـ id وبالاسم لتفادي التكرار أو الـ swap
+      const userId = String(user.id || "").trim();
+      const userName = String(user.username || "").trim().toLowerCase();
+      if (userId && userId !== "0" && seenIds.has(userId)) continue;
+      if (userName && seenNames.has(userName)) continue;
 
-      const resolvedStatus = userStatuses.get(presenceIdentity) || user.status || "online";
-      const resolvedCountry = userCountries.get(presenceIdentity) || user.countryCode || "SA";
+      if (userId && userId !== "0") seenIds.add(userId);
+      if (userName) seenNames.add(userName);
+
+      const presenceKey = getPresenceKey(user);
+      const resolvedStatus = userStatuses.get(presenceKey) || user.status || "online";
+      const resolvedCountry = userCountries.get(presenceKey) || user.countryCode || "SA";
+
+      // حساب idreg: يُضاف # إن لم يكن موجوداً
+      const idregRaw = user.idreg;
+      const idregVal = (() => {
+        if (typeof idregRaw === "string" && idregRaw.trim()) {
+          return idregRaw.startsWith("#") ? idregRaw : `#${idregRaw}`;
+        }
+        if (typeof idregRaw === "number") return `#${idregRaw}`;
+        // إذا لم يوجد idreg، استخدم الـ id كرقم عضوية
+        if (userId && userId !== "0") return `#${userId}`;
+        return "";
+      })();
+
+      // حساب statusMsg
+      const rawStatusMsg = typeof user.statusMsg === "string" ? user.statusMsg.trim() : "";
+      const rawProfileMsg = typeof (user as any).profileMsg === "string" ? (user as any).profileMsg.trim() : "";
+      const statusMsgVal = rawStatusMsg || rawProfileMsg || (user.role === "guest" ? "( غير مسجل )" : "(عضو جديد)");
 
       membersList.push({
         id: user.id,
@@ -287,9 +318,9 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         avatar: user.avatar || user.avatarUrl || "/pic.png",
         avatarFrameUrl: user.avatarFrameUrl || "",
         giftIconUrl: user.giftIconUrl || "",
-        idreg: user.idreg,
-        siteBadge: user.siteBadge || (user.role === "admin" ? "مالك الموقع" : ""),
-        statusMsg: user.statusMsg || (user.role === "guest" ? "( غير مسجل )" : "(عضو جديد)"),
+        idreg: idregVal,
+        siteBadge: user.siteBadge || "",
+        statusMsg: statusMsgVal,
       });
     }
 
@@ -394,12 +425,14 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                 </div>
                 <div className="flex items-center gap-1">
                    <img src={getCountryFlagSrc(member.country)} alt={member.country} className="h-3 w-4 rounded-sm object-cover" />
-                   <span className="text-[9px] text-muted-foreground font-bold">{member.idreg || `#${index + 300}`}</span>
+                   <span className="text-[9px] text-muted-foreground font-bold">{member.idreg || ""}</span>
                 </div>
               </div>
               
               <div className="flex items-center justify-between">
-                <p className="text-[10px] text-muted-foreground truncate font-medium" style={{ direction: 'rtl' }}>{member.statusMsg}</p>
+                <p className="text-[10px] text-muted-foreground truncate font-medium" style={{ direction: 'rtl' }}>
+                  {member.statusMsg || '(عضو جديد)'}
+                </p>
                 <div className="flex items-center gap-1 text-[9px] text-muted-foreground font-bold">
                   <span>@{member.name.replace(' ', '')}</span>
                 </div>

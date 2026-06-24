@@ -171,12 +171,29 @@ export function initStoriesListeners() {
   const onDeleted = ({ storyId }: { storyId: string }) => { store.getState().removeStory(storyId); };
   const onViewed = ({ storyId, viewCount }: { storyId: string; viewCount: number }) => { store.getState().markViewed(storyId); };
   const onReacted = ({ storyId, type, reacted }: { storyId: string; type: string; reacted: boolean }) => { store.getState().markReacted(storyId, type, reacted); };
+  const onProfileUpdated = (data: any) => {
+    if (data && data.userId) {
+      const state = store.getState();
+      const updatedStories = state.stories.map((st) => {
+        if (st.authorId === data.userId) {
+          return {
+            ...st,
+            authorAvatar: data.avatar || data.avatarUrl || st.authorAvatar,
+            authorUsername: data.username || st.authorUsername,
+          };
+        }
+        return st;
+      });
+      store.setState({ stories: updatedStories });
+    }
+  };
 
   socket.on("connect", onConnect);
   socket.on("stories:new", onNewStory);
   socket.on("stories:deleted", onDeleted);
   socket.on("stories:viewed", onViewed);
   socket.on("stories:reacted", onReacted);
+  socket.on("user_profile_updated", onProfileUpdated);
 
   if (socket.connected) {
     store.getState().fetchStories();
@@ -188,5 +205,6 @@ export function initStoriesListeners() {
     socket.off("stories:deleted", onDeleted);
     socket.off("stories:viewed", onViewed);
     socket.off("stories:reacted", onReacted);
+    socket.off("user_profile_updated", onProfileUpdated);
   };
 }

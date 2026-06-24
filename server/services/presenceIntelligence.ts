@@ -70,6 +70,7 @@ export const updatePresenceV2 = async (userId: string, signal: PresenceSignal) =
   const { getIO } = await import("../socket");
   const io = getIO();
   if (io) {
+    console.debug("[presence] emitting presence:update", { userId, ...state });
     io.emit("presence:update", { userId, ...state });
     if (state.roomId) {
       io.to(`room:${state.roomId}`).emit("room:presence", { userId, status: state.status, attentionScore: inferred.attentionScore });

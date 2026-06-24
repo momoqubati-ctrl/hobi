@@ -4,18 +4,22 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Heart, MessageCircle, Share2, MoreHorizontal, Image as ImageIcon, Search, X, Loader2, ArrowUp, Mic, MicOff, Pause, Play } from "lucide-react";
+import { Heart, MessageCircle, Share2, MoreHorizontal, Image as ImageIcon, Search, X, Loader2, ArrowUp, Mic, MicOff, Pause, Play, Smile, SmilePlus } from "lucide-react";
 import EmojiPickerPopover, { EmojiPanel } from "./EmojiPickerPopover";
 import WallComments from "./WallComments";
 import { Input } from "@/components/ui/input";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
 import { Youtube } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Plus } from "lucide-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { useShallow } from "zustand/shallow";
 import { optimisticCreatePost, optimisticToggleLike } from "@/lib/optimistic-actions";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
+import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
+import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import {
   playVideo,
   playAudio,
@@ -36,6 +40,40 @@ const getStoredUser = () => {
   }
 };
 
+const FACE_MARKER_RE = /\u200B\[\[FACE:(\d+)\]\]\u200B/g;
+
+const renderTextWithFaces = (text: string, faceUrls?: string[] | null) => {
+  if (!faceUrls || faceUrls.length === 0) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  FACE_MARKER_RE.lastIndex = 0;
+  while ((match = FACE_MARKER_RE.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`t${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+    const idx = parseInt(match[1], 10);
+    if (faceUrls[idx]) {
+      parts.push(
+        <img
+          key={`f${match.index}`}
+          src={faceUrls[idx]}
+          alt="فيس"
+          className="inline-block align-middle object-contain"
+          style={{ width: "40px", height: "40px" }}
+        />
+      );
+    } else {
+      parts.push(<span key={`m${match.index}`}>{match[0]}</span>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(<span key={`end${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+  return <>{parts}</>;
+};
+
 const MediaRenderer = ({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) => {
   const isAudio = url.match(/\.(mp3|webm|wav|ogg|m4a)/i) || url.includes("audio");
   const isVideo = url.match(/\.(mp4|webm|mov|avi)/i) || url.includes("video");
@@ -48,7 +86,25 @@ const MediaRenderer = ({ url, className, style }: { url: string; className?: str
     return <VideoRenderer url={url} className={className} style={style} />;
   }
 
-  return <img src={url} alt="" className={className} style={style} />;
+  return <ConstrainedImage url={url} className={className} style={style} />;
+};
+
+const ConstrainedImage = ({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) => {
+  const [isSmall, setIsSmall] = useState(false);
+  return (
+    <img
+      src={url}
+      alt=""
+      className={className}
+      style={{ ...style, ...(isSmall ? { maxWidth: "150px", maxHeight: "150px", width: "auto", height: "auto" } : {}) }}
+      onLoad={(e) => {
+        const img = e.target as HTMLImageElement;
+        if (img.naturalWidth <= 200 || img.naturalHeight <= 200) {
+          setIsSmall(true);
+        }
+      }}
+    />
+  );
 };
 
 const VideoRenderer = ({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) => {
@@ -273,7 +329,7 @@ interface MediaItem {
   type: "image" | "video";
 }
 
-const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; onPost: (text: string, mediaUrls?: string[]) => Promise<void> }) => {
+const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; onPost: (text: string, mediaUrls?: string[], animatedFaces?: string[]) => Promise<void> }) => {
   const [text, setText] = useState("");
   const [isPosting, setIsPosting] = useState(false);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
@@ -286,6 +342,34 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
   const [showYouTubeSearch, setShowYouTubeSearch] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorder = useVoiceRecorder();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showFaces, setShowFaces] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
+  const [stickerCategories, setStickerCategories] = useState<StickerCategory[]>([]);
+  const [activeStickerCat, setActiveStickerCat] = useState<string | null>(null);
+  const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+
+  useEffect(() => {
+    fetchAnimatedFaces().then((f) => { if (f.length > 0) setAnimatedFaces(f); });
+  }, []);
+
+  useEffect(() => {
+    if (!showStickers) return;
+    let cancelled = false;
+    fetchStickerCategories().then((cats) => {
+      if (cancelled) return;
+      setStickerCategories(cats);
+      if (cats.length > 0 && !activeStickerCat) setActiveStickerCat(cats[0].id);
+    });
+    return () => { cancelled = true; };
+  }, [showStickers, activeStickerCat]);
+
+  const closeAllPanels = useCallback(() => {
+    setEmojiOpen(false);
+    setShowYouTubeSearch(false);
+    setShowFaces(false);
+    setShowStickers(false);
+  }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -415,9 +499,33 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
     if ((!text.trim() && mediaItems.length === 0 && !recorder.audioBlob && !selectedVideo) || isPosting) return;
     setIsPosting(true);
     let content = text;
+    let faceUrls: string[] | undefined;
     if (selectedVideo) {
       const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
       content = content ? `${content}\n${videoUrl}` : videoUrl;
+    }
+    // معالجة الفيسات المتحركة في النص
+    if (animatedFaces.length > 0 && content) {
+      const matchedUrls: string[] = [];
+      let processedText = content;
+      for (const face of animatedFaces) {
+        const regex = new RegExp(face.shortcut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        if (regex.test(processedText)) {
+          const faceIdx = matchedUrls.length;
+          const matches = processedText.match(regex);
+          if (matches) {
+            for (let i = 0; i < matches.length; i++) {
+              matchedUrls.push(face.image_url);
+            }
+          }
+          let counter = 0;
+          processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
+        }
+      }
+      if (matchedUrls.length > 0) {
+        content = processedText;
+        faceUrls = matchedUrls;
+      }
     }
     const savedItems = [...mediaItems];
     const savedBlob = recorder.audioBlob;
@@ -426,6 +534,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
     setMediaItems([]);
     setSelectedVideo(null);
     setShowYouTubeSearch(false);
+    closeAllPanels();
     try {
       const allUrls: string[] = [];
 
@@ -442,10 +551,32 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         recorder.clearRecording();
       }
 
-      await onPost(content, allUrls.length > 0 ? allUrls : undefined);
+      // فيسات متحركة تُرسل فقط كanimatedFaces (تظهر في النص وليس كشبكة)
+
+      await onPost(content, allUrls.length > 0 ? allUrls : undefined, faceUrls && faceUrls.length > 0 ? faceUrls : undefined);
     } catch {
       setText(content);
       setMediaItems(savedItems);
+    } finally {
+      setIsPosting(false);
+    }
+  };
+
+  const handleSendSticker = async (stickerUrl: string) => {
+    closeAllPanels();
+    const allUrls: string[] = [stickerUrl];
+    let content = text.trim();
+    if (selectedVideo) {
+      const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
+      content = content ? `${content}\n${videoUrl}` : videoUrl;
+    }
+    setText("");
+    setSelectedVideo(null);
+    setIsPosting(true);
+    try {
+      await onPost(content || "", allUrls);
+    } catch {
+      setText(content);
     } finally {
       setIsPosting(false);
     }
@@ -466,6 +597,66 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         setActiveCategory={setEmojiCategory}
         isOpen={emojiOpen}
       />
+
+      {/* لوحة الفيسات المتحركة */}
+      {showFaces && (
+        <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+          <div className="p-2 text-[10px] text-muted-foreground font-bold">
+            اكتب الاختصار في حقل الكتابة (مثال: ف1)
+          </div>
+          <div className="flex flex-wrap gap-2 p-3 max-h-[200px] overflow-y-auto">
+            {animatedFaces.map((face) => (
+              <button
+                key={face.id}
+                type="button"
+                onClick={() => {
+                  setText((prev) => prev + face.shortcut);
+                  setShowFaces(false);
+                }}
+                className="flex flex-col items-center gap-1 shrink-0 rounded-xl hover:bg-muted transition active:scale-90 p-1"
+              >
+                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "40px", height: "40px" }} />
+                <span className="text-[10px] font-bold text-primary">{face.shortcut}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* لوحة الملصقات */}
+      {showStickers && (
+        <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
+          <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
+            {stickerCategories.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveStickerCat(cat.id)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                  activeStickerCat === cat.id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
+              >
+                <img src={cat.icon} className="w-5 h-5 rounded-md object-cover" alt="" />
+                {cat.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 p-3 max-h-[250px] overflow-y-auto">
+            {stickerCategories.find((c) => c.id === activeStickerCat)?.stickers.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleSendSticker(s.image_url)}
+                className="w-[120px] h-[120px] flex items-center justify-center rounded-xl hover:bg-muted transition active:scale-90 overflow-hidden shrink-0"
+              >
+                <img src={s.image_url} alt={s.name} className="w-full h-full object-contain" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="p-3">
         <div className="flex gap-2 mb-3">
@@ -597,71 +788,47 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
               className="hidden"
               onChange={handleFileSelect}
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-muted-foreground gap-1.5 rounded-lg hover:bg-slate-100"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isPosting || isUploading || recorder.isRecording}
-            >
-              <ImageIcon size={16} className="text-green-500" />
-              <span className="text-[10px] font-bold">
-                {mediaItems.length > 0 ? `${mediaItems.length} صور/فيديو` : "صورة/فيديو"}
-              </span>
-            </Button>
-
-            {/* زر الإيموجي - مدمج في شريط الأدوات */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={`h-8 px-2 gap-1.5 rounded-lg transition-colors ${
-                emojiOpen
-                  ? "bg-yellow-100 text-yellow-600 hover:bg-yellow-200"
-                  : "text-muted-foreground hover:bg-slate-100 hover:text-yellow-500"
-              }`}
-              onClick={() => {
-                setEmojiOpen((v) => !v);
-                setShowYouTubeSearch(false);
-              }}
-              title="إيموجي"
-            >
-              <span className="text-base leading-none">{emojiOpen ? "🙂" : "😊"}</span>
-              <span className="text-[10px] font-bold">إيموجي</span>
-            </Button>
-
-            {/* زر يوتيوب */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={`h-8 px-2 gap-1.5 rounded-lg transition-colors ${
-                showYouTubeSearch
-                  ? "bg-red-100 text-red-600 hover:bg-red-200"
-                  : "text-muted-foreground hover:bg-slate-100 hover:text-red-500"
-              }`}
-              onClick={() => {
-                setShowYouTubeSearch(!showYouTubeSearch);
-                setEmojiOpen(false);
-              }}
-              title="يوتيوب"
-            >
-              <Youtube size={16} className="text-red-500" />
-              <span className="text-[10px] font-bold">يوتيوب</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-8 px-2 gap-1.5 rounded-lg ${recorder.isRecording ? "bg-red-100 text-red-600" : "text-muted-foreground hover:bg-slate-100"}`}
-              onClick={recorder.isRecording ? recorder.stopRecording : recorder.startRecording}
-              disabled={isPosting || isUploading}
-            >
-              {recorder.isRecording ? <MicOff size={16} /> : <Mic size={16} className="text-red-500" />}
-              <span className="text-[10px] font-bold">
-                {recorder.isRecording ? formatDuration(recorder.duration) : "صوت"}
-              </span>
-            </Button>
+            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={isPosting || isUploading || recorder.isRecording}
+                  className={`h-8 w-8 rounded-lg transition-colors ${menuOpen || emojiOpen || showYouTubeSearch || showFaces || showStickers ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-slate-100 hover:text-primary"}`}
+                  title="أدوات النشر"
+                >
+                  {(emojiOpen || showYouTubeSearch || showFaces || showStickers) ? <X size={16} /> : <Plus size={16} />}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
+                <div className="flex gap-1 flex-wrap justify-center">
+                  <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرفاق صورة أو فيديو">
+                    <ImageIcon size={22} className="text-green-500" />
+                    <span className="text-[9px] font-bold">صورة</span>
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
+                    <span className="text-[20px] leading-none">🖼️</span>
+                    <span className="text-[9px] font-bold">ملصقات</span>
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
+                    <Smile size={22} className="text-orange-500" />
+                    <span className="text-[9px] font-bold">فيسات</span>
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); setEmojiOpen((v) => !v); setShowYouTubeSearch(false); setShowFaces(false); setShowStickers(false); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${emojiOpen ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="إيموجي">
+                    <SmilePlus size={22} className="text-yellow-500" />
+                    <span className="text-[9px] font-bold">إيموجي</span>
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); setShowYouTubeSearch(!showYouTubeSearch); setEmojiOpen(false); setShowFaces(false); setShowStickers(false); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showYouTubeSearch ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="يوتيوب">
+                    <Youtube size={22} className="text-red-500" />
+                    <span className="text-[9px] font-bold">يوتيوب</span>
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
+                    {recorder.isRecording ? <MicOff size={22} /> : <Mic size={22} className="text-red-500" />}
+                    <span className="text-[9px] font-bold">{recorder.isRecording ? formatDuration(recorder.duration) : "صوت"}</span>
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           <Button
             size="sm"
@@ -699,7 +866,6 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     wallCommentCounts: s.wallCommentCounts,
   })));
 
-  const [searchQuery, setSearchQuery] = useState("");
   const [currentUser, setCurrentUser] = useState<any>(() => getStoredUser());
   const [openCommentPosts, setOpenCommentPosts] = useState<Record<string, boolean>>({});
   const [isScrolledDown, setIsScrolledDown] = useState(false);
@@ -782,31 +948,13 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     setNewPostsCount(0);
   };
 
-  const handlePost = async (content: string, mediaUrls?: string[]) => {
-    await optimisticCreatePost(content, currentUser, mediaUrls);
+  const handlePost = async (content: string, mediaUrls?: string[], animatedFaces?: string[]) => {
+    await optimisticCreatePost(content, currentUser, mediaUrls, animatedFaces);
     showSuccess("تم النشر بنجاح");
   };
 
-  const filteredPosts = useMemo(() => posts.filter(post =>
-    post.body?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    post.author?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-  ), [posts, searchQuery]);
-
   return (
     <div className="flex flex-col h-full bg-muted ltr">
-      {/* شريط البحث العلوي */}
-      <div className="p-1.5 bg-[#2c3e50] flex items-center gap-1.5 shrink-0">
-        <div className="flex-1 relative">
-          <Search size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/50" />
-          <Input
-            placeholder="Search wall .."
-            className="h-7 bg-card/10 border-none text-white placeholder:text-white/50 pr-7 rounded-md text-[10px]"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-      </div>
-
       {/* مشغل يوتيوب المدمج */}
       {activeYouTubeEmbedUrl && (
         <div className="relative w-full bg-black border-b border-slate-800 shadow-xl shrink-0 animate-in slide-in-from-top duration-300">
@@ -845,10 +993,10 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
           <div className="flex justify-center p-8">
             <Loader2 className="animate-spin text-primary" size={24} />
           </div>
-        ) : filteredPosts.length === 0 ? (
+        ) : posts.length === 0 ? (
           <div className="text-center p-8 text-muted-foreground text-xs font-bold">لا توجد منشورات حالياً</div>
         ) : (
-          filteredPosts.map((post) => {
+          posts.map((post) => {
             const isLiked = wallLikedPosts.has(String(post.id));
             const likeCount = wallLikeCounts[String(post.id)] ?? post.likeCount ?? 0;
             const commentCount = wallCommentCounts[String(post.id)] ?? post.commentCount ?? 0;
@@ -881,8 +1029,8 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                   </Button>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="px-3 pb-2 text-[11px] text-foreground leading-relaxed font-medium" dir="rtl">
-                    {post.body}
+                  <div className="px-3 pb-2 text-[11px] text-foreground leading-relaxed font-medium break-words" dir="rtl">
+                    {renderTextWithFaces(post.body || "", post.animatedFaces)}
                   </div>
                   {post.body && findYouTubeLinks(post.body).map((link) => (
                     <div className="px-3 pb-2" key={link}>

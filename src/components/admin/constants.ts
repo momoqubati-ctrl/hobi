@@ -1,4 +1,5 @@
-export const FIELD_TRANSLATIONS: Record<string, string> = {
+const FIELD_TRANSLATIONS_AR: Record<string, string> = {
+  id: "المعرف",
   idreg: "المعرف الرقمي",
   idroom: "رقم الغرفة",
   topic: "العنوان/الاسم",
@@ -22,7 +23,201 @@ export const FIELD_TRANSLATIONS: Record<string, string> = {
   mic: "المايكات",
   needpass: "بكلمة سر",
   broadcast: "بث عام",
+  shortcut: "الاختصار",
+  replacement: "النص البديل",
+  description: "الوصف",
+  created_at: "تاريخ الإنشاء",
+  updated_at: "تاريخ التحديث",
+  sender_id: "معرف المرسل",
+  recipient_id: "معرف المستلم",
+  subject: "الموضوع",
+  body: "النص",
+  read_at: "تاريخ القراءة",
+  name: "الاسم",
+  image_url: "رابط الصورة",
+  sort_order: "الترتيب",
+  user_id: "معرف المستخدم",
+  sender_name: "اسم المرسل",
+  sender_avatar: "صورة المرسل",
+  recipient_name: "اسم المستلم",
+  recipient_avatar: "صورة المستلم",
+  username: "اسم المستخدم",
+  email: "البريد الإلكتروني",
+  uid: "المعرف الفريد",
+  avatar: "الصورة الشخصية",
+  banner: "الغلاف",
+  role: "الرتبة",
+  status: "الحالة",
+  provider: "مزود الخدمة",
+  lastSeen: "آخر ظهور",
+  createdAt: "تاريخ الإنشاء",
+  token: "الرمز",
+  isRead: "مقروء",
+  readBy: "قرأه",
+  senderId: "معرف المرسل",
+  recipientId: "معرف المستلم",
+  mediaUrl: "رابط الوسائط",
+  mediaType: "نوع الوسائط",
+  media_urls: "روابط الوسائط",
+  animated_faces: "الفيسات المتحركة",
+  bar_id: "معرف المنشور",
+  author_id: "معرف الكاتب",
+  author_topic: "اسم الكاتب",
+  author_pic: "صورة الكاتب",
+  parent_id: "معرف الأصل",
+  parent_type: "نوع الأصل",
+  likes: "الإعجابات",
+  type: "النوع",
+  title: "العنوان",
+  price: "السعر",
+  icon: "الأيقونة",
+  category: "التصنيف",
+  balance: "الرصيد",
+  amount: "المبلغ",
+  status: "الحالة",
+  note: "ملاحظة",
+  from_user: "من المستخدم",
+  to_user: "إلى المستخدم",
+  user_id: "معرف المستخدم",
+  amount: "المبلغ",
+  reason: "السبب",
+  tx_id: "معرف المعاملة",
+  paid_at: "تاريخ الدفع",
+  settled_at: "تاريخ التسوية",
+  method: "الطريقة",
+  agent_id: "معرف الوكيل",
+  wallet_id: "محفظة الوكيل",
+  direction: "الاتجاه",
+  reference_type: "نوع المرجع",
+  reference_id: "معرف المرجع",
+  note: "ملاحظة",
+  expires_at: "تاريخ الانتهاء",
+  assigned_at: "تاريخ التعيين",
+  assigned_by: "عُيّن بواسطة",
 };
+
+const FIELD_TRANSLATIONS_EN: Record<string, string> = {
+  id: "ID",
+  idreg: "Numeric ID",
+  idroom: "Room ID",
+  topic: "Title/Name",
+  msg: "Message/Description",
+  pic: "Picture",
+  pich: "Banner",
+  power: "Rank",
+  muted: "Muted",
+  lastssen: "Last Seen",
+  joinuser: "Join Date",
+  v: "Value/Word",
+  path: "Path/Scope",
+  stat: "Status",
+  ip: "IP Address",
+  fp: "Device Fingerprint",
+  coins: "Coins",
+  evaluation: "Points",
+  rep: "Likes",
+  about: "About Room",
+  max: "Max Capacity",
+  mic: "Microphones",
+  needpass: "Password Protected",
+  broadcast: "Public Broadcast",
+  shortcut: "Shortcut",
+  replacement: "Replacement Text",
+  description: "Description",
+  created_at: "Created At",
+  updated_at: "Updated At",
+  sender_id: "Sender ID",
+  recipient_id: "Recipient ID",
+  subject: "Subject",
+  body: "Body",
+  read_at: "Read At",
+  name: "Name",
+  image_url: "Image URL",
+  sort_order: "Sort Order",
+  user_id: "User ID",
+  sender_name: "Sender Name",
+  sender_avatar: "Sender Avatar",
+  recipient_name: "Recipient Name",
+  recipient_avatar: "Recipient Avatar",
+  username: "Username",
+  email: "Email",
+  uid: "Unique ID",
+  avatar: "Avatar",
+  banner: "Banner",
+  role: "Role",
+  status: "Status",
+  provider: "Provider",
+  lastSeen: "Last Seen",
+  createdAt: "Created At",
+  token: "Token",
+  isRead: "Read",
+  readBy: "Read By",
+  senderId: "Sender ID",
+  recipientId: "Recipient ID",
+  mediaUrl: "Media URL",
+  mediaType: "Media Type",
+  media_urls: "Media URLs",
+  animated_faces: "Animated Faces",
+  bar_id: "Post ID",
+  author_id: "Author ID",
+  author_topic: "Author Name",
+  author_pic: "Author Picture",
+  parent_id: "Parent ID",
+  parent_type: "Parent Type",
+  likes: "Likes",
+  type: "Type",
+  title: "Title",
+  price: "Price",
+  icon: "Icon",
+  category: "Category",
+  balance: "Balance",
+  amount: "Amount",
+  note: "Note",
+  from_user: "From User",
+  to_user: "To User",
+  tx_id: "Transaction ID",
+  paid_at: "Paid At",
+  settled_at: "Settled At",
+  method: "Method",
+  agent_id: "Agent ID",
+  wallet_id: "Wallet ID",
+  direction: "Direction",
+  reference_type: "Reference Type",
+  reference_id: "Reference ID",
+  expires_at: "Expires At",
+  assigned_at: "Assigned At",
+  assigned_by: "Assigned By",
+};
+
+function detectLanguage(): "ar" | "en" {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("admin_lang");
+    if (stored === "ar" || stored === "en") return stored;
+    const nav = navigator.language || "";
+    if (nav.startsWith("en")) return "en";
+  }
+  return "ar";
+}
+
+let currentLang: "ar" | "en" = detectLanguage();
+
+export const setFieldLanguage = (lang: "ar" | "en") => {
+  currentLang = lang;
+  if (typeof window !== "undefined") {
+    localStorage.setItem("admin_lang", lang);
+  }
+};
+
+export const getFieldLanguage = () => currentLang;
+
+const FIELD_TRANSLATIONS: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get(_, key: string) {
+    const dict = currentLang === "en" ? FIELD_TRANSLATIONS_EN : FIELD_TRANSLATIONS_AR;
+    return dict[key] || key;
+  },
+});
+
+export { FIELD_TRANSLATIONS, FIELD_TRANSLATIONS_AR, FIELD_TRANSLATIONS_EN };
 
 export const PERMISSION_TRANSLATIONS: Record<string, string> = {
   ban: "حظر الأعضاء",
@@ -61,6 +256,49 @@ export const PERMISSION_TRANSLATIONS: Record<string, string> = {
   stealth: "وضع التخفي",
   edituser: "تعديل بيانات العضو",
   upgrades: "إدارة الترقيات",
+};
+
+const SECTION_TRANSLATIONS_AR: Record<string, { title: string; description: string }> = {
+  actions: { title: "سجل الحالات", description: "متابعة تحركات الإدارة والتنبيهات اللحظية." },
+  bans: { title: "إدارة الحظر", description: "التحكم في قائمة المحظورين من الأسماء والأجهزة والدول." },
+  roomBadges: { title: "أوسمة الغرف", description: "إدارة الشارات الخاصة بملاك ومشرفي الغرف." },
+  siteBadges: { title: "أوسمة الموقع", description: "إدارة الأوسمة العامة التي تظهر في ملفات الأعضاء." },
+  shrt: { title: "الاختصارات", description: "إدارة الكلمات المختصرة والردود الجاهزة." },
+  msgs: { title: "مركز الرسائل", description: "الرسائل الترحيبية والبريد الإداري الداخلي." },
+  giftsgit: { title: "متجر الهدايا", description: "إدارة أيقونات وأسعار الهدايا المتاحة للإرسال." },
+  agentwallets: { title: "نظام الوكلاء", description: "إدارة حسابات الشحن والتحويلات المالية للوكلاء." },
+  subs: { title: "إدارة الاشتراكات والترقيات", description: "التحكم في اشتراكات الأعضاء وترقياتهم وتحديد الرتب." },
+  evaluationpoints: { title: "احتساب النقاط والعملات", description: "سجلات شحن واحتساب العملات للمستخدمين ودفتر الحسابات." },
+  micprovidercp: { title: "تحديد مزود المايكات", description: "التحكم في إعدادات مزودي خدمة الصوت والبث." },
+  ddosguardcp: { title: "حماية DDoS والـ VPN", description: "إعدادات حماية الشبكة وحظر الـ VPN والبروكسي." },
+  hostcleanup: { title: "صيانة الإضافات", description: "تنظيف وصيانة الإضافات النشطة في النظام." },
+  hostcontrols: { title: "مفاتيح الإضافات", description: "إدارة تراخيص ومفاتيح تشغيل الميزات الإضافية." },
+  hostsettings: { title: "إعدادات الإضافات", description: "روابط وإعدادات الإضافات النشطة." },
+  hostdomains: { title: "نطاقات وبيانات الإضافات", description: "نطاقات وبيانات الإضافات والمسارات." },
+};
+
+const SECTION_TRANSLATIONS_EN: Record<string, { title: string; description: string }> = {
+  actions: { title: "Activity Log", description: "Track admin movements and real-time alerts." },
+  bans: { title: "Ban Management", description: "Control the list of banned names, devices, and countries." },
+  roomBadges: { title: "Room Badges", description: "Manage badges for room owners and moderators." },
+  siteBadges: { title: "Site Badges", description: "Manage public badges shown in user profiles." },
+  shrt: { title: "Shortcuts", description: "Manage text shortcuts and quick replies." },
+  msgs: { title: "Message Center", description: "Welcome messages and internal admin mail." },
+  giftsgit: { title: "Gift Store", description: "Manage gift icons and prices for sending." },
+  agentwallets: { title: "Agent System", description: "Manage agent accounts, top-ups, and financial transfers." },
+  subs: { title: "Subscriptions & Upgrades", description: "Control user subscriptions, upgrades, and rank assignments." },
+  evaluationpoints: { title: "Points & Coins", description: "User coin top-up and point calculation records." },
+  micprovidercp: { title: "Microphone Provider", description: "Configure audio and broadcast service providers." },
+  ddosguardcp: { title: "DDoS & VPN Protection", description: "Network protection and VPN/proxy blocking settings." },
+  hostcleanup: { title: "Plugin Maintenance", description: "Clean and maintain active system plugins." },
+  hostcontrols: { title: "Plugin Keys", description: "Manage licenses and activation keys for features." },
+  hostsettings: { title: "Plugin Settings", description: "Links and settings for active plugins." },
+  hostdomains: { title: "Plugin Domains & Data", description: "Plugin domains, data, and paths." },
+};
+
+export const getSectionTranslation = (key: string) => {
+  const dict = currentLang === "en" ? SECTION_TRANSLATIONS_EN : SECTION_TRANSLATIONS_AR;
+  return dict[key];
 };
 
 export const LEGACY_CP_SECTIONS: Record<string, {
@@ -150,4 +388,96 @@ export const LEGACY_CP_SECTIONS: Record<string, {
     description: "نطاقات وبيانات الإضافات والمسارات.",
     tables: ["hosts"],
   },
+};
+
+const MENU_AR: Record<string, string> = {
+  overview: "داش بورد",
+  events: "السجل",
+  actions: "الحالات",
+  users: "الأعضاء",
+  bans: "الحظر",
+  roles: "الصلاحيات",
+  fltr: "فلتر",
+  rooms: "الغرف",
+  stickers: "الملصقات",
+  animatedfaces: "فيسات متحركة",
+  roomBadges: "شارات الغرف",
+  siteBadges: "شارات الموقع",
+  shrt: "الإختصارات",
+  msgs: "الرسائل",
+  bots: "الوهمي الناطق",
+  subs: "الإشتراكات",
+  giftsgit: "هدايا git",
+  agentwallets: "شحن الوكلاء",
+  evaluationpoints: "احتساب النقاط",
+  settings: "إداره الموقع",
+  database: "قاعدة البيانات",
+  micprovidercp: "تحديد مزود المايكات",
+  ddosguardcp: "حماية الدوز",
+  hostin: "الاضافات",
+  hostcleanup: "صيانة الاضافات",
+  hostcontrols: "مفاتيح الاضافات",
+  hostsettings: "روابط ونسخ الاضافات",
+  hostdomains: "دومينات وبيانات الاضافات",
+  cpanel: "لوحة التحكم",
+};
+
+const MENU_EN: Record<string, string> = {
+  overview: "Dashboard",
+  events: "Audit Log",
+  actions: "Activity",
+  users: "Users",
+  bans: "Bans",
+  roles: "Permissions",
+  fltr: "Filter",
+  rooms: "Rooms",
+  stickers: "Stickers",
+  animatedfaces: "Animated Faces",
+  roomBadges: "Room Badges",
+  siteBadges: "Site Badges",
+  shrt: "Shortcuts",
+  msgs: "Messages",
+  bots: "AI Chatbot",
+  subs: "Subscriptions",
+  giftsgit: "Gift Store",
+  agentwallets: "Agent Top-up",
+  evaluationpoints: "Points & Coins",
+  settings: "Site Settings",
+  database: "Database",
+  micprovidercp: "Mic Provider",
+  ddosguardcp: "DDoS Protection",
+  hostin: "Plugins",
+  hostcleanup: "Plugin Maintenance",
+  hostcontrols: "Plugin Keys",
+  hostsettings: "Plugin Settings",
+  hostdomains: "Plugin Domains",
+  cpanel: "Admin Panel",
+};
+
+export const getMenuLabel = (key: string): string => {
+  const dict = currentLang === "en" ? MENU_EN : MENU_AR;
+  return dict[key] || key;
+};
+
+const GROUP_AR: Record<string, string> = {
+  g_main: "الرئيسية والإحصائيات",
+  g_members: "الأعضاء والرقابة",
+  g_rooms: "الغرف والتواصل",
+  g_finance: "المالية والهدايا",
+  g_system: "إدارة النظام",
+  g_plugins: "الإضافات (البلجنز)",
+};
+
+const GROUP_EN: Record<string, string> = {
+  g_main: "Overview & Stats",
+  g_members: "Members & Moderation",
+  g_rooms: "Rooms & Communication",
+  g_finance: "Finance & Gifts",
+  g_system: "System Administration",
+  g_plugins: "Plugins",
+};
+
+export const getGroupLabel = (key: string): string => {
+  const dict = currentLang === "en" ? GROUP_EN : GROUP_AR;
+  return dict[key] || key;
 };

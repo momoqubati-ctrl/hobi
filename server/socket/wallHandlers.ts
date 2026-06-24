@@ -14,6 +14,7 @@ import {
 } from "../services/wallService";
 import { createNotification } from "../services/notificationService";
 import { processText } from "../services/filterService";
+import { applyShortcuts } from "../services/shortcutService";
 import { dbPool } from "../db";
 import { getSocketIp } from "../services/requestCountry";
 import { publishGlobalEvent } from "./SocketBroker";
@@ -27,7 +28,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
   /**
    * إنشاء منشور حائط — بث فوري ثم فلترة + حفظ في الخلفية
    */
-  socket.on("wall:create_post", async (data: { tempId?: string; content: string; mediaUrl?: string; mediaUrls?: string[] }, callback?: (res: any) => void) => {
+  socket.on("wall:create_post", async (data: { tempId?: string; content: string; mediaUrl?: string; mediaUrls?: string[]; animatedFaces?: string[] }, callback?: (res: any) => void) => {
     const text = String(data?.content || "").trim();
     if (!text && !data?.mediaUrls?.length && !data?.mediaUrl) {
       callback?.({ success: false, error: "نص المنشور فارغ" });
@@ -38,13 +39,29 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
       // دعم mediaUrl القديم و mediaUrls الجديد
       const mediaUrls = data.mediaUrls || (data.mediaUrl ? [data.mediaUrl] : []);
 
+      // الفلترة أولاً قبل البث
+      const ip = getSocketIp(socket);
+      let filteredText = text;
+      if (text) {
+        try {
+          const expanded = await applyShortcuts(text);
+          const filterRes = await processText({
+            text: expanded,
+            source: "الحائط",
+            user: { username: user.username, topic: user.username, ip }
+          });
+          filteredText = filterRes.filteredText;
+        } catch {}
+      }
+
       // إنشاء كائن المنشور بمعرف مؤقت فوراً
       const tempId = randomUUID();
       const post = {
         id: tempId,
-        body: text,
+        body: filteredText,
         mediaUrl: mediaUrls[0] || null,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : null,
+        animatedFaces: data.animatedFaces && data.animatedFaces.length > 0 ? data.animatedFaces : null,
         createdAt: new Date().toISOString(),
         author: {
           id: String(user.id),
@@ -53,7 +70,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
         },
       };
 
-      // البث المباشر فوراً لجميع المتواجدين (بدون فلترة، بدون انتظار)
+      // البث المباشر فوراً لجميع المتواجدين
       publishGlobalEvent("wall_post_created", post).catch((err) => 
         console.error("Failed to broadcast wall post:", err)
       );
@@ -61,19 +78,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
       // تأكيد فوري للصاحب
       callback?.({ success: true, post });
 
-      // الفلترة + الحفظ في الخلفية (لا يُبطئ الواجهة)
-      const ip = getSocketIp(socket);
-      processText({
-        text,
-        source: "wall",
-        user: { username: user.username, topic: user.username, ip }
-      }).then((filterRes) => {
-        // الحفظ في DB بالمصفي
-        return dbPool.query(
-          `INSERT INTO bars (uid, msg, pic, topic, media_urls) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [String(user.id), filterRes.filteredText, mediaUrls[0] || null, user.username || "", mediaUrls.length > 1 ? JSON.stringify(mediaUrls) : null]
-        );
-      }).then((result) => {
+      // الحفظ في الخلفية
+      dbPool.query(
+          `INSERT INTO bars (uid, msg, pic, topic, media_urls, animated_faces) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [String(user.id), filteredText, mediaUrls[0] || null, user.username || "", mediaUrls.length > 1 ? JSON.stringify(mediaUrls) : null, data.animatedFaces && data.animatedFaces.length > 0 ? JSON.stringify(data.animatedFaces) : null]
+        ).then((result) => {
         const realId = String(result.rows[0].id);
         tempPostIds.set(tempId, realId);
         publishGlobalEvent("wall_post_resolved", { tempId, realId }).catch(() => {});
@@ -218,7 +227,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
       // الفلترة + الحفظ في الخلفية
       const ip = getSocketIp(socket);
       Promise.all([
-        processText({ text: content, source: "wall", user: { username: user.username, topic: user.username, ip } }),
+        applyShortcuts(content).then(expanded => processText({ text: expanded, source: "تعليق على الحائط", user: { username: user.username, topic: user.username, ip } })),
         dbPool.query(`SELECT id, username, topic, pic FROM users WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 LIMIT 1`, [user.id])
       ]).then(([filterRes, userRes]) => {
         const dbUser = userRes.rows[0];

@@ -1,11 +1,12 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, Users, MessageSquare, Settings, BarChart3, Lock, Globe, Activity,
   Ban, ShieldAlert, Cpu, Mic, Key, Link as LinkIcon, Database, HardDrive, ListFilter,
   BadgeAlert, Award, Gift, Wallet, Calculator, Wrench, RefreshCw, Zap, Sticker, Smile
 } from 'lucide-react';
+import { getMenuLabel, getGroupLabel, getFieldLanguage, setFieldLanguage } from './constants';
 
 interface AdminCPProps {
   activeSection: string;
@@ -13,63 +14,83 @@ interface AdminCPProps {
 }
 
 const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
+  const [lang, setLang] = useState<"ar" | "en">(getFieldLanguage);
+  const [, setTick] = useState(0);
+
+  const toggleLang = () => {
+    const next = lang === "ar" ? "en" : "ar";
+    setLang(next);
+    setFieldLanguage(next);
+    setTick((t) => t + 1);
+  };
+
   return (
     <div className="p-4 space-y-6 rtl">
-      <div className="flex items-center gap-3 mb-2">
-        <div className="p-2 bg-primary/10 rounded-xl">
-          <ShieldCheck className="text-primary" size={24} />
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <ShieldCheck className="text-primary" size={24} />
+          </div>
+          <div>
+            <h3 className="font-bold text-foreground">{getMenuLabel("cpanel")}</h3>
+            <p className="text-[10px] text-muted-foreground font-medium">{lang === "ar" ? "إدارة النظام والصلاحيات" : "System & Permissions Management"}</p>
+          </div>
         </div>
-        <div>
-          <h3 className="font-bold text-foreground">لوحة التحكم</h3>
-          <p className="text-[10px] text-muted-foreground font-medium">إدارة النظام والصلاحيات</p>
-        </div>
+        <button
+          onClick={toggleLang}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-muted hover:bg-muted/80 transition"
+          title={lang === "ar" ? "Switch to English" : "التبديل إلى العربية"}
+        >
+          <Globe size={12} />
+          {lang === "ar" ? "EN" : "عربي"}
+        </button>
       </div>
 
       <div className="space-y-1 max-h-[70vh] overflow-y-auto pr-1 pb-10 scrollbar-thin">
-        <NavGroup title="الرئيسية والإحصائيات">
-          <AdminAction id="overview" icon={<BarChart3 size={16} />} label="داش بورد" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="events" icon={<Activity size={16} />} label="السجل" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="actions" icon={<Zap size={16} />} label="الحالات" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_main")}>
+          <AdminAction id="overview" icon={<BarChart3 size={16} />} label={getMenuLabel("overview")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="events" icon={<Activity size={16} />} label={getMenuLabel("events")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="actions" icon={<Zap size={16} />} label={getMenuLabel("actions")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
 
-        <NavGroup title="الأعضاء والرقابة">
-          <AdminAction id="users" icon={<Users size={16} />} label="الأعضاء" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="bans" icon={<Ban size={16} />} label="الحظر" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="roles" icon={<Lock size={16} />} label="الصلاحيات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="fltr" icon={<ListFilter size={16} />} label="فلتر" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_members")}>
+          <AdminAction id="users" icon={<Users size={16} />} label={getMenuLabel("users")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="bans" icon={<Ban size={16} />} label={getMenuLabel("bans")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="roles" icon={<Lock size={16} />} label={getMenuLabel("roles")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="fltr" icon={<ListFilter size={16} />} label={getMenuLabel("fltr")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
 
-        <NavGroup title="الغرف والتواصل">
-          <AdminAction id="rooms" icon={<MessageSquare size={16} />} label="الغرف" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="stickers" icon={<Sticker size={16} />} label="الملصقات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="animatedfaces" icon={<Smile size={16} />} label="فيسات متحركة" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="roomBadges" icon={<BadgeAlert size={16} />} label="شارات الغرف" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="siteBadges" icon={<Award size={16} />} label="شارات الموقع" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="shrt" icon={<MessageSquare size={16} />} label="الإختصارات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="msgs" icon={<MessageSquare size={16} />} label="الرسائل" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="bots" icon={<Cpu size={16} />} label="الوهمي الناطق" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_rooms")}>
+          <AdminAction id="rooms" icon={<MessageSquare size={16} />} label={getMenuLabel("rooms")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="stickers" icon={<Sticker size={16} />} label={getMenuLabel("stickers")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="animatedfaces" icon={<Smile size={16} />} label={getMenuLabel("animatedfaces")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="roomBadges" icon={<BadgeAlert size={16} />} label={getMenuLabel("roomBadges")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="siteBadges" icon={<Award size={16} />} label={getMenuLabel("siteBadges")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="shrt" icon={<MessageSquare size={16} />} label={getMenuLabel("shrt")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="msgs" icon={<MessageSquare size={16} />} label={getMenuLabel("msgs")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="bots" icon={<Cpu size={16} />} label={getMenuLabel("bots")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
 
-        <NavGroup title="المالية والهدايا">
-          <AdminAction id="subs" icon={<Award size={16} />} label="الإشتراكات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="giftsgit" icon={<Gift size={16} />} label="هدايا git" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="agentwallets" icon={<Wallet size={16} />} label="شحن الوكلاء" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="evaluationpoints" icon={<Calculator size={16} />} label="احتساب النقاط" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_finance")}>
+          <AdminAction id="subs" icon={<Award size={16} />} label={getMenuLabel("subs")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="giftsgit" icon={<Gift size={16} />} label={getMenuLabel("giftsgit")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="agentwallets" icon={<Wallet size={16} />} label={getMenuLabel("agentwallets")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="evaluationpoints" icon={<Calculator size={16} />} label={getMenuLabel("evaluationpoints")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
 
-        <NavGroup title="إدارة النظام">
-          <AdminAction id="settings" icon={<Settings size={16} />} label="إداره الموقع" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="database" icon={<Database size={16} />} label="قاعدة البيانات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="micprovidercp" icon={<Mic size={16} />} label="تحديد مزود المايكات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="ddosguardcp" icon={<ShieldAlert size={16} />} label="حماية الدوز" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_system")}>
+          <AdminAction id="settings" icon={<Settings size={16} />} label={getMenuLabel("settings")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="database" icon={<Database size={16} />} label={getMenuLabel("database")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="micprovidercp" icon={<Mic size={16} />} label={getMenuLabel("micprovidercp")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="ddosguardcp" icon={<ShieldAlert size={16} />} label={getMenuLabel("ddosguardcp")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
 
-        <NavGroup title="الإضافات (البلجنز)">
-          <AdminAction id="hostin" icon={<HardDrive size={16} />} label="الاضافات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostcleanup" icon={<Wrench size={16} />} label="صيانة الاضافات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostcontrols" icon={<Key size={16} />} label="مفاتيح الاضافات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostsettings" icon={<LinkIcon size={16} />} label="روابط ونسخ الاضافات" activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostdomains" icon={<Database size={16} />} label="دومينات وبيانات الاضافات" activeSection={activeSection} onClick={onChangeSection} />
+        <NavGroup title={getGroupLabel("g_plugins")}>
+          <AdminAction id="hostin" icon={<HardDrive size={16} />} label={getMenuLabel("hostin")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="hostcleanup" icon={<Wrench size={16} />} label={getMenuLabel("hostcleanup")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="hostcontrols" icon={<Key size={16} />} label={getMenuLabel("hostcontrols")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="hostsettings" icon={<LinkIcon size={16} />} label={getMenuLabel("hostsettings")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="hostdomains" icon={<Database size={16} />} label={getMenuLabel("hostdomains")} activeSection={activeSection} onClick={onChangeSection} />
         </NavGroup>
       </div>
     </div>

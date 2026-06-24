@@ -40,20 +40,20 @@ export const getUserContext = async (userId: string): Promise<UserContext> => {
     console.warn(`[PermissionEngine] Redis cache read error for user ${userId}:`, err);
   }
 
-  // 2. في حال عدم وجود كاش، جلب البيانات من PostgreSQL مع تصحيح عملية الربط بجدول user_role_assignments
+  // 2. في حال عدم وجود كاش، جلب البيانات من PostgreSQL
   const result = await dbPool.query(`
     SELECT 
-      COALESCE(NULLIF(u.uid, ''), u.id, u.idreg::text) as "userId",
+      u.id as "userId",
       r.id as "roleId",
       r.rank as "rankPriority",
       COALESCE(r.rank >= 9000, false) as "isStaff",
       COALESCE(jsonb_object_agg(rp.permission_key, rp.permission_value) FILTER (WHERE rp.permission_key IS NOT NULL), '{}'::jsonb) as permissions
     FROM users u
-    LEFT JOIN user_role_assignments ura ON u.idreg = ura.user_idreg
+    LEFT JOIN user_role_assignments ura ON u.id = ura.user_id
     LEFT JOIN roles r ON ura.role_id = r.id
     LEFT JOIN role_permissions rp ON r.id = rp.role_id
-    WHERE u.id = $1 OR u.uid = $1 OR u.idreg::text = $1
-    GROUP BY u.id, u.uid, u.idreg, r.id, r.rank
+    WHERE u.id = $1
+    GROUP BY u.id, r.id, r.rank
   `, [userId]);
 
   if (result.rowCount === 0) {

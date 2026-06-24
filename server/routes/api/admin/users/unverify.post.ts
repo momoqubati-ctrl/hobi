@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
 
     // إلغاء التوثيق في جدول users
     const result = await dbPool.query(
-      `UPDATE users SET documentationc = 0 WHERE username = $1 RETURNING idreg, topic`,
+      `UPDATE users SET documentationc = false WHERE username = $1 RETURNING idreg, topic`,
       [username]
     );
 

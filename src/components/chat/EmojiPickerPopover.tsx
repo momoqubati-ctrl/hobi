@@ -191,7 +191,7 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
         </div>
 
         {/* Emojis Grid */}
-        <div className="grid grid-cols-8 sm:grid-cols-12 md:grid-cols-16 lg:grid-cols-20 gap-2 max-h-[140px] overflow-y-auto p-1 no-scrollbar select-none">
+        <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 max-h-[140px] overflow-y-auto p-1 no-scrollbar select-none">
           {activeCategory === "animated" ? (
             animatedFaces.map((face) => (
               <button
@@ -201,7 +201,7 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
                 className="hover:scale-125 active:scale-95 transition-transform flex items-center justify-center p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
                 title={face.shortcut}
               >
-                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "1.4rem", height: "1.4rem" }} />
+                <img src={face.image_url} alt={face.name} className="object-contain" style={{ width: "40px", height: "40px" }} />
               </button>
             ))
           ) : (

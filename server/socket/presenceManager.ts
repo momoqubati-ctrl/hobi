@@ -17,6 +17,9 @@ export type OnlineUser = {
   roomId: string;
   connectedAt: string;
   status: "online" | "active" | "idle" | "busy" | "away";
+  idreg: string;
+  siteBadge: string;
+  statusMsg: string;
 };
 
 // الذاكرة المحلية كبديل عند تعطيل Redis أو حدوث خطأ في الاتصال
@@ -44,6 +47,7 @@ async function getDedupedOnlineUsers(): Promise<OnlineUser[]> {
 
   if (!isRedisEnabled) {
     users = Array.from(localSockets.values());
+    console.debug("[presence] getDedupedOnlineUsers (local) count=", users.length);
   } else {
     try {
       const socketIds = await redis.smembers(ONLINE_SOCKETS_KEY);
@@ -55,6 +59,7 @@ async function getDedupedOnlineUsers(): Promise<OnlineUser[]> {
       }
     } catch (err) {
       console.warn("[presence] Redis smembers failed, falling back to local memory:", err);
+      console.debug("[presence] getDedupedOnlineUsers fallback to local due to redis error");
       users = Array.from(localSockets.values());
     }
   }
@@ -96,6 +101,7 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
   localOnlineSockets.add(socketId);
 
   if (!isRedisEnabled) {
+    console.debug(`[presence] addConnectedUser (local)`, socketId, { id: user.id, username: user.username, status: user.status });
     return;
   }
 
@@ -113,6 +119,9 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
       roomId: String(user.roomId),
       connectedAt: String(user.connectedAt),
       status: String(user.status || "online"),
+      idreg: String(user.idreg || ""),
+      siteBadge: String(user.siteBadge || ""),
+      statusMsg: String(user.statusMsg || ""),
     };
 
     await redis.hset(key, data);
@@ -120,6 +129,7 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
     await redis.sadd(ONLINE_SOCKETS_KEY, socketId);
   } catch (err) {
     console.warn("[presence] Redis addConnectedUser failed, using local memory fallback:", err);
+    console.debug(`[presence] addConnectedUser fallback to local`, socketId, { id: user.id, username: user.username });
   }
 }
 
@@ -128,6 +138,7 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
  */
 export async function removeConnectedUser(socketId: string): Promise<OnlineUser | undefined> {
   const user = await getConnectedUser(socketId);
+  console.debug(`[presence] removeConnectedUser called`, socketId, user ? { id: user.id, username: user.username } : null);
   if (!user) return undefined;
 
   // إزالة من الذاكرة المحلية أولاً
@@ -310,6 +321,9 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
       roomId: data.roomId,
       connectedAt: data.connectedAt,
       status: (data.status || "online") as any,
+      idreg: data.idreg || "",
+      siteBadge: data.siteBadge || "",
+      statusMsg: data.statusMsg || "",
     };
   } catch (err) {
     console.warn("[presence] Redis hgetall failed, using local memory fallback:", err);
@@ -320,6 +334,7 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
 export const pendingDisconnects = new Map<string, {
   roomId: string;
   timeout: NodeJS.Timeout;
+  presenceTimeout: NodeJS.Timeout;
   socketId: string;
   userData: any;
 }>();

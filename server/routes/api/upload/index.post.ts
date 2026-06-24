@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
       return { success: false, message: "حجم الملف يتجاوز 50 ميجابايت" };
     }
 
-    const savedPath = saveUploadBuffer({
+    const savedPath = await saveUploadBuffer({
       kind: "story",
       userId,
       extension,
