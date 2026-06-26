@@ -64,13 +64,14 @@ const verifyPassword = (password: string, storedHash: string) => {
 
 const sign = (payload: string) => createHmac("sha256", getSecret()).update(payload).digest("base64url");
 
-const toPublicUser = (user: StoredUser): PublicUser => ({
+const toPublicUser = (user: StoredUser): PublicUser & { statusMsg: string } => ({
   id: user.id,
   username: user.username,
   name: user.displayName,
   role: user.role,
   countryCode: user.countryCode,
   ...user.profile,
+  statusMsg: user.profile.profileMsg,
 });
 
 const issueToken = (user: PublicUser) => {
