@@ -72,6 +72,8 @@ const getMemberIdentity = (member: { id?: string; username?: string; name?: stri
   return `guest:${name}`;
 };
 
+const isHexColor = (v: string) => /^#?[0-9a-fA-F]{3,8}$/.test(v.replace(/^\//, ""));
+
 const getCurrentMember = () => {
   try {
     const raw = localStorage.getItem("user");
@@ -390,8 +392,8 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
             onClick={() => onOpenProfile?.(member.id)}
             className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-all cursor-pointer border-b border-border/50 [direction:ltr]"
             style={member.memberCardBgUrl ? (
-              member.memberCardBgUrl.startsWith("#")
-                ? { backgroundColor: member.memberCardBgUrl, backgroundBlendMode: "overlay" }
+              isHexColor(member.memberCardBgUrl)
+                ? { backgroundColor: member.memberCardBgUrl.replace(/^\//, ""), backgroundBlendMode: "overlay" }
                 : { backgroundImage: `url(${member.memberCardBgUrl})`, backgroundSize: "cover", backgroundPosition: "center" }
             ) : undefined}
           >

@@ -17,23 +17,14 @@ import {
   LogOut, 
   ChevronLeft, 
   Bell, 
-  Lock, 
-  Eye,
+  Lock,
   Smartphone,
   Moon,
   Sun,
-  Circle,
   Camera,
   Loader2,
   ChevronRight
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { showSuccess, showError } from "@/utils/toast";
@@ -53,14 +44,16 @@ const SettingsPanel = () => {
   const navigate = useNavigate();
 
   const [updateTrigger, setUpdateTrigger] = useState(0);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showFrameSelector, setShowFrameSelector] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
 
   const [newAvatar, setNewAvatar] = useState<string | null>(null);
   const [newCover, setNewCover] = useState<string | null>(null);
   const [newStatusMsg, setNewStatusMsg] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [newNameColor, setNewNameColor] = useState("#000000");
+  const [newMessageColor, setNewMessageColor] = useState("#000000");
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +92,8 @@ const SettingsPanel = () => {
         giftIconUrl: typeof user.giftIconUrl === "string" && user.giftIconUrl.trim() ? user.giftIconUrl : "",
         coins: Number(user.coins) || 0,
         evaluation: Number(user.evaluation) || 0,
+        nameColor: typeof user.nameColor === "string" && user.nameColor.trim() ? user.nameColor : "#000000",
+        messageColor: typeof user.messageColor === "string" && user.messageColor.trim() ? user.messageColor : "#000000",
       };
     } catch {
       return null;
@@ -111,7 +106,9 @@ const SettingsPanel = () => {
     const isPlaceholder = currentUser?.statusMsg === "(عضو جديد)" || currentUser?.statusMsg === "( غير مسجل )" || currentUser?.profileMsg === "(عضو جديد)" || currentUser?.profileMsg === "( غير مسجل )";
     setNewStatusMsg(isPlaceholder ? "" : currentUser?.statusMsg || currentUser?.profileMsg || "");
     setNewDisplayName(currentUser?.name || "");
-    setIsEditModalOpen(true);
+    setNewNameColor(currentUser?.nameColor || "#000000");
+    setNewMessageColor(currentUser?.messageColor || "#000000");
+    setShowEditProfile(true);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'cover') => {
@@ -171,7 +168,9 @@ const SettingsPanel = () => {
           avatar: newAvatar,
           cover: newCover,
           profileMsg: newStatusMsg,
-          displayName: newDisplayName.trim() || undefined
+          displayName: newDisplayName.trim() || undefined,
+          nameColor: newNameColor,
+          messageColor: newMessageColor,
         })
       });
 
@@ -214,6 +213,12 @@ const SettingsPanel = () => {
           if (data.displayName) {
             user.name = data.displayName;
           }
+          if (data.nameColor) {
+            user.nameColor = data.nameColor;
+          }
+          if (data.messageColor) {
+            user.messageColor = data.messageColor;
+          }
           localStorage.setItem("user", JSON.stringify(user));
         }
         refreshSocketAuth();
@@ -225,7 +230,9 @@ const SettingsPanel = () => {
             avatar: normalizedAvatar || undefined,
             displayName: data.displayName || undefined,
             cover: normalizedCover || undefined,
-            ...(data.updates?.profileMsg !== undefined ? { profileMsg: data.updates.profileMsg } : {})
+            ...(data.updates?.profileMsg !== undefined ? { profileMsg: data.updates.profileMsg } : {}),
+            ...(data.nameColor ? { nameColor: data.nameColor } : {}),
+            ...(data.messageColor ? { messageColor: data.messageColor } : {}),
           });
         }
 
@@ -247,7 +254,7 @@ const SettingsPanel = () => {
         }
 
         showSuccess("تم تحديث الملف الشخصي بنجاح");
-        setIsEditModalOpen(false);
+        setShowEditProfile(false);
         setUpdateTrigger(prev => prev + 1);
       } else {
         showError(data.message || "فشل تحديث الملف الشخصي");
@@ -283,6 +290,164 @@ const SettingsPanel = () => {
     localStorage.removeItem("user");
     navigate("/", { replace: true });
   };
+
+  if (showEditProfile) {
+    return (
+      <div className="p-4 pb-24 overflow-y-auto h-full space-y-6">
+        <div className="flex items-center gap-2 mb-4">
+          <button onClick={() => setShowEditProfile(false)} className="p-1 rounded-lg hover:bg-muted transition">
+            <ChevronRight size={20} />
+          </button>
+          <h4 className="text-sm font-bold">تعديل الملف الشخصي</h4>
+        </div>
+
+        <div className="space-y-6">
+          {/* Banner/Cover Upload Preview */}
+          <div className="relative h-28 rounded-2xl overflow-hidden bg-muted group border border-border">
+            <img 
+              src={newCover || currentUser?.banner || "/pich.png"} 
+              alt="Banner Preview" 
+              className="w-full h-full object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => coverInputRef.current?.click()}
+              className="absolute inset-0 bg-black/40 flex items-center justify-center gap-2 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            >
+              <Camera size={20} />
+              <span className="text-xs font-bold">تغيير الغلاف</span>
+            </button>
+            <input 
+              type="file" 
+              ref={coverInputRef} 
+              className="hidden" 
+              accept="image/*" 
+              onChange={(e) => handleFileChange(e, 'cover')}
+            />
+          </div>
+
+          {/* Avatar Upload Preview */}
+          <div className="flex justify-center -mt-14 relative z-10">
+            <div className="relative group w-20 h-20 rounded-full overflow-hidden border-4 border-card bg-muted shadow-md">
+              <Avatar className="w-full h-full">
+                <AvatarImage src={newAvatar || currentUser?.avatar || "/pic.png"} />
+                <AvatarFallback>{currentUser?.name?.[0]}</AvatarFallback>
+              </Avatar>
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                className="absolute inset-0 bg-black/40 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+              >
+                <Camera size={16} />
+              </button>
+              <input 
+                type="file" 
+                ref={avatarInputRef} 
+                className="hidden" 
+                accept="image/*" 
+                onChange={(e) => handleFileChange(e, 'avatar')}
+              />
+            </div>
+          </div>
+
+          {/* Display Name */}
+          <div className="space-y-2">
+            <Label htmlFor="displayName" className="text-xs font-bold text-muted-foreground">الاسم المستعار</Label>
+            <Input
+              id="displayName"
+              type="text"
+              placeholder="أدخل اسمك المستعار..."
+              value={newDisplayName}
+              onChange={(e) => setNewDisplayName(e.target.value)}
+              className="rounded-xl border-border bg-muted/50 text-xs font-bold"
+              maxLength={40}
+            />
+          </div>
+
+          {/* Status Message Msg */}
+          <div className="space-y-2">
+            <Label htmlFor="statusMsg" className="text-xs font-bold text-muted-foreground">الحالة الشخصية / الوصف</Label>
+            <Input
+              id="statusMsg"
+              type="text"
+              placeholder="اكتب شيئاً عن نفسك..."
+              value={newStatusMsg}
+              onChange={(e) => setNewStatusMsg(e.target.value)}
+              className="rounded-xl border-border bg-muted/50 text-xs font-bold"
+              maxLength={100}
+            />
+          </div>
+
+          {/* Name Color */}
+          <div className="space-y-2">
+            <Label className="text-xs font-bold text-muted-foreground">لون الاسم</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={newNameColor}
+                onChange={(e) => setNewNameColor(e.target.value)}
+                className="w-10 h-10 rounded-xl border border-border bg-muted/50 cursor-pointer shrink-0"
+              />
+              <Input
+                type="text"
+                value={newNameColor}
+                onChange={(e) => setNewNameColor(e.target.value)}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold font-mono"
+                maxLength={7}
+                placeholder="#000000"
+              />
+            </div>
+          </div>
+
+          {/* Message Color */}
+          <div className="space-y-2">
+            <Label className="text-xs font-bold text-muted-foreground">لون الحالة / الوصف</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={newMessageColor}
+                onChange={(e) => setNewMessageColor(e.target.value)}
+                className="w-10 h-10 rounded-xl border border-border bg-muted/50 cursor-pointer shrink-0"
+              />
+              <Input
+                type="text"
+                value={newMessageColor}
+                onChange={(e) => setNewMessageColor(e.target.value)}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold font-mono"
+                maxLength={7}
+                placeholder="#000000"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-2 justify-end pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowEditProfile(false)}
+            className="rounded-xl font-bold text-xs"
+            disabled={isSaving}
+          >
+            إلغاء
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSaveChanges}
+            className="rounded-xl bg-primary hover:bg-primary/95 text-white font-bold text-xs shadow-md shadow-primary/20"
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                جاري الحفظ...
+              </>
+            ) : "حفظ التغييرات"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (showFrameSelector) {
     return (
@@ -320,8 +485,8 @@ const SettingsPanel = () => {
               } transition-colors duration-300`} />
             </div>
             <div className="flex-1">
-              <h3 className="text-xl font-bold">{currentUser?.name || "زائر"}</h3>
-              <p className="text-white/80 text-sm">{currentUser?.statusMsg || currentUser?.profileMsg || "(عضو جديد)"} • {currentUser?.evaluation || 0} نقطة</p>
+              <h3 className="text-xl font-bold" style={currentUser?.nameColor && currentUser.nameColor !== "#000000" ? { color: currentUser.nameColor } : undefined}>{currentUser?.name || "زائر"}</h3>
+              <p className="text-white/80 text-sm" style={currentUser?.messageColor && currentUser.messageColor !== "#000000" ? { color: currentUser.messageColor } : undefined}>{currentUser?.statusMsg || currentUser?.profileMsg || "(عضو جديد)"} • {currentUser?.evaluation || 0} نقطة</p>
               <div className="flex items-center gap-2 mt-2">
                 <div className="bg-card/20 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1">
                   <Coins size={12} />
@@ -424,119 +589,6 @@ const SettingsPanel = () => {
       <div className="text-center pt-4">
         <p className="text-[10px] text-muted-foreground font-medium">إصدار التطبيق 1.0.0</p>
       </div>
-
-      {/* Edit Profile Dialog */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="max-w-md rounded-3xl p-6 bg-card border border-border text-foreground [direction:rtl]">
-          <DialogHeader className="text-right">
-            <DialogTitle className="text-lg font-bold">تعديل الملف الشخصي</DialogTitle>
-            <DialogDescription className="sr-only">نموذج تعديل إعدادات الملف الشخصي الخاصة بالمستخدم.</DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 my-4">
-            {/* Banner/Cover Upload Preview */}
-            <div className="relative h-28 rounded-2xl overflow-hidden bg-muted group border border-border">
-              <img 
-                src={newCover || currentUser?.banner || "/pich.png"} 
-                alt="Banner Preview" 
-                className="w-full h-full object-cover"
-              />
-              <button
-                type="button"
-                onClick={() => coverInputRef.current?.click()}
-                className="absolute inset-0 bg-black/40 flex items-center justify-center gap-2 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-              >
-                <Camera size={20} />
-                <span className="text-xs font-bold">تغيير الغلاف</span>
-              </button>
-              <input 
-                type="file" 
-                ref={coverInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                onChange={(e) => handleFileChange(e, 'cover')}
-              />
-            </div>
-
-            {/* Avatar Upload Preview */}
-            <div className="flex justify-center -mt-14 relative z-10">
-              <div className="relative group w-20 h-20 rounded-full overflow-hidden border-4 border-card bg-muted shadow-md">
-                <Avatar className="w-full h-full">
-                  <AvatarImage src={newAvatar || currentUser?.avatar || "/pic.png"} />
-                  <AvatarFallback>{currentUser?.name?.[0]}</AvatarFallback>
-                </Avatar>
-                <button
-                  type="button"
-                  onClick={() => avatarInputRef.current?.click()}
-                  className="absolute inset-0 bg-black/40 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                >
-                  <Camera size={16} />
-                </button>
-                <input 
-                  type="file" 
-                  ref={avatarInputRef} 
-                  className="hidden" 
-                  accept="image/*" 
-                  onChange={(e) => handleFileChange(e, 'avatar')}
-                />
-              </div>
-            </div>
-
-            {/* Display Name */}
-            <div className="space-y-2">
-              <Label htmlFor="displayName" className="text-xs font-bold text-muted-foreground">الاسم المستعار</Label>
-              <Input
-                id="displayName"
-                type="text"
-                placeholder="أدخل اسمك المستعار..."
-                value={newDisplayName}
-                onChange={(e) => setNewDisplayName(e.target.value)}
-                className="rounded-xl border-border bg-muted/50 text-xs font-bold"
-                maxLength={40}
-              />
-            </div>
-
-            {/* Status Message Msg */}
-            <div className="space-y-2">
-              <Label htmlFor="statusMsg" className="text-xs font-bold text-muted-foreground">الحالة الشخصية / الوصف</Label>
-              <Input
-                id="statusMsg"
-                type="text"
-                placeholder="اكتب شيئاً عن نفسك..."
-                value={newStatusMsg}
-                onChange={(e) => setNewStatusMsg(e.target.value)}
-                className="rounded-xl border-border bg-muted/50 text-xs font-bold"
-                maxLength={100}
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-2 justify-end pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setIsEditModalOpen(false)}
-              className="rounded-xl font-bold text-xs"
-              disabled={isSaving}
-            >
-              إلغاء
-            </Button>
-            <Button
-              type="button"
-              onClick={handleSaveChanges}
-              className="rounded-xl bg-primary hover:bg-primary/95 text-white font-bold text-xs shadow-md shadow-primary/20"
-              disabled={isSaving}
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  جاري الحفظ...
-                </>
-              ) : "حفظ التغييرات"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

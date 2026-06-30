@@ -56,6 +56,7 @@ const mapLegacyUser = (row: any): PersistedUser => {
       profileThemeId: String(row.them || ""),
       avatarFrameUrl: String(row.cover || ""),
       giftIconUrl: String(row.gift_ico || ""),
+      memberCardBgUrl: "",
       profileIconUrl: String(row.ico || ""),
       nameGradient: "",
       nameEffectId: "",
@@ -118,6 +119,8 @@ const syncProfileToCanonicalStore = async (
     cover?: string;
     profileMsg?: string;
     displayName?: string;
+    nameColor?: string;
+    messageColor?: string;
   },
 ) => {
   const actualUserId = await resolveUserId(userId);
@@ -154,6 +157,14 @@ const syncProfileToCanonicalStore = async (
   }
   if (updates.displayName !== undefined) {
     addLegacyField("topic", String(updates.displayName).slice(0, 120));
+  }
+  if (updates.nameColor !== undefined) {
+    addProfileField("name_color", updates.nameColor);
+    addLegacyField("ucol", String(updates.nameColor).slice(0, 20));
+  }
+  if (updates.messageColor !== undefined) {
+    addProfileField("message_color", updates.messageColor);
+    addLegacyField("mcol", String(updates.messageColor).slice(0, 20));
   }
 
   if (profileFields.length > 0) {
@@ -243,6 +254,8 @@ export const updatePersistedUserProfile = async (
     cover?: string;
     profileMsg?: string;
     displayName?: string;
+    nameColor?: string;
+    messageColor?: string;
   }
 ): Promise<boolean> => {
   if (databaseAvailable === false) return false;
@@ -268,6 +281,14 @@ export const updatePersistedUserProfile = async (
       fields.push(`topic = $${paramIndex++}`);
       values.push(String(profileUpdates.displayName).slice(0, 120));
     }
+    if (profileUpdates.nameColor !== undefined) {
+      fields.push(`ucol = $${paramIndex++}`);
+      values.push(String(profileUpdates.nameColor).slice(0, 20));
+    }
+    if (profileUpdates.messageColor !== undefined) {
+      fields.push(`mcol = $${paramIndex++}`);
+      values.push(String(profileUpdates.messageColor).slice(0, 20));
+    }
 
     if (fields.length === 0) return true;
 
@@ -276,6 +297,8 @@ export const updatePersistedUserProfile = async (
       cover: profileUpdates.cover,
       profileMsg: profileUpdates.profileMsg,
       displayName: profileUpdates.displayName,
+      nameColor: profileUpdates.nameColor,
+      messageColor: profileUpdates.messageColor,
     });
 
     databaseAvailable = true;

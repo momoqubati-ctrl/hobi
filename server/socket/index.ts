@@ -106,7 +106,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       role,
       avatar: normalizeMinioUrl(socket.handshake.auth?.avatar || "/pic.png"),
       countryCode: detectedCountry,
-      avatarFrameUrl: normalizeMinioUrl(socket.handshake.auth?.avatarFrameUrl || ""),
+      avatarFrameUrl: socket.handshake.auth?.avatarFrameUrl || "",
       giftIconUrl: socket.handshake.auth?.giftIconUrl || "",
       messageBubbleStyle: socket.handshake.auth?.messageBubbleStyle || "default",
       status: socket.handshake.auth?.status || "online",
@@ -121,7 +121,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     try {
       const { dbPool } = await import("../db");
       const profileResult = await dbPool.query(
-        `SELECT "profile_msg", "idreg", "uid", "avatar_url", "banner_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        `SELECT "profile_msg", "idreg", "uid", "avatar_url", "banner_url", "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
         [userId],
       );
       const profileRow = profileResult.rows[0];
@@ -145,6 +145,8 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
         if (row.banner_url) socket.data.user.cover = normalizeMinioUrl(row.banner_url);
         if (!row.avatar_url && legacyRow?.pic) socket.data.user.avatar = normalizeMinioUrl(legacyRow.pic);
         if (!row.banner_url && legacyRow?.pich) socket.data.user.cover = normalizeMinioUrl(legacyRow.pich);
+        if (row.avatar_frame_url) socket.data.user.avatarFrameUrl = String(row.avatar_frame_url);
+        if (row.member_card_bg_url) socket.data.user.memberCardBgUrl = String(row.member_card_bg_url);
       }
     } catch {}
     // Also try in-memory as secondary fallback

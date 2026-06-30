@@ -283,6 +283,18 @@ export const loginMember = async (input: { username: string; password: string; c
     if (input.countryCode) {
       user.countryCode = normalizeCountryCode(input.countryCode);
     }
+    // تحميل avatar_frame_url و member_card_bg_url من user_profiles
+    try {
+      const profileResult = await dbPool.query(
+        `SELECT "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        [user.id]
+      );
+      if (profileResult.rows[0]) {
+        const row = profileResult.rows[0];
+        if (row.avatar_frame_url) user.profile.avatarFrameUrl = String(row.avatar_frame_url);
+        if (row.member_card_bg_url) user.profile.memberCardBgUrl = String(row.member_card_bg_url);
+      }
+    } catch (_) {}
     storeDeviceInfo(user.id, input.clientIp, input.deviceFingerprint, input.deviceSignature);
     return {
       ok: true as const,

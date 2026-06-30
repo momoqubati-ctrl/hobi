@@ -23,6 +23,8 @@ const STATUS_CONFIG: Record<PresenceStatus, { color: string; pulseColor: string;
   offline: { color: "bg-slate-400",  pulseColor: "bg-slate-300",  label: "غير متصل" },
 };
 
+const isHexColor = (v: string) => /^#?[0-9a-fA-F]{3,8}$/.test(v.replace(/^\//, ""));
+
 const getStatusConfig = (status?: string) =>
   STATUS_CONFIG[(status as PresenceStatus) || "offline"] ?? STATUS_CONFIG.offline;
 
@@ -402,8 +404,8 @@ const PrivateList = ({
                 key={conv.conversationId}
                 className="group relative flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card hover:bg-muted/50 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                 style={resolvedMemberCardBg ? (
-                  resolvedMemberCardBg.startsWith("#")
-                    ? { backgroundColor: resolvedMemberCardBg } as React.CSSProperties
+                  isHexColor(resolvedMemberCardBg)
+                    ? { backgroundColor: resolvedMemberCardBg.replace(/^\//, "") } as React.CSSProperties
                     : { backgroundImage: `url(${resolvedMemberCardBg})`, backgroundSize: "cover", backgroundPosition: "center" } as React.CSSProperties
                 ) : undefined}
                 onClick={() => openConversation(conv)}

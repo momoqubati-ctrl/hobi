@@ -28,9 +28,11 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   // Also try to enrich from DB for idreg + statusMsg using both modern and legacy sources
   let dbIdreg = user.idreg || "";
   let dbStatusMsg = resolvedStatusMsg;
+  let dbMemberCardBg = "";
+  let dbAvatarFrameUrl = "";
   try {
     const profileResult = await dbPool.query(
-      `SELECT "profile_msg", "idreg" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+      `SELECT "profile_msg", "idreg", "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
       [user.id]
     );
     const profileRow = profileResult.rows[0];
@@ -43,6 +45,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     if (profileRow && String(profileRow.profile_msg || "").trim()) {
       dbIdreg = (profileRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (profileRow.profile_msg || "").toString().trim() || dbStatusMsg;
+      dbMemberCardBg = (profileRow.member_card_bg_url || "").toString().trim();
+      dbAvatarFrameUrl = (profileRow.avatar_frame_url || "").toString().trim();
     } else if (legacyRow) {
       dbIdreg = (legacyRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (legacyRow.msg || "").toString().trim() || dbStatusMsg;
@@ -55,8 +59,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     role: user.role,
     avatar: user.avatar,
     countryCode: user.countryCode,
-    avatarFrameUrl: user.avatarFrameUrl || "",
+    avatarFrameUrl: dbAvatarFrameUrl || user.avatarFrameUrl || "",
     giftIconUrl: user.giftIconUrl || "",
+    memberCardBgUrl: dbMemberCardBg || user.memberCardBgUrl || "",
     messageBubbleStyle: user.messageBubbleStyle || "default",
     roomId: "",
     connectedAt: user.connectedAt,
@@ -67,7 +72,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   }).then(async () => {
     const count = await getTotalOnlineCount();
     io.emit("online_count", { count });
-    console.debug("[presence] emit user_connected", { socketId: socket.id, userId: user.id, idreg: dbIdreg, count });
+    const frameUrl = dbAvatarFrameUrl || user.avatarFrameUrl || "";
+    const bgUrl = dbMemberCardBg || user.memberCardBgUrl || "";
+    console.debug("[presence] emit user_connected", { socketId: socket.id, userId: user.id, idreg: dbIdreg, count, avatarFrameUrl: frameUrl, memberCardBgUrl: bgUrl });
     io.emit("user_connected", {
       socketId: socket.id,
       userId: user.id,
@@ -75,8 +82,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       role: user.role,
       avatar: normalizeMinioUrl(user.avatar || "/pic.png"),
       countryCode: user.countryCode,
-      avatarFrameUrl: normalizeMinioUrl(user.avatarFrameUrl || ""),
+      avatarFrameUrl: frameUrl ? normalizeMinioUrl(frameUrl) : "",
       giftIconUrl: user.giftIconUrl || "",
+      memberCardBgUrl: bgUrl,
       roomId: socket.data.user.roomId || "",
       status: user.status || "online",
       idreg: dbIdreg,
@@ -136,6 +144,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
           countryCode: u.countryCode,
           avatarFrameUrl: u.avatarFrameUrl,
           giftIconUrl: u.giftIconUrl,
+          memberCardBgUrl: u.memberCardBgUrl || "",
           roomId: u.roomId,
           status: u.status || "online",
           idreg,

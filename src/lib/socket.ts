@@ -28,6 +28,7 @@ function readSocketAuth(): Record<string, string> {
       countryCode: user.countryCode || "SA",
       avatarFrameUrl: user.avatarFrameUrl || "",
       giftIconUrl: user.giftIconUrl || "",
+      memberCardBgUrl: user.memberCardBgUrl || "",
       messageBubbleStyle: user.messageBubbleStyle || "default",
       idreg: typeof user.idreg === "string" ? user.idreg : user.idreg ? `#${user.idreg}` : "",
       siteBadge: typeof user.siteBadge === "string" ? user.siteBadge : "",
@@ -53,6 +54,30 @@ export function getSocket(): Socket {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     timeout: 20000,
+  });
+
+  socket.on("connected", (payload: any) => {
+    try {
+      const serverUser = payload?.user;
+      if (!serverUser) return;
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        const user = JSON.parse(stored);
+        let changed = false;
+        if (serverUser.avatarFrameUrl !== undefined && serverUser.avatarFrameUrl !== user.avatarFrameUrl) {
+          user.avatarFrameUrl = serverUser.avatarFrameUrl;
+          changed = true;
+        }
+        if (serverUser.memberCardBgUrl !== undefined && serverUser.memberCardBgUrl !== user.memberCardBgUrl) {
+          user.memberCardBgUrl = serverUser.memberCardBgUrl;
+          changed = true;
+        }
+        if (changed) {
+          localStorage.setItem("user", JSON.stringify(user));
+          window.dispatchEvent(new CustomEvent("frame-updated"));
+        }
+      }
+    } catch {}
   });
 
   return socket;

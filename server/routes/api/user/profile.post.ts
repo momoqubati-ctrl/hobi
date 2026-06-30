@@ -44,9 +44,9 @@ export default defineEventHandler(async (event) => {
 
   try {
     const body = await readBody(event);
-    const { avatar, cover, profileMsg, displayName } = body;
+    const { avatar, cover, profileMsg, displayName, nameColor, messageColor } = body;
 
-    const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string } = {};
+    const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
 
     if (avatar && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
@@ -76,6 +76,13 @@ export default defineEventHandler(async (event) => {
 
     if (displayName !== undefined && typeof displayName === "string" && displayName.trim().length > 0) {
       updates.displayName = displayName.trim().slice(0, 120);
+    }
+
+    if (nameColor !== undefined && typeof nameColor === "string") {
+      updates.nameColor = nameColor.trim().slice(0, 20);
+    }
+    if (messageColor !== undefined && typeof messageColor === "string") {
+      updates.messageColor = messageColor.trim().slice(0, 20);
     }
 
     // 2. Update Database
@@ -110,12 +117,14 @@ export default defineEventHandler(async (event) => {
       profileMsg: updates.profileMsg,
       statusMsg: updates.profileMsg || "",
       siteBadge: updates.siteBadge || "",
+      nameColor: updates.nameColor,
+      messageColor: updates.messageColor,
     };
 
     // Always read the latest canonical profile data from DB after update to ensure correct broadcast
     try {
       const latestRow = await dbPool.query(
-        `SELECT "profile_msg", "avatar_url", "banner_url", "idreg" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        `SELECT "profile_msg", "avatar_url", "banner_url", "idreg", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
         [userId],
       );
       if (latestRow.rows[0]) {
@@ -135,6 +144,8 @@ export default defineEventHandler(async (event) => {
           eventPayload.profileCover = eventPayload.cover;
         }
         if (row.idreg) eventPayload.idreg = String(row.idreg).trim();
+        if (row.name_color) eventPayload.nameColor = String(row.name_color).trim();
+        if (row.message_color) eventPayload.messageColor = String(row.message_color).trim();
       }
     } catch {}
 
@@ -151,6 +162,8 @@ export default defineEventHandler(async (event) => {
       updates,
       normalizedAvatar: currentAvatarUrl,
       displayName: updates.displayName || username,
+      nameColor: updates.nameColor,
+      messageColor: updates.messageColor,
       dbSuccess
     };
   } catch (error: any) {

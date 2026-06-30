@@ -24,6 +24,7 @@ export type UserProfileDefaults = {
   profileThemeId: string;
   avatarFrameUrl: string;
   giftIconUrl: string;
+  memberCardBgUrl: string;
   profileIconUrl: string;
   nameGradient: string;
   nameEffectId: string;
@@ -76,6 +77,7 @@ export const createUserProfileDefaults = (role: AuthRole): UserProfileDefaults =
     profileThemeId: "",
     avatarFrameUrl: "",
     giftIconUrl: "",
+    memberCardBgUrl: "",
     profileIconUrl: "",
     nameGradient: "",
     nameEffectId: "",

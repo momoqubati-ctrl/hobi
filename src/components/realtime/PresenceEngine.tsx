@@ -351,6 +351,7 @@ const PresenceEngine = () => {
           countryCode: data.countryCode || "SA",
           avatarFrameUrl: data.avatarFrameUrl || "",
           giftIconUrl: data.giftIconUrl || "",
+          memberCardBgUrl: data.memberCardBgUrl || "",
           roomId: data.roomId || "",
           status: data.status || "online",
           idreg: data.idreg || "",

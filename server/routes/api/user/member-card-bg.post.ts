@@ -38,7 +38,8 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<{ memberCardBgUrl: string }>(event);
   const bgUrl = body?.memberCardBgUrl || "";
-  const normalizedUrl = bgUrl ? normalizeMinioUrl(bgUrl) : "";
+  const isColor = /^#[0-9a-fA-F]{3,8}$/.test(bgUrl);
+  const normalizedUrl = bgUrl ? (isColor ? bgUrl : normalizeMinioUrl(bgUrl)) : "";
 
   try {
     await dbPool.query(

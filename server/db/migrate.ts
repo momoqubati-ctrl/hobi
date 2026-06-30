@@ -1127,3 +1127,15 @@ export async function ensureRoomBadgesColumns() {
     client.release();
   }
 }
+
+export async function ensureUserProfilesColumns() {
+  const client = await dbPool.connect();
+  try {
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "member_card_bg_url" text;`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "avatar_frame_url" text;`);
+  } catch (err) {
+    // تجاهل الخطأ
+  } finally {
+    client.release();
+  }
+}
