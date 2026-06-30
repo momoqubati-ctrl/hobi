@@ -1,13 +1,23 @@
-import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { defineEventHandler, readBody, setResponseStatus, getRequestHeader } from "h3";
 import { registerMember } from "../../../services/authService";
 import { detectCountryCode } from "../../../services/requestCountry";
 import { logAccess } from "../../../services/accessLogger";
+import { checkBan } from "../../../services/banCheck";
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
     const { username, password } = body;
     const countryCode = detectCountryCode(event);
+    const clientIp = getRequestHeader(event, "x-forwarded-for") || getRequestHeader(event, "x-real-ip") || "";
+    const deviceFingerprint = getRequestHeader(event, "x-device-fingerprint") || "";
+    const deviceSignature = getRequestHeader(event, "x-device-signature") || "";
+
+    const banCheck = await checkBan({ ip: clientIp, deviceFingerprint, deviceSignature });
+    if (banCheck.banned) {
+      setResponseStatus(event, 403);
+      return { success: false, code: "BANNED", message: "لا يمكنك التسجيل. جهازك/IP محظور." };
+    }
 
     if (typeof username !== "string" || username.trim().length < 3) {
       setResponseStatus(event, 400);
@@ -27,7 +37,7 @@ export default defineEventHandler(async (event) => {
       };
     }
 
-    const result = await registerMember({ username, password, countryCode });
+    const result = await registerMember({ username, password, countryCode, clientIp, deviceFingerprint, deviceSignature });
     
     if (!result.ok) {
       if (result.code === "USERNAME_TAKEN") {

@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Users, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { showSuccess } from "@/utils/toast";
 import { refreshSocketAuth, getSocket } from "@/lib/socket";
+import { getDeviceId, getDeviceSignature } from "@/lib/deviceFingerprint";
 
 type AuthMode = "guest" | "member" | "register";
 type DatabaseStatus = "checking" | "connected" | "disconnected";
@@ -60,9 +61,16 @@ const Index = () => {
       setLoading(true);
       setError("");
 
+      const deviceId = getDeviceId();
+      const deviceSignature = getDeviceSignature();
+
       const response = await fetch(authEndpointByMode[activeTab], {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-device-fingerprint": deviceId,
+          "x-device-signature": deviceSignature,
+        },
         body: JSON.stringify({
           username: username.trim(),
           password,

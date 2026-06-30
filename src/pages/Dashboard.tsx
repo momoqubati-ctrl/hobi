@@ -31,6 +31,16 @@ import YouTubeSearch from "@/components/chat/YouTubeSearch";
 
 import { ProfileModal } from "@/components/profile/ProfileModal";
 
+const hasControlPanelAccess = (data: any) => {
+  const permissions = Array.isArray(data?.permissions) ? data.permissions : [];
+  const hasCpPermission = permissions.some((permission: unknown) => {
+    if (typeof permission !== "string") return false;
+    return permission === "cp" || permission === "cp.all" || permission.startsWith("cp.");
+  });
+  const role = String(data?.role || "").toLowerCase();
+  return hasCpPermission || role === "owner" || role === "admin";
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("members");
@@ -121,8 +131,8 @@ const Dashboard = () => {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && data.permissions) {
-            setIsAdmin(data.permissions.includes("cp"));
+          if (data.success) {
+            setIsAdmin(hasControlPanelAccess(data));
           }
         }
       } catch (err) {

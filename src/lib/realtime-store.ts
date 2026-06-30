@@ -211,8 +211,8 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       found = true;
       const updated = { ...user } as any;
       for (const [key, value] of Object.entries(incoming)) {
-        // Only overwrite when incoming value is defined and not an empty string (avoid clobbering existing data)
-        if (value !== undefined && !(typeof value === 'string' && value === '')) {
+        const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl";
+        if (value !== undefined && (canBeEmpty || !(typeof value === 'string' && value === ''))) {
           updated[key] = value;
         }
       }
@@ -232,7 +232,8 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           if (sameSocket || sameUsername || sameId) {
             const updated = { ...u } as any;
             for (const [key, value] of Object.entries(incoming)) {
-              if (value !== undefined && !(typeof value === 'string' && value === '')) updated[key] = value;
+              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl";
+              if (value !== undefined && (canBeEmpty || !(typeof value === 'string' && value === ''))) updated[key] = value;
             }
             next[i] = updated;
             merged = true;

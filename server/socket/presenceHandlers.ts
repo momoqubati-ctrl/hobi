@@ -157,11 +157,17 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   const handleProfileUpdate = async (data: Record<string, any>) => {
     if (!data || typeof data !== "object") return;
 
-    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge"];
+    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl"];
     for (const key of allowedKeys) {
       if (typeof data[key] === "string") {
         const val = data[key].trim().slice(0, 255);
-        (socket.data.user as any)[key] = (key === "avatar" || key === "avatarUrl" || key === "avatarFrameUrl") ? normalizeMinioUrl(val) : val;
+        if (key === "avatarFrameUrl") {
+          (socket.data.user as any)[key] = val || "";
+        } else if (key === "avatar" || key === "avatarUrl") {
+          (socket.data.user as any)[key] = normalizeMinioUrl(val);
+        } else {
+          (socket.data.user as any)[key] = val;
+        }
       }
     }
 
@@ -216,6 +222,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         countryCode: user.countryCode,
         avatarFrameUrl: socket.data.user.avatarFrameUrl || "",
         giftIconUrl: socket.data.user.giftIconUrl || "",
+        memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
         messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
         roomId: socket.data.user.roomId || "",
         connectedAt: user.connectedAt,
@@ -244,8 +251,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       cover: socket.data.user.cover || "",
       profileCover: socket.data.user.cover || "",
       profileMsg: socket.data.user.profileMsg,
-      avatarFrameUrl: normalizeMinioUrl(socket.data.user.avatarFrameUrl || ""),
+      avatarFrameUrl: socket.data.user.avatarFrameUrl ? normalizeMinioUrl(socket.data.user.avatarFrameUrl) : "",
       giftIconUrl: socket.data.user.giftIconUrl || "",
+      memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
       messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
       roomId: socket.data.user.roomId || "",
       idreg: socket.data.user.idreg || user.idreg || "",
@@ -276,6 +284,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         countryCode: user.countryCode,
         avatarFrameUrl: socket.data.user.avatarFrameUrl || "",
         giftIconUrl: socket.data.user.giftIconUrl || "",
+        memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
         messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
         roomId: socket.data.user.roomId || "",
         connectedAt: user.connectedAt,

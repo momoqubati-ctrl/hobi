@@ -1,6 +1,16 @@
 import { io, Socket } from "socket.io-client";
+import { getDeviceId, getDeviceSignature } from "./deviceFingerprint";
 
 let socket: Socket | null = null;
+let cachedDeviceId = "";
+let cachedDeviceSignature = "";
+
+function initDeviceCache() {
+  cachedDeviceId = getDeviceId();
+  cachedDeviceSignature = getDeviceSignature();
+}
+
+initDeviceCache();
 
 function readSocketAuth(): Record<string, string> {
   try {
@@ -21,8 +31,10 @@ function readSocketAuth(): Record<string, string> {
       messageBubbleStyle: user.messageBubbleStyle || "default",
       idreg: typeof user.idreg === "string" ? user.idreg : user.idreg ? `#${user.idreg}` : "",
       siteBadge: typeof user.siteBadge === "string" ? user.siteBadge : "",
-      profileMsg: profileMsg,
+      profileMsg,
       statusMsg,
+      deviceFingerprint: cachedDeviceId,
+      deviceSignature: cachedDeviceSignature,
     };
   } catch {
     return {};
@@ -66,7 +78,6 @@ export function logoutSocket(): void {
       socket.emit("user_logout");
     } catch {}
     socket.removeAllListeners();
-    socket.off();
     socket.disconnect();
     socket = null;
   }

@@ -13,6 +13,7 @@ type RedisCommandClient = {
   hset: (...args: any[]) => Promise<number>;
   incr: (...args: any[]) => Promise<number>;
   incrby: (...args: any[]) => Promise<number>;
+  keys: (...args: any[]) => Promise<string[]>;
   lpush: (...args: any[]) => Promise<number>;
   ltrim: (...args: any[]) => Promise<string>;
   publish: (...args: any[]) => Promise<number>;
@@ -38,6 +39,7 @@ function createNoopRedis(): RedisCommandClient {
     hset: async () => 0,
     incr: async () => 1,
     incrby: async () => 0,
+    keys: async () => [],
     lpush: async () => 0,
     ltrim: async () => "OK",
     publish: async () => 0,

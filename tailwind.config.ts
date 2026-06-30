@@ -62,6 +62,20 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        bubble: "#e86a6a",
+      },
+      fontSize: {
+        xs: ["0.80rem", { lineHeight: "1.5rem" }],
+      },
+      width: {
+        4: "1rem",
+        11: "3rem",
+        12: "3.5rem",
+      },
+      height: {
+        4: "1rem",
+        11: "3rem",
+        12: "3.5rem",
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -234,7 +234,7 @@ const GiftStore = () => {
                     }`}
                     onClick={() => setSelectedRecipient(user)}
                   >
-                    <Avatar className="w-8 h-8 rounded-lg">
+                    <Avatar className="w-11 h-11 rounded-lg">
                       <AvatarImage src={user.avatar || user.pic || "/pic.png"} />
                       <AvatarFallback className="text-[10px]">{(user.name || user.username)?.[0]}</AvatarFallback>
                     </Avatar>

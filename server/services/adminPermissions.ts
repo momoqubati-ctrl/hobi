@@ -1,42 +1,14 @@
-import { dbPool } from "../db";
 import { getAdminContext } from "./adminAccess";
 import { H3Event, setResponseStatus } from "h3";
+import { hasPermission as engineHasPermission, PermissionKey } from "./permissionEngine";
 
-export type AdminPermission = 
-  | "ban" 
-  | "setpower" 
-  | "edituser" 
-  | "roomowner" 
-  | "flter" 
-  | "msgs" 
-  | "shrt" 
-  | "brbbot" 
-  | "owner"
-  | "cp";
+export type AdminPermission = PermissionKey;
 
 /**
  * يتحقق مما إذا كان المشرف يملك صلاحية معينة
  */
 export const hasPermission = async (userId: string, permission: AdminPermission): Promise<boolean> => {
-  try {
-    // الحصول على رتبة المستخدم وصلاحياتها
-    const result = await dbPool.query(
-      `SELECT rp.permission_value 
-       FROM user_role_assignments ura
-       JOIN role_permissions rp ON rp.role_id = ura.role_id
-       WHERE ura.user_idreg = (SELECT idreg FROM users WHERE CAST(idreg AS text) = $1 OR CAST(id AS text) = $2 OR CAST(uid AS text) = $2 LIMIT 1)
-       AND rp.permission_key = $3`,
-      [String(userId), String(userId), permission]
-    );
-
-    if (result.rowCount === 0) return false;
-    
-    const val = result.rows[0].permission_value;
-    return val === true || val === 1 || val === "1";
-  } catch (error) {
-    console.error("Permission check error:", error);
-    return false;
-  }
+  return engineHasPermission(userId, permission as any);
 };
 
 /**
@@ -71,6 +43,7 @@ export const logAdminAudit = async (params: {
   targetId?: string;
   metadata?: any;
 }) => {
+  const { dbPool } = await import("../db");
   try {
     await dbPool.query(
       `INSERT INTO admin_audit_logs (actor_id, action, target_type, target_id, metadata)

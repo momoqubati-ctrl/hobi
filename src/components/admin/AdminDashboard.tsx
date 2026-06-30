@@ -8,13 +8,19 @@ import { LEGACY_CP_SECTIONS, getSectionTranslation, getFieldLanguage } from './c
 import OverviewSection from './sections/OverviewSection';
 import UsersSection from './sections/UsersSection';
 import RoomsSection from './sections/RoomsSection';
-import RolesSection from './sections/RolesSection';
+import PermissionsMatrix from './powers/PermissionsMatrix';
 import EventsSection from './sections/EventsSection';
 import SettingsSection from './sections/SettingsSection';
 import DatabaseSection from './sections/DatabaseSection';
 import BotsAdminSection from './sections/BotsAdminSection';
 import FiltersAdminSection from './sections/FiltersAdminSection';
 import StickersSection from './sections/StickersSection';
+import SwiperBannersSection from './sections/SwiperBannersSection';
+import ProfileFramesSection from './sections/ProfileFramesSection';
+import MemberCardThemesSection from './sections/MemberCardThemesSection';
+import RoomBadgesSection from './sections/RoomBadgesSection';
+import IconsSection from './sections/IconsSection';
+import GiftsSection from './sections/GiftsSection';
 import AnimatedFacesSection from './sections/AnimatedFacesSection';
 import LegacyCpSection from './sections/LegacyCpSection';
 
@@ -57,7 +63,7 @@ const AdminDashboard = ({ section }: AdminDashboardProps) => {
       case "rooms":
         return <RoomsSection />;
       case "roles":
-        return <RolesSection />;
+        return <PermissionsMatrix />;
       case "events":
         return <ModerationSection />;
       case "actions":
@@ -74,6 +80,18 @@ const AdminDashboard = ({ section }: AdminDashboardProps) => {
         return <FiltersAdminSection />;
       case "stickers":
         return <StickersSection />;
+      case "swiperbanners":
+        return <SwiperBannersSection />;
+      case "profileframes":
+        return <ProfileFramesSection />;
+      case "membercardtheme":
+        return <MemberCardThemesSection />;
+      case "roomBadges":
+        return <RoomBadgesSection />;
+      case "icons":
+        return <IconsSection />;
+      case "gifts":
+        return <GiftsSection />;
       case "animatedfaces":
         return <AnimatedFacesSection />;
       case "hostin":

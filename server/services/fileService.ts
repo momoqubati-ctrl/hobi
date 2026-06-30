@@ -52,7 +52,7 @@ const saveFileToStorage = async (userId: string, extension: string, buffer: Buff
 
   if (isMinioEnabled()) {
     const contentType = MIME_MAP[extension] || "application/octet-stream";
-    const url = await uploadToMinio(`files/${filename}`, buffer, contentType);
+    const url = await uploadToMinio(`uploads/files/${filename}`, buffer, contentType);
     if (url) return `uploads/files/${filename}`;
   }
 

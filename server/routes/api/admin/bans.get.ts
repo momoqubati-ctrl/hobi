@@ -22,6 +22,8 @@ export default defineEventHandler(async (event) => {
         decoder_code as "value",
         ip_address as "ip",
         device_fingerprint as "fingerprint",
+        device_signature as "deviceSignature",
+        reason,
         country_code as "country",
         expires_label as "duration",
         expires_at as "expiresAt",

@@ -86,11 +86,11 @@ const CommentThread = ({
     <div className={`${depth > 0 ? "mr-6 border-r-2 border-slate-200 pr-3" : ""} ${comment.isOptimistic ? "opacity-75" : ""}`}>
       <div className="flex gap-2 py-2">
         <Avatar
-          className="w-6 h-6 rounded-lg shrink-0 cursor-pointer transition hover:scale-110"
+          className="w-11 h-11 rounded-lg shrink-0 cursor-pointer transition hover:scale-110"
           onClick={() => onOpenProfile?.(comment.author.id || comment.author.name)}
         >
           <AvatarImage src={comment.author.avatar} />
-          <AvatarFallback className="text-[9px]">{comment.author.name?.[0]}</AvatarFallback>
+          <AvatarFallback className="text-[10px]">{comment.author.name?.[0]}</AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
@@ -104,7 +104,7 @@ const CommentThread = ({
               {new Date(comment.createdAt).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
-          <p className="text-[11px] text-foreground leading-relaxed mt-0.5" dir="rtl">
+          <p className="text-xs text-foreground leading-relaxed mt-0.5" dir="rtl">
             {comment.body}
           </p>
           <div className="flex items-center gap-2 mt-1">
@@ -327,9 +327,9 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
 
           {currentUser && (
             <div className="flex gap-1.5 mt-2 pt-2 border-t">
-              <Avatar className="w-6 h-6 rounded-lg shrink-0">
+              <Avatar className="w-11 h-11 rounded-lg shrink-0">
                 <AvatarImage src={currentUser.avatar || "/pic.png"} />
-                <AvatarFallback className="text-[9px]">{currentUser.name?.[0]}</AvatarFallback>
+                <AvatarFallback className="text-[10px]">{currentUser.name?.[0]}</AvatarFallback>
               </Avatar>
               <Input
                 placeholder="اكتب تعليقاً..."

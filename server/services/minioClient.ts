@@ -6,7 +6,10 @@ const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || "minioadmin";
 const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || "minioadmin";
 const MINIO_USE_SSL = process.env.MINIO_USE_SSL === "true";
 const MINIO_BUCKET = process.env.MINIO_BUCKET || "serene-panda";
-const MINIO_PUBLIC_URL = process.env.MINIO_PUBLIC_URL || `/minio`;
+
+const protocol = MINIO_USE_SSL ? "https" : "http";
+const defaultPublicUrl = `${protocol}://${MINIO_ENDPOINT}:${MINIO_PORT}/${MINIO_BUCKET}`;
+const MINIO_PUBLIC_URL = process.env.MINIO_PUBLIC_URL || defaultPublicUrl;
 
 let client: Client | null = null;
 let enabled = false;

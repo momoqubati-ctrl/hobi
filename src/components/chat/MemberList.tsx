@@ -28,6 +28,7 @@ type OnlineMember = {
   countryCode: string;
   avatarFrameUrl?: string;
   giftIconUrl?: string;
+  memberCardBgUrl?: string;
   roomId?: string;
   status?: string;
   idreg?: string;
@@ -114,6 +115,7 @@ const getCurrentMember = () => {
             : "/pich.png",
       profileThemeId: typeof user.profileThemeId === "string" ? user.profileThemeId : "",
       avatarFrameUrl: typeof user.avatarFrameUrl === "string" ? user.avatarFrameUrl : "",
+      memberCardBgUrl: typeof user.memberCardBgUrl === "string" ? user.memberCardBgUrl : "",
       giftIconUrl:
         typeof user.giftIconUrl === "string" && user.giftIconUrl.trim()
           ? user.giftIconUrl
@@ -159,6 +161,12 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
 
   const [profileTrigger, setProfileTrigger] = useState(0);
   const currentMember = useMemo(() => getCurrentMember(), [profileTrigger]);
+
+  useEffect(() => {
+    const handler = () => setProfileTrigger((p) => p + 1);
+    window.addEventListener("frame-updated", handler);
+    return () => window.removeEventListener("frame-updated", handler);
+  }, []);
 
   // Sync isConnected status with actual socket state
   useEffect(() => {
@@ -317,6 +325,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         rep: 0,
         avatar: user.avatar || user.avatarUrl || "/pic.png",
         avatarFrameUrl: user.avatarFrameUrl || "",
+        memberCardBgUrl: user.memberCardBgUrl || "",
         giftIconUrl: user.giftIconUrl || "",
         idreg: idregVal,
         siteBadge: user.siteBadge || "",
@@ -380,34 +389,39 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
             key={`${getMemberIdentity(member)}-${member.id || index}`} 
             onClick={() => onOpenProfile?.(member.id)}
             className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-all cursor-pointer border-b border-border/50 [direction:ltr]"
+            style={member.memberCardBgUrl ? (
+              member.memberCardBgUrl.startsWith("#")
+                ? { backgroundColor: member.memberCardBgUrl, backgroundBlendMode: "overlay" }
+                : { backgroundImage: `url(${member.memberCardBgUrl})`, backgroundSize: "cover", backgroundPosition: "center" }
+            ) : undefined}
           >
             <div className="relative shrink-0">
               <div
-                className="relative grid h-12 w-12 place-items-center rounded-full"
+                className="relative grid h-[4.3rem] w-[4.3rem] place-items-center rounded-full"
                 style={member.avatarFrameUrl ? { backgroundImage: `url(${member.avatarFrameUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
               >
-                <Avatar className="w-12 h-12 rounded-full border-2 border-background shadow-sm">
+                <Avatar className="w-[3.7rem] h-[3.7rem] rounded-full border-2 border-background shadow-sm">
                   <AvatarImage src={member.avatar} />
                   <AvatarFallback>{member.name[0]}</AvatarFallback>
                 </Avatar>
+                {/* Status Dot with pulse animation */}
+                <span
+                  className="absolute bottom-1.5 right-1.5 flex items-center justify-center w-4 h-4"
+                  title={statusCfg.label}
+                  aria-label={statusCfg.label}
+                >
+                  {member.status === "online" && (
+                    <span className={`absolute inline-flex h-full w-full rounded-full ${statusCfg.pulseColor} opacity-50 animate-ping`} />
+                  )}
+                  <span className={`relative inline-flex w-3.5 h-3.5 rounded-full border-2 border-background ${statusCfg.color} transition-colors duration-300`} />
+                </span>
               </div>
-              {/* Status Dot with pulse animation */}
-              <span
-                className="absolute bottom-0 right-0 flex items-center justify-center w-4 h-4"
-                title={statusCfg.label}
-                aria-label={statusCfg.label}
-              >
-                {member.status === "online" && (
-                  <span className={`absolute inline-flex h-full w-full rounded-full ${statusCfg.pulseColor} opacity-50 animate-ping`} />
-                )}
-                <span className={`relative inline-flex w-3.5 h-3.5 rounded-full border-2 border-background ${statusCfg.color} transition-colors duration-300`} />
-              </span>
             </div>
 
             <div className="flex-1 min-w-0 text-left">
               <div className="flex items-center justify-between mb-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className={`font-black text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl' }}>{member.name}</span>
+                  <span className={`font-bold text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl' }}>{member.name}</span>
                   {member.siteBadge && (
                     <Badge className="h-3.5 text-[8px] px-1 bg-blue-600 text-white border-none rounded-sm font-black">
                       {member.siteBadge}

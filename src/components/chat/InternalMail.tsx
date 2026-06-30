@@ -141,7 +141,7 @@ const InternalMail = () => {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div className="flex items-center gap-3">
-            <Avatar className="w-10 h-10 rounded-xl">
+            <Avatar className="w-11 h-11 rounded-xl">
               <AvatarImage src={avatar || "/pic.png"} />
               <AvatarFallback className="rounded-xl">{(name || "?")[0]}</AvatarFallback>
             </Avatar>
@@ -237,7 +237,7 @@ const InternalMail = () => {
                     } ${mail.isOptimistic ? "opacity-70" : ""}`}
                     onClick={() => setSelectedMail(mail)}
                   >
-                    <Avatar className="w-9 h-9 rounded-xl shrink-0">
+                    <Avatar className="w-11 h-11 rounded-xl shrink-0">
                       <AvatarImage src={avatar || "/pic.png"} />
                       <AvatarFallback className="rounded-xl">{(name || "?")[0]}</AvatarFallback>
                     </Avatar>
@@ -356,7 +356,7 @@ const ComposeForm = ({ preselectedUser, onSend, onCancel }: {
                   className="flex items-center gap-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                   onClick={() => setSelectedUser(u)}
                 >
-                  <Avatar className="w-8 h-8 rounded-lg">
+                  <Avatar className="w-11 h-11 rounded-lg">
                     <AvatarImage src={u.pic || "/pic.png"} />
                     <AvatarFallback className="rounded-lg">{(u.username || "?")[0]}</AvatarFallback>
                   </Avatar>
@@ -367,7 +367,7 @@ const ComposeForm = ({ preselectedUser, onSend, onCancel }: {
           </div>
         ) : (
           <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-100 dark:bg-slate-800">
-            <Avatar className="w-8 h-8 rounded-lg">
+            <Avatar className="w-11 h-11 rounded-lg">
               <AvatarImage src={selectedUser.pic || "/pic.png"} />
               <AvatarFallback className="rounded-lg">{(selectedUser.username || "?")[0]}</AvatarFallback>
             </Avatar>

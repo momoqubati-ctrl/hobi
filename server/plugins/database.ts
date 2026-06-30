@@ -1,4 +1,5 @@
-import { runAutoMigrations, verifyDatabaseSchema } from "../db/migrate";
+import { runAutoMigrations, verifyDatabaseSchema, ensureRoomBadgesColumns } from "../db/migrate";
+import { redis } from "../services/redis";
 
 let migrationDone = false;
 
@@ -19,6 +20,19 @@ export default (nitroApp: any) => {
         }
       } else if (process.env.MIGRATION_LOGS === "1") {
         console.log("[DB] ✅ المخطط مكتمل ولا توجد جداول ناقصة");
+      }
+
+      // تحديث جدول شارات الغرف بغض النظر عن حالة الترحيل
+      await ensureRoomBadgesColumns();
+
+      // مسح كاش الصلاحيات عند بدء التشغيل
+      try {
+        const keys = await redis.keys("permissions:*");
+        if (keys.length > 0) {
+          await redis.del(...keys);
+        }
+      } catch (cacheErr) {
+        // قد لا يكون Redis متاحاً
       }
     } catch (error) {
       console.warn("[DB] ⚠️ فشل فحص أو ترحيل المخطط:", error);

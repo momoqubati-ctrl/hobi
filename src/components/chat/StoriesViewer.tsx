@@ -46,7 +46,7 @@ const StoriesViewer = () => {
             
             <div className="absolute top-2 right-2">
               <div className={`p-0.5 rounded-full border-2 ${story.viewed ? 'border-slate-400' : 'border-primary'}`}>
-                <Avatar className="w-8 h-8 border border-black/20">
+                <Avatar className="w-11 h-11 border border-black/20">
                   <AvatarImage src={story.avatar} />
                   <AvatarFallback>{story.user[0]}</AvatarFallback>
                 </Avatar>

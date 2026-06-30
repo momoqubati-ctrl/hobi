@@ -660,13 +660,13 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
 
       <div className="p-3">
         <div className="flex gap-2 mb-3">
-          <Avatar className="w-9 h-9 rounded-lg">
+          <Avatar className="w-11 h-11 rounded-lg">
             <AvatarImage src={currentUser?.avatar || "/pic.png"} />
             <AvatarFallback>{currentUser?.name?.[0]}</AvatarFallback>
           </Avatar>
           <Input
             placeholder="بماذا تفكر؟"
-            className="flex-1 bg-slate-100 border-none h-9 text-[11px] font-medium"
+            className="flex-1 bg-slate-100 border-none h-9 text-xs font-medium"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSubmit()}
@@ -1006,7 +1006,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                 <CardHeader className="p-3 flex-row items-center justify-between space-y-0">
                   <div className="flex items-center gap-2">
                     <Avatar
-                      className="w-9 h-9 rounded-lg border border-border cursor-pointer transition hover:scale-105"
+                      className="w-11 h-11 rounded-lg border border-border cursor-pointer transition hover:scale-105"
                       onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
                     >
                       <AvatarImage src={post.author?.avatar || "/pic.png"} />
@@ -1014,7 +1014,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                     </Avatar>
                     <div dir="rtl">
                       <h4
-                        className="font-black text-[11px] text-foreground cursor-pointer hover:underline"
+                        className="font-black text-xs text-foreground cursor-pointer hover:underline"
                         onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
                       >
                         {post.author?.name}
@@ -1029,7 +1029,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                   </Button>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="px-3 pb-2 text-[11px] text-foreground leading-relaxed font-medium break-words" dir="rtl">
+                  <div className="px-3 pb-2 text-xs text-foreground leading-relaxed font-medium break-words" dir="rtl">
                     {renderTextWithFaces(post.body || "", post.animatedFaces)}
                   </div>
                   {post.body && findYouTubeLinks(post.body).map((link) => (

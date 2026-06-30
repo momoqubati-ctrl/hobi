@@ -3,6 +3,8 @@ import { normalizeCountryCode } from "./countries";
 import { AuthRole, createUserProfileDefaults, UserProfileDefaults } from "./userProfileDefaults";
 import { canUseDatabaseAuth, createPersistedUser, findPersistedUserByUsername, PersistedUser } from "./userRepository";
 import { addSharedUser } from "./sharedUserStore";
+import { checkBan } from "./banCheck";
+import { dbPool } from "../db";
 
 type StoredUser = {
   id: string;
@@ -108,9 +110,46 @@ const persistedToStoredUser = (user: PersistedUser): StoredUser => ({
   createdAt: user.createdAt,
 });
 
-export const createGuestSession = (displayName?: string, countryCode?: string) => {
+function storeDeviceInfo(userId: string, ip?: string, deviceFingerprint?: string, deviceSignature?: string) {
+  if (!userId) return;
+  const fields: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (ip) {
+    fields.push(`"ip" = $${idx++}`);
+    values.push(ip);
+  }
+  if (deviceFingerprint) {
+    fields.push(`"fp" = $${idx++}`);
+    values.push(deviceFingerprint);
+  }
+  if (deviceSignature) {
+    fields.push(`"device_signature" = $${idx++}`);
+    values.push(deviceSignature);
+  }
+  if (fields.length === 0) return;
+
+  values.push(userId);
+  dbPool.query(
+    `UPDATE "users" SET ${fields.join(", ")} WHERE "id" = $${idx} OR "uid" = $${idx} OR CAST("idreg" AS text) = $${idx}`,
+    values,
+  ).catch((err) => console.error("[authService] Failed to store device info:", err));
+}
+
+export const createGuestSession = async (displayName?: string, countryCode?: string, clientIp?: string, deviceFingerprint?: string, deviceSignature?: string) => {
   const name = displayName?.trim().slice(0, 40) || `زائر ${Math.floor(1000 + Math.random() * 9000)}`;
   const normalizedCountryCode = normalizeCountryCode(countryCode);
+
+  const banCheck = await checkBan({
+    username: name,
+    ip: clientIp,
+    deviceFingerprint,
+    deviceSignature,
+  });
+  if (banCheck.banned) {
+    throw Object.assign(new Error("تم حظرك من الموقع"), { code: "BANNED" });
+  }
 
   const user: StoredUser = {
     id: randomUUID(),
@@ -121,6 +160,7 @@ export const createGuestSession = (displayName?: string, countryCode?: string) =
     profile: createUserProfileDefaults("guest"),
     createdAt: new Date().toISOString(),
   };
+  storeDeviceInfo(user.id, clientIp, deviceFingerprint, deviceSignature);
 
   // تخزين الضيوف في الذاكرة لإتاحة فتح بروفايلهم لاحقاً
   usersByUsername.set(user.username, user);
@@ -138,7 +178,7 @@ export const createGuestSession = (displayName?: string, countryCode?: string) =
   return issueSession(user);
 };
 
-export const registerMember = async (input: { username: string; password: string; displayName?: string; countryCode?: string }) => {
+export const registerMember = async (input: { username: string; password: string; displayName?: string; countryCode?: string; clientIp?: string; deviceFingerprint?: string; deviceSignature?: string }) => {
   const username = normalizeUsername(input.username);
   const persistedUser = await findPersistedUserByUsername(username);
   if (persistedUser || usersByUsername.has(username)) {
@@ -166,6 +206,7 @@ export const registerMember = async (input: { username: string; password: string
 
     if (persisted) {
       const storedUser = persistedToStoredUser(persisted);
+      storeDeviceInfo(storedUser.id, input.clientIp, input.deviceFingerprint, input.deviceSignature);
       addSharedUser({
         id: storedUser.id,
         username: storedUser.username,
@@ -211,8 +252,22 @@ export const registerMember = async (input: { username: string; password: string
   };
 };
 
-export const loginMember = async (input: { username: string; password: string; countryCode?: string }) => {
+export const loginMember = async (input: { username: string; password: string; countryCode?: string; clientIp?: string; deviceFingerprint?: string; deviceSignature?: string }) => {
   const username = normalizeUsername(input.username);
+
+  const banCheck = await checkBan({
+    username,
+    ip: input.clientIp,
+    deviceFingerprint: input.deviceFingerprint,
+    deviceSignature: input.deviceSignature,
+  });
+  if (banCheck.banned) {
+    return {
+      ok: false as const,
+      code: "BANNED",
+      message: "تم حظرك من الموقع. لا يمكنك تسجيل الدخول.",
+    };
+  }
 
   // 1. Try database first
   const persisted = await findPersistedUserByUsername(username);
@@ -228,6 +283,7 @@ export const loginMember = async (input: { username: string; password: string; c
     if (input.countryCode) {
       user.countryCode = normalizeCountryCode(input.countryCode);
     }
+    storeDeviceInfo(user.id, input.clientIp, input.deviceFingerprint, input.deviceSignature);
     return {
       ok: true as const,
       session: issueSession(user),
@@ -241,6 +297,7 @@ export const loginMember = async (input: { username: string; password: string; c
       if (input.countryCode) {
         user.countryCode = normalizeCountryCode(input.countryCode);
       }
+      storeDeviceInfo(user.id, input.clientIp, input.deviceFingerprint, input.deviceSignature);
       return {
         ok: true as const,
         session: issueSession(user),

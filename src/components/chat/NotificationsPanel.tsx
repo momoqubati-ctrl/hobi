@@ -182,7 +182,7 @@ const NotificationsList = ({ compact, onClose }: NotificationsListProps) => {
                   }`}
                   onClick={() => { if (!isRead) handleMarkRead(n.id); }}
                 >
-                  <Avatar className="w-9 h-9 rounded-xl shrink-0">
+                  <Avatar className="w-11 h-11 rounded-xl shrink-0">
                     <AvatarImage src={onlineUsers.find(u => String(u.id) === String(n.actorId))?.avatar || n.actor?.avatar || "/pic.png"} />
                     <AvatarFallback className="rounded-xl text-[10px]">{n.actor?.name?.[0]}</AvatarFallback>
                   </Avatar>

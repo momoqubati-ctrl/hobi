@@ -24,7 +24,8 @@ import {
   Sun,
   Circle,
   Camera,
-  Loader2
+  Loader2,
+  ChevronRight
 } from 'lucide-react';
 import {
   Dialog,
@@ -36,6 +37,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { showSuccess, showError } from "@/utils/toast";
+import FrameSelector from "./FrameSelector";
+import MemberCardBgSelector from "./MemberCardBgSelector";
 
 type PresenceStatus = "online" | "busy" | "away";
 
@@ -52,6 +55,7 @@ const SettingsPanel = () => {
   const [updateTrigger, setUpdateTrigger] = useState(0);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showFrameSelector, setShowFrameSelector] = useState(false);
 
   const [newAvatar, setNewAvatar] = useState<string | null>(null);
   const [newCover, setNewCover] = useState<string | null>(null);
@@ -280,6 +284,22 @@ const SettingsPanel = () => {
     navigate("/", { replace: true });
   };
 
+  if (showFrameSelector) {
+    return (
+      <div className="p-4 pb-24 overflow-y-auto h-full space-y-6">
+        <div className="flex items-center gap-2 mb-4">
+          <button onClick={() => setShowFrameSelector(false)} className="p-1 rounded-lg hover:bg-muted transition">
+            <ChevronRight size={20} />
+          </button>
+          <h4 className="text-sm font-bold">الألوان والثيمات</h4>
+        </div>
+        <FrameSelector onClose={() => setShowFrameSelector(false)} />
+        <hr className="border-border/50" />
+        <MemberCardBgSelector onClose={() => setShowFrameSelector(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 space-y-4 pb-24 overflow-y-auto h-full">
       {/* Profile Summary */}
@@ -384,7 +404,7 @@ const SettingsPanel = () => {
       <div className="space-y-3">
         <h4 className="text-xs font-bold text-muted-foreground px-2 uppercase tracking-wider">الحساب والخصوصية</h4>
         <SettingsItem icon={<User size={20} className="text-blue-500" />} label="تعديل الملف الشخصي" onClick={openEditModal} />
-        <SettingsItem icon={<Palette size={20} className="text-purple-500" />} label="الألوان والثيمات" />
+        <SettingsItem icon={<Palette size={20} className="text-purple-500" />} label="الألوان والثيمات" onClick={() => setShowFrameSelector(true)} />
         <SettingsItem icon={<ShieldCheck size={20} className="text-green-500" />} label="إعدادات الخصوصية" />
         <SettingsItem icon={<Bell size={20} className="text-amber-500" />} label="التنبيهات والإشعارات" />
       </div>

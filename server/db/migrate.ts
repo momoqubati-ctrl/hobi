@@ -49,6 +49,9 @@ export async function runAutoMigrations() {
       WHERE "id" IS NULL OR "id"::text = '';
     `);
 
+    // Ensure idreg exists before duplicate-id cleanup below references it.
+    await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "idreg" integer;`);
+
     // 5. حل مشكلة قيم id المكررة (توليد UUID جديد للمكررات فقط والإبقاء على نسخة واحدة)
     await client.query(`
       UPDATE "users" u
@@ -91,6 +94,7 @@ export async function runAutoMigrations() {
       ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lid" varchar(40);
       ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "ip" varchar(45);
       ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "fp" text;
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "device_signature" text;
       ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "documentationc" boolean DEFAULT false;
       ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "muted" integer DEFAULT 0;
     `);
@@ -147,7 +151,28 @@ export async function runAutoMigrations() {
               ALTER TABLE "users" ADD CONSTRAINT "users_id_unique" UNIQUE ("id");
           END IF;
       END $$;
+    `).catch((e: any) => console.warn("[Migration] ⚠️ تحذير: فشل إضافة unique constraint (قد يكون موجوداً مسبقاً):", e.message));
+
+    // --- 0. جدول moderation_bans (الحظر) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "moderation_bans" (
+        "id" SERIAL PRIMARY KEY,
+        "target_name" varchar(255),
+        "ban_type" varchar(50) NOT NULL,
+        "decoder_code" text,
+        "ip_address" varchar(45),
+        "device_fingerprint" text,
+        "device_signature" text,
+        "country_code" varchar(10),
+        "expires_at" timestamptz,
+        "expires_label" varchar(50) DEFAULT 'دائم',
+        "is_active" boolean DEFAULT true,
+        "created_by" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+        "created_at" timestamptz DEFAULT now()
+      );
     `);
+    await client.query(`ALTER TABLE "moderation_bans" ADD COLUMN IF NOT EXISTS "device_signature" text;`);
+    await client.query(`ALTER TABLE "moderation_bans" ADD COLUMN IF NOT EXISTS "reason" text;`);
 
     // --- 1. جدول user_profiles ---
     await client.query(`
@@ -216,6 +241,7 @@ export async function runAutoMigrations() {
       ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "documents" boolean DEFAULT false;
       ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "room_id" varchar(128);
       ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "updated_at" timestamptz DEFAULT now();
+      ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "member_card_bg_url" text;
     `);
 
     // إنشاء سجل بروفايل فارغ لكل مستخدم ليس لديه بروفايل بعد
@@ -624,20 +650,39 @@ export async function runAutoMigrations() {
       ON CONFLICT ("key") DO NOTHING;
     `);
 
+    // --- GIFT CATEGORIES ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "gift_categories" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(100) NOT NULL,
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
     // --- GIFTS ---
     await client.query(`
       CREATE TABLE IF NOT EXISTS "gift_catalog" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "name" varchar(120) NOT NULL,
-        "icon" varchar(20) NOT NULL,
+        "icon" text NOT NULL,
         "price" integer NOT NULL,
+        "category_id" uuid REFERENCES "gift_categories"("id") ON DELETE SET NULL,
         "category" varchar(40) DEFAULT 'common' NOT NULL,
         "is_active" boolean DEFAULT true NOT NULL,
         "created_at" timestamptz DEFAULT now() NOT NULL
       );
     `);
+    // تعديل الجدول الموجود: تغيير نوع icon إلى text لدعم روابط الصور
+    await client.query(`ALTER TABLE "gift_catalog" ALTER COLUMN "icon" TYPE text USING "icon"::text;`).catch((e: any) => console.warn("[Migration] تحذير: فشل تغيير نوع icon:", e.message));
+    // إضافة عمود category_id إذا لم يكن موجوداً
+    await client.query(`ALTER TABLE "gift_catalog" ADD COLUMN IF NOT EXISTS "category_id" uuid REFERENCES "gift_categories"("id") ON DELETE SET NULL;`).catch((e: any) => console.warn("[Migration] تحذير: فشل إضافة category_id:", e.message));
 
     // بذر الهدايا الافتراضية
+    await client.query(`
+      INSERT INTO "gift_categories" ("name") SELECT 'عام' WHERE NOT EXISTS (SELECT 1 FROM "gift_categories" WHERE "name" = 'عام');
+    `);
     await client.query(`
       INSERT INTO "gift_catalog" ("name", "icon", "price", "category") VALUES
         ('وردة حمراء', '🌹', 10, 'common'),
@@ -811,6 +856,87 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "stickers_category_idx" ON "stickers" ("category_id");
     `);
 
+    // ========== جدول الايقونات ==========
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول الايقونات...");
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "icons" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(200) DEFAULT '',
+        "image_url" text NOT NULL,
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
+    // ========== جدول بنرات السوابر ==========
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول بنرات السوابر...");
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "swiper_banners" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(200) DEFAULT '',
+        "image_url" text NOT NULL,
+        "link" text DEFAULT '',
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
+    // ========== جدول اطارات صورة البروفايل ==========
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول اطارات صورة البروفايل...");
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "profile_frames" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(200) DEFAULT '',
+        "image_url" text NOT NULL,
+        "link" text DEFAULT '',
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
+    // ========== جدول ثيم بطاقة العضو ==========
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول ثيم بطاقة العضو...");
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "member_card_themes" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(200) DEFAULT '',
+        "image_url" text NOT NULL,
+        "link" text DEFAULT '',
+        "sort_order" integer DEFAULT 0,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
+    // ========== جدول شارات الغرف (للتثبيت الجديد فقط) ==========
+    if (process.env.MIGRATION_LOGS === "1") {
+      console.log("[Migration] جاري إنشاء جدول شارات الغرف...");
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "room_badges" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(200) DEFAULT '',
+        "power" integer DEFAULT 0,
+        "icon" text DEFAULT '',
+        "bg" text DEFAULT '',
+        "bg_type" varchar(20) DEFAULT 'static',
+        "is_active" boolean DEFAULT true,
+        "sort_order" integer DEFAULT 0,
+        "created_at" timestamptz DEFAULT now()
+      );
+    `);
+
     // ========== جداول الفيسات المتحركة ==========
     if (process.env.MIGRATION_LOGS === "1") {
       console.log("[Migration] جاري إنشاء جدول الفيسات المتحركة...");
@@ -922,6 +1048,7 @@ export async function verifyDatabaseSchema() {
     "event_snapshots",
     "event_replays",
     "rooms",
+    "moderation_bans",
     "moderation_events",
     "site_settings",
     "chat_bots",
@@ -936,6 +1063,7 @@ export async function verifyDatabaseSchema() {
     "stories",
     "story_views",
     "story_reactions",
+    "gift_categories",
     "gift_catalog",
     "gift_transactions",
     "private_messages",
@@ -945,7 +1073,12 @@ export async function verifyDatabaseSchema() {
     "notifications",
     "sticker_categories",
     "stickers",
+    "room_badges",
     "animated_faces",
+    "swiper_banners",
+    "profile_frames",
+    "member_card_themes",
+    "icons",
     "bars",
     "bar_comments",
     "bars_likes",
@@ -967,6 +1100,29 @@ export async function verifyDatabaseSchema() {
       existingTables,
       missingTables,
     };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * تأكد من وجود الاعمدة الجديدة في جدول شارات الغرف
+ * تعمل بشكل مستقل عن auto-migration لتحديث الجدول القديم
+ */
+export async function ensureRoomBadgesColumns() {
+  const client = await dbPool.connect();
+  try {
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "power" integer DEFAULT 0;`);
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "icon" text DEFAULT '';`);
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "bg" text DEFAULT '';`);
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "bg_type" varchar(20) DEFAULT 'static';`);
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "is_active" boolean DEFAULT true;`);
+    await client.query(`ALTER TABLE "room_badges" ADD COLUMN IF NOT EXISTS "sort_order" integer DEFAULT 0;`);
+    await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='room_badges' AND column_name='icon_url') THEN ALTER TABLE "room_badges" RENAME COLUMN "icon_url" TO "icon"; END IF; END $$;`);
+    await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='room_badges' AND column_name='background') THEN ALTER TABLE "room_badges" RENAME COLUMN "background" TO "bg"; END IF; END $$;`);
+    await client.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='room_badges' AND column_name='background_type') THEN ALTER TABLE "room_badges" RENAME COLUMN "background_type" TO "bg_type"; END IF; END $$;`);
+  } catch (err) {
+    // تجاهل الخطأ: الجدول قد لا يكون موجوداً اصلاً
   } finally {
     client.release();
   }

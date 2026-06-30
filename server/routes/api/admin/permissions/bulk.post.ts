@@ -5,7 +5,7 @@ import { invalidatePermissionCache } from "../../../../services/permissionEngine
 
 export default defineEventHandler(async (event) => {
   try {
-    const admin = await guardAdminAction(event, "setpower");
+    const admin = await guardAdminAction(event, "admin_roles.all");
     const body = await readBody(event);
     const { matrix } = body;
 
@@ -23,8 +23,8 @@ export default defineEventHandler(async (event) => {
       for (const [key, value] of Object.entries(perms as any)) {
         if (value === true || value === 1) {
           await dbPool.query(
-            "INSERT INTO role_permissions (role_id, permission_key, permission_value) VALUES ($1, $2, true)",
-            [roleId, key]
+            "INSERT INTO role_permissions (role_id, permission_key, permission_value) VALUES ($1, $2, $3::jsonb)",
+            [roleId, key, JSON.stringify(true)]
           );
         }
       }
@@ -40,8 +40,15 @@ export default defineEventHandler(async (event) => {
 
     await dbPool.query("COMMIT");
     
-    // تفريغ الكاش لضمان تطبيق التغييرات فوراً
-    invalidatePermissionCache();
+    // تفريغ كاش كل المستخدمين المتأثرين
+    const roleIds = Object.keys(matrix);
+    const usersRes = await dbPool.query(
+      "SELECT DISTINCT user_id FROM user_role_assignments WHERE role_id = ANY($1::uuid[])",
+      [roleIds]
+    );
+    for (const row of usersRes.rows) {
+      await invalidatePermissionCache(row.user_id);
+    }
 
     return { success: true, message: "تم تحديث مصفوفة الصلاحيات بنجاح" };
   } catch (error: any) {

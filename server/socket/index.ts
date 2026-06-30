@@ -67,12 +67,36 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
 
     // تحديد كود الدولة الحقيقي بناءً على عنوان الـ IP الخاص بالعضو (مع دعم VPN)
     let detectedCountry = "SA";
+    let clientIp = "127.0.0.1";
     try {
       const { getSocketIp, lookupCountryCodeByIp } = await import("../services/requestCountry");
-      const clientIp = getSocketIp(socket);
+      clientIp = getSocketIp(socket);
       detectedCountry = await lookupCountryCodeByIp(clientIp);
     } catch (e) {
       console.error("Error detecting country code in server/socket/index.ts:", e);
+    }
+
+    // التحقق من الحظر عند الاتصال
+    try {
+      const { checkBan } = await import("../services/banCheck");
+      const rawFp = socket.handshake.auth?.deviceFingerprint || socket.handshake.headers?.["x-device-fingerprint"] || "";
+      const rawSig = socket.handshake.auth?.deviceSignature || socket.handshake.headers?.["x-device-signature"] || "";
+      const deviceFingerprint = Array.isArray(rawFp) ? rawFp[0] : String(rawFp);
+      const deviceSignature = Array.isArray(rawSig) ? rawSig[0] : String(rawSig);
+      const banResult = await checkBan({
+        username,
+        ip: clientIp,
+        deviceFingerprint,
+        deviceSignature,
+      });
+      if (banResult.banned) {
+        const reason = banResult.bans[0]?.reason || "تم حظرك من الموقع";
+        socket.emit("system_alert", { title: "حظر", message: reason });
+        socket.disconnect(true);
+        return;
+      }
+    } catch (e) {
+      console.error("Error checking ban on socket connection:", e);
     }
 
     // حفظ بيانات المستخدم على الـ socket

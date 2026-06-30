@@ -60,6 +60,7 @@
     "embla-carousel-react": "^8.3.0",
     "emoji-picker-react": "^4.19.1",
     "framer-motion": "^12.39.0",
+    "h3": "2.0.1-rc.22",
     "input-otp": "^1.2.4",
     "ioredis": "^5.10.1",
     "jiti": "^2.7.0",

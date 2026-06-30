@@ -387,6 +387,7 @@ const PrivateList = ({
                 const onlineUser = onlineUsers.find(u => String(u.id) === String(conv.otherUser.id));
                 const resolvedStatus = onlineUser ? (onlineUser.status || "online") : "offline";
                 const resolvedAvatarFrame = onlineUser?.avatarFrameUrl || "";
+                const resolvedMemberCardBg = onlineUser?.memberCardBgUrl || "";
                 const resolvedCountry = onlineUser?.countryCode || "";
                 const resolvedIdreg = onlineUser?.idreg || "";
                 const resolvedSiteBadge = onlineUser?.siteBadge || "";
@@ -400,6 +401,11 @@ const PrivateList = ({
               <div
                 key={conv.conversationId}
                 className="group relative flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card hover:bg-muted/50 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                style={resolvedMemberCardBg ? (
+                  resolvedMemberCardBg.startsWith("#")
+                    ? { backgroundColor: resolvedMemberCardBg } as React.CSSProperties
+                    : { backgroundImage: `url(${resolvedMemberCardBg})`, backgroundSize: "cover", backgroundPosition: "center" } as React.CSSProperties
+                ) : undefined}
                 onClick={() => openConversation(conv)}
               >
                 {/* الجانب الأيمن: الأفاتار والبيانات */}
@@ -441,7 +447,7 @@ const PrivateList = ({
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                       <h4
-                        className="font-black text-sm text-foreground truncate hover:underline max-w-[130px]"
+                        className="font-black text-xs text-foreground truncate hover:underline max-w-[130px]"
                         onClick={e => { e.stopPropagation(); onOpenProfile?.(conv.otherUser.id); }}
                       >
                         {resolvedName}

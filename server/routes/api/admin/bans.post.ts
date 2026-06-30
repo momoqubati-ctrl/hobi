@@ -7,18 +7,36 @@ export default defineEventHandler(async (event) => {
     const admin = await guardAdminAction(event, "ban");
     const body = await readBody(event);
 
-    const { targetName, type, value, reason, expiresAt, expiresLabel } = body;
+    const { targetName, type, value, ip, deviceFingerprint, deviceSignature, countryCode, reason, expiresAt, expiresLabel } = body;
 
-    if (!targetName || !type || !value) {
+    if (!targetName || !type) {
       throw new Error("البيانات المطلوبة ناقصة");
     }
 
+    const adminId = await dbPool.query(
+      `SELECT id FROM users WHERE idreg::text = $1 OR id::text = $1 OR uid::text = $1 LIMIT 1`,
+      [String(admin.userId)],
+    );
+    const createdBy = adminId.rows[0]?.id || null;
+
     const result = await dbPool.query(
-      `INSERT INTO moderation_bans 
-        (target_name, ban_type, decoder_code, expires_at, expires_label, created_by, is_active)
-       VALUES ($1, $2, $3, $4, $5, (SELECT id FROM users WHERE idreg = $6 OR id::text = $6 LIMIT 1), true)
+      `INSERT INTO moderation_bans
+        (target_name, ban_type, decoder_code, ip_address, device_fingerprint, device_signature, country_code, expires_at, expires_label, reason, created_by, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
        RETURNING id`,
-      [targetName, type, value, expiresAt || null, expiresLabel || "دائم", admin.userId]
+      [
+        targetName,
+        type,
+        value || "",
+        ip || null,
+        deviceFingerprint || null,
+        deviceSignature || null,
+        countryCode || null,
+        expiresAt || null,
+        expiresLabel || "دائم",
+        reason || null,
+        createdBy,
+      ],
     );
 
     await logAdminAudit({
@@ -26,7 +44,7 @@ export default defineEventHandler(async (event) => {
       action: "ban.create",
       targetType: "user",
       targetId: targetName,
-      metadata: { type, value, reason }
+      metadata: { type, value, ip, reason },
     });
 
     return { success: true, message: "تم الحظر بنجاح", banId: result.rows[0].id };

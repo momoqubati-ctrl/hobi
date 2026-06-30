@@ -4,12 +4,24 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit3, Trash2, Shield, Palette, Crown, Loader2 } from 'lucide-react';
+import { Plus, Edit3, Trash2, Shield, Crown, Loader2 } from 'lucide-react';
 import { getAdminHeaders } from '../utils';
 import { useConfirm } from '@/hooks/use-confirm';
 
+interface RoleRow {
+  id: string;
+  name: string;
+  rank: number;
+  color?: string;
+  is_staff?: boolean;
+  auto_enabled?: boolean;
+  auto_points?: number;
+  is_hidden?: boolean;
+  permissions?: Record<string, string | number | boolean>;
+}
+
 const RolesSection = () => {
-  const [roles, setRoles] = useState<any[]>([]);
+  const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const { confirm } = useConfirm();
 

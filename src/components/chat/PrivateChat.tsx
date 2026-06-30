@@ -959,7 +959,7 @@ const PrivateChat = ({
           <ArrowRight size={18} />
         </Button>
         <Avatar
-          className="w-10 h-10 rounded-xl cursor-pointer transition hover:scale-105 shrink-0"
+          className="w-11 h-11 rounded-xl cursor-pointer transition hover:scale-105 shrink-0"
           onClick={() => onOpenProfile?.(otherUserData.id)}
         >
           <AvatarImage src={resolvedAvatar} />
@@ -1044,11 +1044,11 @@ const PrivateChat = ({
                     >
                       {isMine && (
                         <Avatar
-                          className="w-7 h-7 rounded-lg shrink-0 cursor-pointer hover:scale-110 transition"
+                          className="w-11 h-11 rounded-lg shrink-0 cursor-pointer hover:scale-110 transition"
                           onClick={() => onOpenProfile?.(currentUserId)}
                         >
                           <AvatarImage src={myAvatar} />
-                          <AvatarFallback className="text-[9px]">{currentUser?.name?.[0] || "أنا"}</AvatarFallback>
+                          <AvatarFallback className="text-[10px]">{currentUser?.name?.[0] || "أنا"}</AvatarFallback>
                         </Avatar>
                       )}
 
@@ -1161,11 +1161,11 @@ const PrivateChat = ({
 
                       {!isMine && (
                         <Avatar
-                          className="w-7 h-7 rounded-lg shrink-0 cursor-pointer hover:scale-110 transition"
+                          className="w-11 h-11 rounded-lg shrink-0 cursor-pointer hover:scale-110 transition"
                           onClick={() => onOpenProfile?.(otherUserData.id)}
                         >
                           <AvatarImage src={resolvedAvatar} />
-                          <AvatarFallback className="text-[9px]">{resolvedName?.[0]}</AvatarFallback>
+                          <AvatarFallback className="text-[10px]">{resolvedName?.[0]}</AvatarFallback>
                         </Avatar>
                       )}
                     </div>
@@ -1178,9 +1178,9 @@ const PrivateChat = ({
 
         {isTyping && (
           <div className="flex justify-end items-end gap-2">
-            <Avatar className="w-7 h-7 rounded-lg shrink-0">
+            <Avatar className="w-11 h-11 rounded-lg shrink-0">
               <AvatarImage src={resolvedAvatar} />
-              <AvatarFallback className="text-[9px]">{resolvedName?.[0]}</AvatarFallback>
+              <AvatarFallback className="text-[10px]">{resolvedName?.[0]}</AvatarFallback>
             </Avatar>
             <div className="bg-white dark:bg-slate-800 rounded-2xl rounded-bl-sm px-4 py-3 border border-border shadow-sm">
               <div className="flex gap-1 items-center">

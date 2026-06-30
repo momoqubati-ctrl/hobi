@@ -28,3 +28,6 @@ dist-ssr
 *.sw?
 .dyad/
 .pnpm-store/
+.postgres-data/
+minio.exe
+minio-master.zip

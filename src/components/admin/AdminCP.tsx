@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, Users, MessageSquare, Settings, BarChart3, Lock, Globe, Activity,
   Ban, ShieldAlert, Cpu, Mic, Key, Link as LinkIcon, Database, HardDrive, ListFilter,
-  BadgeAlert, Award, Gift, Wallet, Calculator, Wrench, RefreshCw, Zap, Sticker, Smile
+  BadgeAlert, Award, Gift, Wallet, Calculator, Wrench, RefreshCw, Zap, Sticker, Smile,
+  Image
 } from 'lucide-react';
 import { getMenuLabel, getGroupLabel, getFieldLanguage, setFieldLanguage } from './constants';
 
@@ -63,6 +64,11 @@ const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
         <NavGroup title={getGroupLabel("g_rooms")}>
           <AdminAction id="rooms" icon={<MessageSquare size={16} />} label={getMenuLabel("rooms")} activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="stickers" icon={<Sticker size={16} />} label={getMenuLabel("stickers")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="swiperbanners" icon={<Image size={16} />} label={getMenuLabel("swiperbanners")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="profileframes" icon={<Image size={16} />} label={getMenuLabel("profileframes")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="membercardtheme" icon={<Image size={16} />} label={getMenuLabel("membercardtheme")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="icons" icon={<Image size={16} />} label={getMenuLabel("icons")} activeSection={activeSection} onClick={onChangeSection} />
+          <AdminAction id="gifts" icon={<Gift size={16} />} label={getMenuLabel("gifts")} activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="animatedfaces" icon={<Smile size={16} />} label={getMenuLabel("animatedfaces")} activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="roomBadges" icon={<BadgeAlert size={16} />} label={getMenuLabel("roomBadges")} activeSection={activeSection} onClick={onChangeSection} />
           <AdminAction id="siteBadges" icon={<Award size={16} />} label={getMenuLabel("siteBadges")} activeSection={activeSection} onClick={onChangeSection} />

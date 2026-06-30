@@ -192,6 +192,11 @@ export function viteSocketIO(): Plugin {
         const role = auth.role || "guest";
         const userId = auth.userId || socket.id;
 
+        const handshakeProfileMsg = typeof auth.statusMsg === "string" && auth.statusMsg.trim()
+          ? auth.statusMsg.trim()
+          : (typeof auth.profileMsg === "string" && auth.profileMsg.trim()
+            ? auth.profileMsg.trim()
+            : "");
         const userData: Omit<OnlineUser, "socketId"> = {
           id: userId,
           username,
@@ -206,10 +211,18 @@ export function viteSocketIO(): Plugin {
           status: "online",
           idreg: auth.idreg || "",
           siteBadge: auth.siteBadge || "",
+          statusMsg: handshakeProfileMsg,
         };
 
         addUser(socket.id, userData);
-        socket.data.user = { id: userId, username, role, avatar: userData.avatar };
+        socket.data.user = {
+          id: userId,
+          username,
+          role,
+          avatar: userData.avatar,
+          statusMsg: handshakeProfileMsg,
+          profileMsg: handshakeProfileMsg,
+        };
 
         // الانضمام للقنوات الشخصية (إشعارات، حضور، etc.)
         joinUserChannels(socket);
@@ -688,6 +701,7 @@ export function viteSocketIO(): Plugin {
                 giftIconUrl: u.giftIconUrl, roomId: u.roomId,
                 status: u.status || "online",
                 idreg: u.idreg, siteBadge: u.siteBadge,
+                statusMsg: u.statusMsg || "",
               });
             } else {
               const priorities: Record<string, number> = { "busy": 4, "away": 3, "idle": 2, "online": 1 };
@@ -725,6 +739,7 @@ export function viteSocketIO(): Plugin {
             countryCode: user.countryCode,
             roomId: user.roomId,
             siteBadge: user.siteBadge,
+            statusMsg: user.statusMsg || "",
           });
         });
 
@@ -771,6 +786,7 @@ export function viteSocketIO(): Plugin {
             giftIconUrl: user.giftIconUrl,
             messageBubbleStyle: user.messageBubbleStyle,
             profileMsg: data.profileMsg,
+            statusMsg: data.profileMsg || "",
           });
         });
 

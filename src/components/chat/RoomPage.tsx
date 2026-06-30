@@ -144,7 +144,7 @@ const getMessageBubbleClass = (msg: ChatMessage) => {
   if (msg.failed) return "border-red-100 bg-red-50 text-red-700";
   if (msg.messageBubbleStyle === "soft") return "border-blue-100 bg-blue-50 text-foreground";
   if (msg.messageBubbleStyle === "dark") return "border-slate-800 bg-slate-900 text-white";
-  return "border-border bg-card text-foreground";
+  return "border-bubble/20 bg-bubble text-white dark:border-[#59102d]/30 dark:bg-[#59102d] dark:text-[#ffffff]";
 };
 
 const FACE_MARKER_RE = /\u200B\[\[FACE:(\d+)\]\]\u200B/g;
@@ -1300,7 +1300,7 @@ const RoomPage = ({
             </Button>
           )}
           <div className="relative">
-            <Avatar className="h-10 w-10 rounded-xl border border-border shadow-sm">
+            <Avatar className="w-10 h-10 rounded-xl border border-border shadow-sm">
               <AvatarImage src={room.image} />
               <AvatarFallback>{room.name?.[0] ?? "غ"}</AvatarFallback>
             </Avatar>
@@ -1408,21 +1408,18 @@ const RoomPage = ({
           return (
           <div key={msg.clientId || msg.id} id={`room-msg-${msg.id}`} className={`flex gap-3 group ${msg.pending ? "opacity-70" : ""} transition-all duration-300`}>
             <div className="relative shrink-0">
-              <div
-                className="rounded-xl bg-cover bg-center p-0.5 cursor-pointer transition hover:scale-105"
-                style={msg.avatarFrameUrl ? { backgroundImage: `url(${msg.avatarFrameUrl})` } : undefined}
+              <Avatar
+                className="w-11 h-11 rounded-xl shadow-sm cursor-pointer transition hover:scale-105"
                 onClick={() => onOpenProfile?.(msg.user)}
               >
-                <Avatar className="h-9 w-9 rounded-xl border border-white shadow-sm">
-                  <AvatarImage src={msg.avatar} />
-                  <AvatarFallback>{msg.user[0]}</AvatarFallback>
-                </Avatar>
-              </div>
+                <AvatarImage src={msg.avatar} />
+                <AvatarFallback>{msg.user[0]}</AvatarFallback>
+              </Avatar>
             </div>
             <div className="min-w-0 flex-1" dir="ltr">
               <div className="mb-1 flex flex-wrap items-center gap-2">
                 <h4 
-                  className={`text-[11px] font-black cursor-pointer hover:underline ${msg.color}`}
+                  className={`text-xs font-black cursor-pointer hover:underline ${msg.color}`}
                   onClick={() => onOpenProfile?.(msg.user)}
                 >
                   {msg.user}
@@ -1526,7 +1523,7 @@ const RoomPage = ({
                     </div>
                   )}
 
-                  {msg.text && <p className="break-words text-xs font-bold leading-relaxed inline">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
+                  {msg.text && <p className="break-words text-[14px] font-bold leading-relaxed inline">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
                   {!isSystem && findYouTubeLinks(msg.text).map((link) => (
                     <YouTubePreviewCard
                       key={link}
@@ -1537,7 +1534,7 @@ const RoomPage = ({
                   {msg.isSystem && msg.systemType === "transition" && msg.targetRoom && (
                     <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200/50 bg-white/40 dark:border-slate-700/50 dark:bg-slate-900/40 p-3 shadow-md backdrop-blur-md transition-all duration-300 hover:shadow-lg hover:bg-white/60 dark:hover:bg-slate-900/60 flex items-center justify-between gap-4 max-w-[280px]">
                       <div className="flex items-center gap-2.5">
-                        <Avatar className="h-10 w-10 rounded-xl border border-white dark:border-slate-800 shadow-sm shrink-0">
+                        <Avatar className="w-11 h-11 rounded-xl shadow-sm shrink-0">
                           <AvatarImage src={msg.targetRoom.image} />
                           <AvatarFallback>{msg.targetRoom.name?.[0] || "غ"}</AvatarFallback>
                         </Avatar>

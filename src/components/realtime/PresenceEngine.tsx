@@ -381,6 +381,8 @@ const PresenceEngine = () => {
         avatar: data.avatar || data.avatarUrl,
         avatarUrl: data.avatar || data.avatarUrl,
         profileCover: data.profileCover,
+        avatarFrameUrl: data.avatarFrameUrl || "",
+        memberCardBgUrl: data.memberCardBgUrl || "",
         statusMsg: data.statusMsg || data.profileMsg || "",
         siteBadge: data.siteBadge || "",
         idreg: data.idreg || "",

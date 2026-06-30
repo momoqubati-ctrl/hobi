@@ -6,13 +6,34 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { Loader2, Save } from 'lucide-react';
 import { getAdminHeaders } from '../utils';
 import { PERMISSION_TRANSLATIONS } from '../constants';
+import { showSuccess, showError } from '@/utils/toast';
+
+interface Role {
+  id: string;
+  name: string;
+  rank: number;
+  color?: string;
+  ico?: string;
+  permissions: Record<string, string | number | boolean>;
+  is_staff?: boolean;
+  auto_enabled?: boolean;
+  auto_points?: number;
+  is_hidden?: boolean;
+}
+
+interface PermissionValue {
+  value: string | number | boolean;
+}
 
 const RolesSection = () => {
-  const [roles, setRoles] = useState<any[]>([]);
-  const [selected, setSelected] = useState<any>(null);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [permissions, setPermissions] = useState<Record<string, string | number | boolean>>({});
 
   useEffect(() => {
     setLoading(true);
@@ -26,6 +47,43 @@ const RolesSection = () => {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (selected) {
+      setPermissions(selected.permissions || {});
+    }
+  }, [selected]);
+
+  const handlePermissionChange = (key: string, value: string | number | boolean) => {
+    setPermissions(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const matrix = {
+        [selected.id]: permissions
+      };
+      const res = await fetch('/api/admin/permissions/bulk', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify({ matrix })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccess("تم حفظ صلاحيات الرتبة بنجاح");
+        setRoles(prev => prev.map(r => r.id === selected.id ? { ...r, permissions } : r));
+        setSelected({ ...selected, permissions });
+      } else {
+        showError(data.message || "فشل الحفظ");
+      }
+    } catch (err) {
+      showError("حدث خطأ أثناء الحفظ");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (!selected && !loading) return null;
 
@@ -42,7 +100,12 @@ const RolesSection = () => {
               onClick={() => setSelected(r)}
               className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-bold transition-all mb-1 ${selected?.id === r.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
             >
-              <span>{r.name}</span>
+              <div className="flex items-center gap-2">
+                {r.ico && (
+                  <img src={r.ico} alt="" className="w-5 h-5 object-contain shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                )}
+                <span>{r.name}</span>
+              </div>
               <Badge variant="secondary" className="text-[10px] rounded-lg">{r.rank}</Badge>
             </button>
           ))}
@@ -57,12 +120,19 @@ const RolesSection = () => {
                 <CardTitle className="text-xl font-black text-primary">صلاحيات: {selected.name}</CardTitle>
                 <p className="text-xs font-bold text-muted-foreground mt-1">تعديل قوى الرتبة في النظام</p>
               </div>
-              <Button className="rounded-2xl font-bold px-8 shadow-lg shadow-primary/20">حفظ</Button>
+              <Button 
+                onClick={handleSave} 
+                disabled={saving}
+                className="rounded-2xl font-bold px-8 shadow-lg shadow-primary/20"
+              >
+                {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                {saving ? 'جاري الحفظ...' : 'حفظ'}
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {Object.entries(selected.permissions || {}).map(([key, val]: [string, any]) => {
+              {Object.entries(permissions).map(([key, val]) => {
                 const isBooleanLike = val === 0 || val === 1 || typeof val === 'boolean';
                 const translatedKey = PERMISSION_TRANSLATIONS[key] || key;
                 
@@ -70,9 +140,16 @@ const RolesSection = () => {
                   <div key={key} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
                     <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{translatedKey}</span>
                     {isBooleanLike ? (
-                      <Switch checked={val === 1 || val === true} />
+                      <Switch 
+                        checked={val === 1 || val === true} 
+                        onCheckedChange={(checked) => handlePermissionChange(key, checked)}
+                      />
                     ) : (
-                      <Input className="w-24 h-9 text-center font-black rounded-xl" value={String(val)} />
+                      <Input 
+                        className="w-24 h-9 text-center font-black rounded-xl" 
+                        value={String(val)}
+                        onChange={(e) => handlePermissionChange(key, e.target.value)}
+                      />
                     )}
                   </div>
                 );

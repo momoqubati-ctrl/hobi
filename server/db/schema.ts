@@ -159,6 +159,7 @@ export const userProfiles = pgTable("user_profiles", {
   themeId: varchar("theme_id", { length: 80 }),
   avatarFrameUrl: text("avatar_frame_url"),
   giftIconUrl: text("gift_icon_url"),
+  memberCardBgUrl: text("member_card_bg_url"),
   profileIconUrl: text("profile_icon_url"),
   nameGradient: text("name_gradient"),
   nameEffectId: varchar("name_effect_id", { length: 80 }),
@@ -383,6 +384,7 @@ export const roles = pgTable("roles", {
   rank: integer("rank").default(0).notNull(),
   iconUrl: text("icon_url").default("").notNull(),
   isSystem: boolean("is_system").default(false).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
   autoEnabled: boolean("auto_enabled").default(false).notNull(),
   autoPromote: boolean("auto_promote").default(false).notNull(),
   autoPoints: integer("auto_points").default(0).notNull(),
@@ -460,12 +462,22 @@ export const storyReactions = pgTable("story_reactions", {
   index("story_reactions_story_idx").on(table.storyId),
 ]);
 
+// --- GIFT CATEGORIES ---
+export const giftCategories = pgTable("gift_categories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 100 }).notNull(),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
 // --- GIFTS ---
 export const giftCatalog = pgTable("gift_catalog", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: varchar("name", { length: 120 }).notNull(),
-  icon: varchar("icon", { length: 20 }).notNull(),
+  icon: text("icon").notNull(),
   price: integer("price").notNull(),
+  categoryId: uuid("category_id").references(() => giftCategories.id, { onDelete: "set null" }),
   category: varchar("category", { length: 40 }).default("common").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -582,6 +594,62 @@ export const stickers = pgTable("stickers", {
 }, (table) => [
   index("stickers_category_idx").on(table.categoryId),
 ]);
+
+// --- ICONS ---
+export const icons = pgTable("icons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// --- SWIPER BANNERS ---
+export const swiperBanners = pgTable("swiper_banners", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  link: text("link").default(""),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// --- PROFILE FRAMES ---
+export const profileFrames = pgTable("profile_frames", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  link: text("link").default(""),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// --- MEMBER CARD THEMES ---
+export const memberCardThemes = pgTable("member_card_themes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).default(""),
+  imageUrl: text("image_url").notNull(),
+  link: text("link").default(""),
+  sortOrder: integer("sort_order").default(0),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// --- ROOM BADGES ---
+export const roomBadges = pgTable("room_badges", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).default(""),
+  power: integer("power").default(0),
+  icon: text("icon").default(""),
+  bg: text("bg").default(""),
+  bgType: varchar("bg_type", { length: 20 }).default("static"),
+  isActive: boolean("is_active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
 
 export const animatedFaces = pgTable("animated_faces", {
   id: uuid("id").defaultRandom().primaryKey(),
