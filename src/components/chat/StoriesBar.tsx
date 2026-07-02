@@ -87,7 +87,7 @@ const StoriesBar = ({ onOpenCreator }: StoriesBarProps) => {
                 />
               </div>
             </div>
-            <span className="max-w-[64px] truncate text-[10px] font-bold text-slate-500 dark:text-slate-400">
+            <span className="max-w-[64px] truncate text-[10px] font-bold" style={user.authorNameColor && user.authorNameColor !== "#000000" ? { color: user.authorNameColor } : { color: "var(--slate-500)" }}>
               {user.authorUsername}
             </span>
           </button>

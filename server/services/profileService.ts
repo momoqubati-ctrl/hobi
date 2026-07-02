@@ -105,13 +105,19 @@ const findLegacyUserProfile = async (profileId: string) => {
   if (!normalized) return null;
 
   const result = await dbPool.query(
-    `SELECT *
-     FROM users
-     WHERE CAST(uid AS text) = $1
-        OR CAST(id AS text) = $1
-        OR CAST(idreg AS varchar) = $1
-        OR CONCAT('#', CAST(idreg AS varchar)) = $1
-        OR lower(username) = lower($1)
+    `SELECT u.*, 
+            COALESCE(up.name_color, u.ucol) as ucol,
+            COALESCE(up.message_color, u.mcol) as mcol,
+            COALESCE(up.avatar_url, u.pic) as pic,
+            COALESCE(up.banner_url, u.pich) as pich,
+            COALESCE(up.profile_msg, u.msg) as msg
+     FROM users u
+     LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+     WHERE CAST(u.uid AS text) = $1
+        OR CAST(u.id AS text) = $1
+        OR CAST(u.idreg AS varchar) = $1
+        OR CONCAT('#', CAST(u.idreg AS varchar)) = $1
+        OR lower(u.username) = lower($1)
      LIMIT 1`,
     [normalized],
   );

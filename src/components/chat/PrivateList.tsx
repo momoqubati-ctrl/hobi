@@ -32,6 +32,7 @@ interface PMUser {
   id: string;
   name: string;
   avatar: string;
+  nameColor?: string;
 }
 
 interface Conversation {
@@ -194,6 +195,7 @@ const PrivateList = ({
                 ...c.otherUser,
                 name: data.username || c.otherUser.name,
                 avatar: data.avatar || data.avatarUrl || c.otherUser.avatar,
+                ...(data.nameColor !== undefined ? { nameColor: data.nameColor } : {}),
               },
             };
           }
@@ -397,6 +399,8 @@ const PrivateList = ({
                 // استخدام صورة الأونلاين إذا كانت محدثة (أولوية أعلى من الكاش)
                 const resolvedAvatar = onlineUser?.avatar || conv.otherUser.avatar || "/pic.png";
                 const resolvedName = onlineUser?.username || conv.otherUser.name;
+                const resolvedNameColor = onlineUser?.nameColor || conv.otherUser.nameColor || "";
+                const resolvedMessageColor = onlineUser?.messageColor || "";
             const statusCfg = getStatusConfig(resolvedStatus);
 
             return (
@@ -451,6 +455,7 @@ const PrivateList = ({
                       <h4
                         className="font-black text-xs text-foreground truncate hover:underline max-w-[130px]"
                         onClick={e => { e.stopPropagation(); onOpenProfile?.(conv.otherUser.id); }}
+                        style={resolvedNameColor && resolvedNameColor !== "#000000" ? { color: resolvedNameColor } : undefined}
                       >
                         {resolvedName}
                       </h4>
@@ -472,7 +477,7 @@ const PrivateList = ({
                       conv.unreadCount > 0
                         ? "font-bold text-foreground"
                         : "font-medium text-muted-foreground"
-                    }`}>
+                    }`} style={resolvedMessageColor && resolvedMessageColor !== "#000000" ? { color: resolvedMessageColor } : undefined}>
                       {conv.lastMessage || "لا توجد رسائل بعد"}
                     </p>
                   </div>

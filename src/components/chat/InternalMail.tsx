@@ -20,8 +20,10 @@ interface MailItem {
   createdAt: string;
   senderName?: string;
   senderAvatar?: string;
+  senderNameColor?: string;
   recipientName?: string;
   recipientAvatar?: string;
+  recipientNameColor?: string;
   isOptimistic?: boolean;
 }
 
@@ -47,6 +49,7 @@ const InternalMail = () => {
     markMailRead,
     deleteMail,
     setMail,
+    onlineUsers,
   } = useRealtimeStore();
 
   const handleMarkRead = (mailId: string) => {
@@ -146,7 +149,14 @@ const InternalMail = () => {
               <AvatarFallback className="rounded-xl">{(name || "?")[0]}</AvatarFallback>
             </Avatar>
             <div>
-              <p className="font-bold text-sm">{name}</p>
+              <p className="font-bold text-sm" style={(() => {
+                const mailId = selectedMail?.senderId === currentUser?.id ? selectedMail.recipientId : selectedMail?.senderId;
+                if (!mailId) return undefined;
+                const u = onlineUsers.find(o => String(o.id) === String(mailId));
+                const storedColor = isIncoming ? selectedMail?.senderNameColor : selectedMail?.recipientNameColor;
+                const resolvedColor = u?.nameColor || storedColor || "";
+                return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+              })()}>{name}</p>
               <p className="text-[10px] text-muted-foreground">{formatTime(selectedMail.createdAt)}</p>
             </div>
           </div>
@@ -243,7 +253,16 @@ const InternalMail = () => {
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className={`text-xs truncate ${isUnread ? "font-black text-foreground" : "font-bold text-slate-600 dark:text-slate-400"}`}>
+                        <h4 className={`text-xs truncate ${isUnread ? "font-black" : "font-bold text-slate-600 dark:text-slate-400"}`}
+                          style={(() => {
+                            const mailId = isIncoming ? mail.senderId : mail.recipientId;
+                            if (!mailId) return undefined;
+                            const u = onlineUsers.find(o => String(o.id) === String(mailId));
+                            const storedColor = isIncoming ? mail.senderNameColor : mail.recipientNameColor;
+                            const resolvedColor = u?.nameColor || storedColor || "";
+                            return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                          })()}
+                        >
                           {name}
                         </h4>
                         <span className="text-[9px] text-muted-foreground shrink-0">{formatTime(mail.createdAt)}</span>

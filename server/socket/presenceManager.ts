@@ -14,6 +14,8 @@ export type OnlineUser = {
   avatarFrameUrl: string;
   giftIconUrl: string;
   memberCardBgUrl: string;
+  nameColor: string;
+  messageColor: string;
   messageBubbleStyle: string;
   roomId: string;
   connectedAt: string;
@@ -117,6 +119,8 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
       avatarFrameUrl: String(user.avatarFrameUrl),
       giftIconUrl: String(user.giftIconUrl),
       memberCardBgUrl: String(user.memberCardBgUrl),
+      nameColor: String(user.nameColor),
+      messageColor: String(user.messageColor),
       messageBubbleStyle: String(user.messageBubbleStyle),
       roomId: String(user.roomId),
       connectedAt: String(user.connectedAt),
@@ -320,6 +324,8 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
       avatarFrameUrl: data.avatarFrameUrl,
       giftIconUrl: data.giftIconUrl,
       memberCardBgUrl: data.memberCardBgUrl || "",
+      nameColor: data.nameColor || "",
+      messageColor: data.messageColor || "",
       messageBubbleStyle: data.messageBubbleStyle,
       roomId: data.roomId,
       connectedAt: data.connectedAt,

@@ -12,8 +12,13 @@ export default defineEventHandler(async (event) => {
 
   try {
     const result = await dbPool.query(
-      `SELECT id, uid, username, topic, pic FROM users 
-       WHERE id::text = $1 OR uid::text = $1 OR idreg::text = $1 OR lower(username) = lower($1) LIMIT 1`,
+      `SELECT u.id, u.uid, u.username, u.topic, u.pic,
+              COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as name_color,
+              COALESCE(NULLIF(up.message_color, ''), NULLIF(u.mcol, '')) as message_color
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE u.id::text = $1 OR u.uid::text = $1 OR u.idreg::text = $1 OR lower(u.username) = lower($1) 
+       LIMIT 1`,
       [userId]
     );
 
@@ -29,6 +34,8 @@ export default defineEventHandler(async (event) => {
         id: user.id || user.uid,
         name: user.topic || user.username,
         avatar: user.pic || "/pic.png",
+        nameColor: user.name_color || "",
+        messageColor: user.message_color || "",
       },
     };
   } catch (error: any) {

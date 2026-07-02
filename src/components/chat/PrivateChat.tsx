@@ -750,6 +750,7 @@ const PrivateChat = ({
         ...prev,
         name: data.username || prev.name,
         avatar: data.avatar || data.avatarUrl || prev.avatar,
+        nameColor: data.nameColor !== undefined ? data.nameColor : prev.nameColor,
       }));
     };
     socket.on("user_profile_updated", onUserProfileUpdated);
@@ -949,6 +950,7 @@ const PrivateChat = ({
   const onlineUser = onlineUsers.find(u => String(u.id) === String(otherUserData.id));
   const resolvedAvatar = onlineUser?.avatar || otherUserData.avatar || "/pic.png";
   const resolvedName = onlineUser?.username || onlineUser?.name || otherUserData.name;
+  const resolvedNameColor = onlineUser?.nameColor || otherUserData.nameColor || "";
 
   return (
     <div className="flex flex-col h-full" dir="rtl">
@@ -969,7 +971,7 @@ const PrivateChat = ({
           className="flex-1 min-w-0 cursor-pointer"
           onClick={() => onOpenProfile?.(otherUserData.id)}
         >
-          <h4 className="font-black text-sm hover:underline truncate">{resolvedName}</h4>
+          <h4 className="font-black text-sm hover:underline truncate" style={resolvedNameColor && resolvedNameColor !== "#000000" ? { color: resolvedNameColor } : undefined}>{resolvedName}</h4>
           {isTyping ? (
             <p className="text-[10px] text-primary font-bold animate-pulse">يكتب...</p>
           ) : (

@@ -855,6 +855,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     wallLikedPosts,
     wallLikeCounts,
     wallCommentCounts,
+    onlineUsers,
   } = useRealtimeStore(useShallow((s: any) => ({
     wallPosts: s.wallPosts,
     isLoadingWallPosts: s.isLoadingWallPosts,
@@ -864,6 +865,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     wallLikedPosts: s.wallLikedPosts,
     wallLikeCounts: s.wallLikeCounts,
     wallCommentCounts: s.wallCommentCounts,
+    onlineUsers: s.onlineUsers,
   })));
 
   const [currentUser, setCurrentUser] = useState<any>(() => getStoredUser());
@@ -1016,6 +1018,13 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                       <h4
                         className="font-black text-xs text-foreground cursor-pointer hover:underline"
                         onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
+                        style={(() => {
+                          const authorId = post.author?.id;
+                          if (!authorId) return undefined;
+                          const u = onlineUsers.find(o => String(o.id) === String(authorId));
+                          const resolvedColor = u?.nameColor || (post.author as any)?.nameColor || "";
+                          return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                        })()}
                       >
                         {post.author?.name}
                       </h4>

@@ -103,7 +103,7 @@ const ProfileModal = ({ user, isOpen, onClose, isAdmin = true }: ProfileModalPro
           <div className="flex justify-between items-start mb-4">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-2xl font-bold text-foreground">{user.name}</h2>
+                <h2 className="text-2xl font-bold text-foreground" style={user.nameColor && user.nameColor !== "#000000" ? { color: user.nameColor } : undefined}>{user.name}</h2>
                 {user.role === 'admin' && <Crown className="text-red-500" size={20} />}
                 <Badge className="bg-blue-50 text-blue-600 border-blue-100">موثق</Badge>
                 {user.giftIconUrl && <img src={user.giftIconUrl} alt="gift" className="h-5 w-5 rounded object-cover" />}
@@ -125,7 +125,7 @@ const ProfileModal = ({ user, isOpen, onClose, isAdmin = true }: ProfileModalPro
             </div>
           </div>
 
-          <p className="text-muted-foreground text-sm mb-6 leading-relaxed" dir="rtl">
+          <p className="text-sm mb-6 leading-relaxed" dir="rtl" style={user.messageColor && user.messageColor !== "#000000" ? { color: user.messageColor } : { color: "var(--muted-foreground)" }}>
             {statusMsg}
           </p>
 

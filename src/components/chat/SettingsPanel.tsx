@@ -175,6 +175,7 @@ const SettingsPanel = () => {
       });
 
       const data = await res.json();
+      console.log("[SettingsPanel] API response:", data);
       if (data.success) {
         // Use server-normalized avatar URL (guaranteed to be correct format)
         const normalizedAvatar = data.normalizedAvatar || (data.updates?.avatar
@@ -193,6 +194,10 @@ const SettingsPanel = () => {
               return url.startsWith("/") ? url : `/${url}`;
             })()
           : null;
+
+        console.log("[SettingsPanel] Normalized avatar:", normalizedAvatar, "cover:", normalizedCover);
+        console.log("[SettingsPanel] nameColor from response:", data.nameColor, "messageColor:", data.messageColor);
+        console.log("[SettingsPanel] updates.nameColor:", data.updates?.nameColor);
 
         // Update local storage user details
         const storedUserRaw = localStorage.getItem("user");
@@ -220,6 +225,7 @@ const SettingsPanel = () => {
             user.messageColor = data.messageColor;
           }
           localStorage.setItem("user", JSON.stringify(user));
+          console.log("[SettingsPanel] Updated localStorage user:", user);
         }
         refreshSocketAuth();
 
@@ -234,6 +240,28 @@ const SettingsPanel = () => {
             ...(data.nameColor ? { nameColor: data.nameColor } : {}),
             ...(data.messageColor ? { messageColor: data.messageColor } : {}),
           });
+          
+          // Also emit user_profile_updated directly to ensure all users see the change immediately
+          // Get current user data from localStorage
+          const storedUser = localStorage.getItem("user");
+          const currentUser = storedUser ? JSON.parse(storedUser) : null;
+          
+          if (currentUser?.id) {
+            console.log("[SettingsPanel] Emitting user_profile_updated with nameColor:", data.nameColor || currentUser.nameColor);
+            socket.emit("user_profile_updated", {
+              userId: currentUser.id,
+              username: data.displayName || currentUser.name,
+              avatar: normalizedAvatar || data.updates?.avatar || currentUser.avatar,
+              avatarUrl: normalizedAvatar || data.updates?.avatar || currentUser.avatar,
+              cover: normalizedCover || data.updates?.cover,
+              profileCover: normalizedCover || data.updates?.cover,
+              profileMsg: data.updates?.profileMsg,
+              statusMsg: data.updates?.profileMsg || "",
+              siteBadge: data.updates?.siteBadge || "",
+              nameColor: data.nameColor || currentUser.nameColor || "",
+              messageColor: data.messageColor || currentUser.messageColor || "",
+            });
+          }
         }
 
         // Update stories store immediately for own stories (before socket event arrives)
@@ -348,6 +376,16 @@ const SettingsPanel = () => {
                 onChange={(e) => handleFileChange(e, 'avatar')}
               />
             </div>
+          </div>
+
+          {/* Live Preview */}
+          <div className="rounded-2xl bg-gradient-to-br from-primary to-blue-600 p-4 text-center">
+            <p className="text-lg font-bold" style={{ color: newNameColor === "#000000" ? undefined : newNameColor }}>
+              {newDisplayName || currentUser?.name || "الاسم"}
+            </p>
+            <p className="text-sm mt-1" style={{ color: newMessageColor === "#000000" ? undefined : newMessageColor }}>
+              {newStatusMsg || currentUser?.statusMsg || "الحالة الشخصية"}
+            </p>
           </div>
 
           {/* Display Name */}

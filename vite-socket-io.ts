@@ -69,6 +69,9 @@ export function viteSocketIO(): Plugin {
         countryCode: string;
         avatarFrameUrl: string;
         giftIconUrl: string;
+        memberCardBgUrl: string;
+        nameColor: string;
+        messageColor: string;
         messageBubbleStyle: string;
         roomId: string;
         connectedAt: string;
@@ -97,6 +100,9 @@ export function viteSocketIO(): Plugin {
           countryCode: user.countryCode,
           avatarFrameUrl: user.avatarFrameUrl,
           giftIconUrl: user.giftIconUrl,
+          memberCardBgUrl: user.memberCardBgUrl,
+          nameColor: user.nameColor,
+          messageColor: user.messageColor,
           roomId: user.roomId,
           status: user.status,
           idreg: user.idreg,
@@ -205,6 +211,9 @@ export function viteSocketIO(): Plugin {
           countryCode: auth.countryCode || "SA",
           avatarFrameUrl: auth.avatarFrameUrl || "",
           giftIconUrl: auth.giftIconUrl || "",
+          memberCardBgUrl: auth.memberCardBgUrl || "",
+          nameColor: auth.nameColor || "",
+          messageColor: auth.messageColor || "",
           messageBubbleStyle: auth.messageBubbleStyle || "default",
           roomId: "",
           connectedAt: new Date().toISOString(),
@@ -223,6 +232,46 @@ export function viteSocketIO(): Plugin {
           statusMsg: handshakeProfileMsg,
           profileMsg: handshakeProfileMsg,
         };
+
+        // Enrich from DB at connection time
+        (async () => {
+          try {
+            const mod = await import("./server/db");
+            const result = await mod.dbPool.query(
+              `SELECT "member_card_bg_url", "name_color", "message_color", "idreg", "avatar_frame_url", "profile_msg"
+               FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+              [userId]
+            );
+            const row = result.rows[0];
+            if (row) {
+              const u = connectedUsers.get(socket.id);
+              if (u) {
+                if (row.member_card_bg_url) u.memberCardBgUrl = String(row.member_card_bg_url).trim();
+                if (row.name_color) u.nameColor = String(row.name_color).trim();
+                if (row.message_color) u.messageColor = String(row.message_color).trim();
+                if (row.idreg) u.idreg = String(row.idreg).trim();
+                if (row.avatar_frame_url) u.avatarFrameUrl = String(row.avatar_frame_url).trim();
+                if (row.profile_msg) {
+                  const msg = String(row.profile_msg).trim();
+                  u.statusMsg = msg;
+                  socket.data.user.statusMsg = msg;
+                  socket.data.user.profileMsg = msg;
+                }
+              }
+            }
+            // Fallback to legacy ucol/mcol
+            if (!connectedUsers.get(socket.id)?.nameColor || !connectedUsers.get(socket.id)?.messageColor) {
+              const legResult = await mod.dbPool.query(`SELECT "ucol", "mcol" FROM "users" WHERE "id" = $1 LIMIT 1`, [userId]);
+              if (legResult.rows[0]) {
+                const u = connectedUsers.get(socket.id);
+                if (u) {
+                  if (!u.nameColor) u.nameColor = (legResult.rows[0].ucol || "").toString().trim();
+                  if (!u.messageColor) u.messageColor = (legResult.rows[0].mcol || "").toString().trim();
+                }
+              }
+            }
+          } catch (_) {}
+        })();
 
         // الانضمام للقنوات الشخصية (إشعارات، حضور، etc.)
         joinUserChannels(socket);
@@ -698,7 +747,9 @@ export function viteSocketIO(): Plugin {
               uniqueUsers.set(uniqueKey, {
                 id: u.id, socketId: u.socketId, username: u.username, role: u.role, avatar: u.avatar,
                 countryCode: u.countryCode, avatarFrameUrl: u.avatarFrameUrl,
-                giftIconUrl: u.giftIconUrl, roomId: u.roomId,
+                giftIconUrl: u.giftIconUrl, memberCardBgUrl: u.memberCardBgUrl,
+                nameColor: u.nameColor, messageColor: u.messageColor,
+                roomId: u.roomId,
                 status: u.status || "online",
                 idreg: u.idreg, siteBadge: u.siteBadge,
                 statusMsg: u.statusMsg || "",
@@ -757,6 +808,9 @@ export function viteSocketIO(): Plugin {
           }
           if (data.avatarFrameUrl) user.avatarFrameUrl = data.avatarFrameUrl;
           if (data.giftIconUrl) user.giftIconUrl = data.giftIconUrl;
+          if (data.memberCardBgUrl !== undefined) user.memberCardBgUrl = data.memberCardBgUrl;
+          if (data.nameColor !== undefined) user.nameColor = data.nameColor;
+          if (data.messageColor !== undefined) user.messageColor = data.messageColor;
           if (data.messageBubbleStyle) user.messageBubbleStyle = data.messageBubbleStyle;
           if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
             user.username = data.displayName.trim().slice(0, 80);
@@ -784,6 +838,9 @@ export function viteSocketIO(): Plugin {
             cover: data.profileCover || data.cover,
             avatarFrameUrl: user.avatarFrameUrl,
             giftIconUrl: user.giftIconUrl,
+            memberCardBgUrl: user.memberCardBgUrl,
+            nameColor: user.nameColor,
+            messageColor: user.messageColor,
             messageBubbleStyle: user.messageBubbleStyle,
             profileMsg: data.profileMsg,
             statusMsg: data.profileMsg || "",

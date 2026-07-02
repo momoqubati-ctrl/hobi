@@ -29,6 +29,8 @@ type OnlineMember = {
   avatarFrameUrl?: string;
   giftIconUrl?: string;
   memberCardBgUrl?: string;
+  nameColor?: string;
+  messageColor?: string;
   roomId?: string;
   status?: string;
   idreg?: string;
@@ -131,6 +133,8 @@ const getCurrentMember = () => {
       profileAccentColor: typeof user.profileAccentColor === "string" ? user.profileAccentColor : "#2563EB",
       power: typeof user.power === "string" ? user.power : "",
       siteBadge: typeof user.siteBadge === "string" && user.siteBadge.trim() ? user.siteBadge : "",
+      nameColor: typeof user.nameColor === "string" ? user.nameColor : "",
+      messageColor: typeof user.messageColor === "string" ? user.messageColor : "",
       statusMsg: resolvedStatusMsg,
       isLogin: typeof user.isLogin === "string" ? user.isLogin : role === "guest" ? "زائر" : "عضو",
     };
@@ -205,9 +209,12 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
   useEffect(() => {
     const socket = getSocket();
     const onUserProfileUpdated = (data: any) => {
+      console.log("[MemberList] user_profile_updated received:", data);
       if (!data?.userId) return;
 
+      console.log("Checking if this is current member:", data.userId === currentMember?.id, "or", data.username, "==", currentMember?.name);
       if (data.userId === currentMember?.id || data.username === currentMember?.name) {
+        console.log("Updating profile trigger for current member");
         setProfileTrigger((prev) => prev + 1);
       }
     };
@@ -329,6 +336,8 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         avatarFrameUrl: user.avatarFrameUrl || "",
         memberCardBgUrl: user.memberCardBgUrl || "",
         giftIconUrl: user.giftIconUrl || "",
+        nameColor: user.nameColor || "",
+        messageColor: user.messageColor || "",
         idreg: idregVal,
         siteBadge: user.siteBadge || "",
         statusMsg: statusMsgVal,
@@ -423,7 +432,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
             <div className="flex-1 min-w-0 text-left">
               <div className="flex items-center justify-between mb-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className={`font-bold text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl' }}>{member.name}</span>
+                  <span className={`font-bold text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl', ...(member.nameColor && member.nameColor !== "#000000" ? { color: member.nameColor } : {}) }}>{member.name}</span>
                   {member.siteBadge && (
                     <Badge className="h-3.5 text-[8px] px-1 bg-blue-600 text-white border-none rounded-sm font-black">
                       {member.siteBadge}
@@ -446,7 +455,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
               </div>
               
               <div className="flex items-center justify-between">
-                <p className="text-[10px] text-muted-foreground truncate font-medium" style={{ direction: 'rtl' }}>
+                <p className="text-[10px] text-muted-foreground truncate font-medium" style={{ direction: 'rtl', ...(member.messageColor && member.messageColor !== "#000000" ? { color: member.messageColor } : {}) }}>
                   {member.statusMsg || '(عضو جديد)'}
                 </p>
                 <div className="flex items-center gap-1 text-[9px] text-muted-foreground font-bold">

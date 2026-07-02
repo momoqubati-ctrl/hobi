@@ -5,11 +5,13 @@
 import type { Server, Socket } from "socket.io";
 import { joinRoom, leaveRoom, getRoomMembers, getRoomMemberCount, pendingDisconnects, removeConnectedUser } from "./presenceManager";
 import { publishSocketEvent, publishGlobalEvent } from "./SocketBroker";
-import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, type RoomReactionType, ROOM_REACTIONS } from "../services/chatStore";
+import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, createRoomInDatabase, type RoomReactionType, ROOM_REACTIONS } from "../services/chatStore";
 import { processText } from "../services/filterService";
 import { applyShortcuts } from "../services/shortcutService";
+import { hasPermission } from "../services/permissionEngine";
 import { eventBus } from "../core/events/EventBus";
 import { bootstrapWorkers } from "../workers";
+import { randomUUID } from "node:crypto";
 
 const TYPING_THROTTLE_MS = 900;
 const typingTimers = new Map<string, NodeJS.Timeout>();
@@ -36,7 +38,111 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       callback?.({ success: true, rooms: roomsWithCounts });
     } catch (err) {
       console.error("get_rooms failed:", err);
-      callback?.({ success: false, message: "طھط¹ط°ط± ط¬ظ„ط¨ ط§ظ„ط؛ط±ظپ" });
+      callback?.({ success: false, message: "تعذر جلب الغرف" });
+    }
+  });
+
+  /**
+   * إنشاء غرفة جديدة (للمستخدمين الذين لديهم صلاحية createroom)
+   */
+  socket.on("create_room", async (data: {
+    topic: string;
+    about: string;
+    welcome: string;
+    pass?: string;
+    max: number;
+    like?: number;
+    pinned?: boolean;
+    broadcast: boolean;
+    mic: number;
+    pic: string;
+    color: string;
+    verified: boolean;
+    roomLayout: string;
+    stageLocks?: Record<string, boolean>;
+  }, callback?: (res: any) => void) => {
+    try {
+      console.log("[create_room] received data:", JSON.stringify({ topic: data?.topic, about: data?.about?.slice(0, 20), broadcast: data?.broadcast, mic: data?.mic }));
+
+      // التحقق من وجود البيانات المطلوبة
+      if (!data?.topic || !data?.about || !data?.welcome || data?.max == null) {
+        callback?.({ success: false, message: "البيانات المطلوبة غير مكتملة (الاسم، الوصف، رسالة الترحيب، عدد الأعضاء)" });
+        return;
+      }
+
+      // التحقق من صلاحية إنشاء الغرف
+      const userId = String(user.id || "");
+      if (!userId) {
+        callback?.({ success: false, message: "يجب تسجيل الدخول أولاً" });
+        return;
+      }
+      const canCreate = await hasPermission(userId, "createroom.edit");
+      if (!canCreate) {
+        callback?.({ success: false, message: "لا تملك صلاحية إنشاء غرف" });
+        return;
+      }
+
+      // التحقق من عدم وجود غرفة بنفس الاسم
+      const rooms = await listRooms();
+      if (rooms.some(r => r.name.toLowerCase() === String(data.topic).trim().toLowerCase())) {
+        callback?.({ success: false, message: "يوجد غرفة تحمل نفس الاسم بالفعل" });
+        return;
+      }
+
+      // توليد معرف فريد للغرفة
+      const roomId = randomUUID().slice(0, 10);
+
+      // تحديد المالك (رقم العضوية)
+      const ownerRef = `#${user.idreg || user.id || "0"}`;
+
+      console.log("[create_room] creating room in DB...");
+
+      // إنشاء الغرفة في قاعدة البيانات
+      const created = await createRoomInDatabase({
+        id: roomId,
+        topic: String(data.topic).trim(),
+        about: String(data.about).trim(),
+        welcome: String(data.welcome).trim(),
+        pass: data.pass || "",
+        max: Number(data.max) || 10,
+        like: Number(data.like) || 0,
+        deleted: false,
+        broadcast: Boolean(data.pinned),
+        mic: Number(data.mic) || 0,
+        pic: data.pic || "room.png",
+        color: data.color || "#000000",
+        owner: ownerRef,
+        user: String(user.username || ""),
+        verified: Boolean(data.verified),
+        roomLayout: data.roomLayout || "normal",
+        stageLocks: data.stageLocks,
+      });
+
+      if (!created) {
+        console.error("[create_room] DB insert returned falsy");
+        callback?.({ success: false, message: "فشل إنشاء الغرفة، تأكد من عدم وجود خلل في البيانات" });
+        return;
+      }
+
+      console.log("[create_room] room created successfully, id:", roomId);
+
+      // إعادة تحميل الغرف وبثها لجميع المتصلين
+      const updatedRooms = await listRooms();
+      const roomsWithCounts = await Promise.all(
+        updatedRooms.map(async (r: any) => ({
+          ...r,
+          members: await getRoomMemberCount(r.id),
+        })),
+      );
+
+      // بث قائمة الغرف المحدثة للجميع
+      io.emit("msg", { cmd: "r+", data: roomsWithCounts });
+      await publishGlobalEvent("rooms_updated", { rooms: roomsWithCounts });
+
+      callback?.({ success: true, message: "تم إنشاء الغرفة بنجاح", roomId });
+    } catch (err) {
+      console.error("create_room failed:", err);
+      callback?.({ success: false, message: "حدث خطأ أثناء إنشاء الغرفة" });
     }
   });
 
@@ -172,6 +278,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         avatarFrameUrl: m.avatarFrameUrl,
         giftIconUrl: m.giftIconUrl,
         status: m.status || "online",
+        nameColor: m.nameColor || "",
       })),
       memberCount: members.length,
     });
@@ -188,6 +295,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           avatarFrameUrl: user.avatarFrameUrl,
           giftIconUrl: user.giftIconUrl,
           status: user.status || "online",
+          nameColor: socket.data.user.nameColor || "",
         },
         memberCount: members.length,
       }, socket.id);
@@ -295,6 +403,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         avatarFrameUrl: user.avatarFrameUrl,
         giftIconUrl: user.giftIconUrl,
         messageBubbleStyle: user.messageBubbleStyle,
+        nameColor: socket.data.user.nameColor || "",
         text: filterResult.filteredText,
         replyToId: replyToId || undefined,
         replyToText: replyToText || undefined,

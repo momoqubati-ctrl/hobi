@@ -239,7 +239,7 @@ const GiftStore = () => {
                       <AvatarFallback className="text-[10px]">{(user.name || user.username)?.[0]}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 text-right">
-                      <p className="text-xs font-bold">{user.name || user.username}</p>
+                      <p className="text-xs font-bold" style={user.nameColor && user.nameColor !== "#000000" ? { color: user.nameColor } : undefined}>{user.name || user.username}</p>
                     </div>
                     {selectedRecipient?.id === user.id && <Check size={16} className="text-primary" />}
                   </button>

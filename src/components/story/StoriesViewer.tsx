@@ -289,7 +289,7 @@ const StoriesViewer = () => {
             <img src={currentStory.authorAvatar || "/pic.png"} alt="" className="h-full w-full object-cover" />
           </div>
           <div>
-            <p className="text-sm font-bold text-white">{currentStory.authorUsername}</p>
+            <p className="text-sm font-bold text-white" style={currentStory.authorNameColor && currentStory.authorNameColor !== "#000000" ? { color: currentStory.authorNameColor } : undefined}>{currentStory.authorUsername}</p>
             <p className="text-[10px] text-white/60">
               {new Date(currentStory.createdAt).toLocaleString("ar")}
             </p>

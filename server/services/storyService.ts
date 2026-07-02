@@ -73,10 +73,12 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover,
+      COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) AS author_name_color,
       COALESCE(uv.viewed, false) AS viewed_by_me,
       COALESCE(ul.liked, false) AS liked_by_me
     FROM stories s
     LEFT JOIN users u ON u.id = s.author_id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
     LEFT JOIN LATERAL (
       SELECT true AS viewed
       FROM story_views sv
@@ -114,10 +116,12 @@ export async function getUserStories(userId: string, currentViewerId?: string): 
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover,
+      COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) AS author_name_color,
       COALESCE(uv.viewed, false) AS viewed_by_me,
       COALESCE(ul.liked, false) AS liked_by_me
     FROM stories s
     LEFT JOIN users u ON u.id = s.author_id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
     LEFT JOIN LATERAL (
       SELECT true AS viewed
       FROM story_views sv
@@ -144,9 +148,11 @@ export async function getStoryById(storyId: string): Promise<any | null> {
       COALESCE(NULLIF(u.topic, ''), NULLIF(u.display_name, ''), NULLIF(u.username, ''), LEFT(s.author_id, 12)) AS author_username,
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
-      u.cover AS author_cover
+      u.cover AS author_cover,
+      COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) AS author_name_color
     FROM stories s
     LEFT JOIN users u ON u.id = s.author_id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
     WHERE s.id = $1
     LIMIT 1
   `, [storyId]);
@@ -292,6 +298,7 @@ function normalizeStoryRow(row: any): any {
     authorRole: row.author_role,
     authorAvatar: normalizeAvatarUrl(row.author_avatar),
     authorCover: normalizeAvatarUrl(row.author_cover) || "/pich.png",
+    authorNameColor: row.author_name_color || "",
     mediaUrl: row.media_url,
     mediaType: row.media_type || "text",
     caption: row.caption,

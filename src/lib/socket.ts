@@ -29,6 +29,8 @@ function readSocketAuth(): Record<string, string> {
       avatarFrameUrl: user.avatarFrameUrl || "",
       giftIconUrl: user.giftIconUrl || "",
       memberCardBgUrl: user.memberCardBgUrl || "",
+      nameColor: user.nameColor || "",
+      messageColor: user.messageColor || "",
       messageBubbleStyle: user.messageBubbleStyle || "default",
       idreg: typeof user.idreg === "string" ? user.idreg : user.idreg ? `#${user.idreg}` : "",
       siteBadge: typeof user.siteBadge === "string" ? user.siteBadge : "",
@@ -70,6 +72,14 @@ export function getSocket(): Socket {
         }
         if (serverUser.memberCardBgUrl !== undefined && serverUser.memberCardBgUrl !== user.memberCardBgUrl) {
           user.memberCardBgUrl = serverUser.memberCardBgUrl;
+          changed = true;
+        }
+        if (serverUser.nameColor !== undefined && serverUser.nameColor !== user.nameColor) {
+          user.nameColor = serverUser.nameColor;
+          changed = true;
+        }
+        if (serverUser.messageColor !== undefined && serverUser.messageColor !== user.messageColor) {
+          user.messageColor = serverUser.messageColor;
           changed = true;
         }
         if (changed) {

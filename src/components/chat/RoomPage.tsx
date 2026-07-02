@@ -17,6 +17,7 @@ import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { fetchAnimatedFaces, AnimatedFace, findAnimatedFace } from "@/lib/animatedFaceData";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import { NotificationsBell } from "./NotificationsPanel";
+import { useRealtimeStore } from "@/lib/realtime-store";
 
 type ReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
 
@@ -41,6 +42,7 @@ type ChatMessage = {
   avatarFrameUrl?: string;
   giftIconUrl?: string;
   messageBubbleStyle?: string;
+  nameColor?: string;
   color: string;
   isOwner?: boolean;
   isSystem?: boolean;
@@ -722,6 +724,7 @@ const RoomPage = ({
 }: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [members, setMembers] = useState<RoomMember[]>([]);
+  const onlineUsers = useRealtimeStore((state) => state.onlineUsers);
   const [memberCount, setMemberCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -920,18 +923,19 @@ const RoomPage = ({
       // Update room members list
       setMembers((prev) =>
         prev.map((m) => {
-          if (m.id === data.userId || nameMatcher(m.username || m.name)) {
+          if (m.id === data.userId || nameMatcher(m.username)) {
             return {
               ...m,
               username: data.username || m.username,
               avatar: data.avatar || m.avatar,
+              nameColor: data.nameColor !== undefined ? data.nameColor : m.nameColor,
             };
           }
           return m;
         })
       );
 
-      // Update room messages avatars and display name
+      // Update room messages avatars, display name and name color
       setMessages((prev) =>
         prev.map((msg) => {
           if (nameMatcher(msg.user)) {
@@ -939,6 +943,7 @@ const RoomPage = ({
               ...msg,
               user: data.username || msg.user,
               avatar: data.avatar || msg.avatar,
+              nameColor: data.nameColor !== undefined ? data.nameColor : msg.nameColor,
             };
           }
           return msg;
@@ -1421,6 +1426,12 @@ const RoomPage = ({
                 <h4 
                   className={`text-xs font-black cursor-pointer hover:underline ${msg.color}`}
                   onClick={() => onOpenProfile?.(msg.user)}
+                  style={(() => {
+                    const u = onlineUsers.find(o => String(o.id) === String(msg.userId) || o.username === msg.user);
+                    const member = members.find(m => String(m.id) === String(msg.userId) || m.username === msg.user);
+                    const resolvedColor = u?.nameColor || member?.nameColor || msg.nameColor || "";
+                    return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                  })()}
                 >
                   {msg.user}
                 </h4>

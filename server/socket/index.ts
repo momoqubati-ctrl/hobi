@@ -108,6 +108,9 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       countryCode: detectedCountry,
       avatarFrameUrl: socket.handshake.auth?.avatarFrameUrl || "",
       giftIconUrl: socket.handshake.auth?.giftIconUrl || "",
+      memberCardBgUrl: socket.handshake.auth?.memberCardBgUrl || "",
+      nameColor: socket.handshake.auth?.nameColor || "",
+      messageColor: socket.handshake.auth?.messageColor || "",
       messageBubbleStyle: socket.handshake.auth?.messageBubbleStyle || "default",
       status: socket.handshake.auth?.status || "online",
       connectedAt: new Date().toISOString(),
@@ -117,20 +120,19 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       statusMsg: handshakeProfileMsg,
     };
 
-    // Load profile status and idreg from the canonical DB source at connection time
+    // Load profile status, colors and other details from canonical DB sources at connection time
     try {
       const { dbPool } = await import("../db");
-      const profileResult = await dbPool.query(
-        `SELECT "profile_msg", "idreg", "uid", "avatar_url", "banner_url", "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+      const result = await dbPool.query(
+        `SELECT 
+           u.idreg, u.uid, u.msg, u.pic, u.pich, u.ucol, u.mcol,
+           up.profile_msg, up.avatar_url, up.banner_url, up.avatar_frame_url, up.member_card_bg_url, up.name_color, up.message_color
+         FROM users u
+         LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+         WHERE CAST(u.id AS text) = $1 LIMIT 1`,
         [userId],
       );
-      const profileRow = profileResult.rows[0];
-      let legacyRow: any = null;
-      if (!profileRow || !String(profileRow.profile_msg || "").trim()) {
-        const legacyResult = await dbPool.query(`SELECT "msg", "idreg", "uid", "pic", "pich" FROM "users" WHERE "id" = $1 LIMIT 1`, [userId]);
-        legacyRow = legacyResult.rows[0];
-      }
-      const row = profileRow && String(profileRow.profile_msg || "").trim() ? profileRow : legacyRow || profileRow;
+      const row = result.rows[0];
       if (row) {
         const dbProfileMsg = (row.profile_msg || row.msg || "").toString().trim();
         const dbIdreg = (row.idreg || "").toString().trim();
@@ -141,14 +143,22 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
         }
         if (dbIdreg) socket.data.user.idreg = dbIdreg;
         if (dbUid && !socket.data.user.idreg) socket.data.user.idreg = dbUid;
-        if (row.avatar_url) socket.data.user.avatar = normalizeMinioUrl(row.avatar_url);
-        if (row.banner_url) socket.data.user.cover = normalizeMinioUrl(row.banner_url);
-        if (!row.avatar_url && legacyRow?.pic) socket.data.user.avatar = normalizeMinioUrl(legacyRow.pic);
-        if (!row.banner_url && legacyRow?.pich) socket.data.user.cover = normalizeMinioUrl(legacyRow.pich);
+        
+        const avatar = row.avatar_url || row.pic;
+        if (avatar) socket.data.user.avatar = normalizeMinioUrl(avatar);
+        
+        const cover = row.banner_url || row.pich;
+        if (cover) socket.data.user.cover = normalizeMinioUrl(cover);
+        
         if (row.avatar_frame_url) socket.data.user.avatarFrameUrl = String(row.avatar_frame_url);
         if (row.member_card_bg_url) socket.data.user.memberCardBgUrl = String(row.member_card_bg_url);
+        
+        socket.data.user.nameColor = String(row.name_color || row.ucol || "").trim();
+        socket.data.user.messageColor = String(row.message_color || row.mcol || "").trim();
       }
-    } catch {}
+    } catch (e) {
+      console.error("Error fetching user identity on socket connection:", e);
+    }
     // Also try in-memory as secondary fallback
     try {
       const { findInMemoryUser } = await import("../services/authService");

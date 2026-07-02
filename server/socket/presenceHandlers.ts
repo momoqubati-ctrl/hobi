@@ -17,6 +17,7 @@ import { normalizeMinioUrl } from "../services/minioClient";
 import { findInMemoryUser, updateInMemoryUserProfile } from "../services/authService";
 import { dbPool } from "../db";
 import { updatePersistedUserProfile } from "../services/userRepository";
+import { updateUserMessageIdentity } from "../services/chatStore";
 
 export async function registerPresenceHandlers(io: Server, socket: Socket): Promise<void> {
   const user = socket.data.user;
@@ -30,15 +31,18 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   let dbStatusMsg = resolvedStatusMsg;
   let dbMemberCardBg = "";
   let dbAvatarFrameUrl = "";
+  let dbNameColor = "";
+  let dbMessageColor = "";
+  let legacyColors: any = null;
   try {
     const profileResult = await dbPool.query(
-      `SELECT "profile_msg", "idreg", "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+      `SELECT "profile_msg", "idreg", "avatar_frame_url", "member_card_bg_url", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
       [user.id]
     );
     const profileRow = profileResult.rows[0];
     let legacyRow: any = null;
     if (!profileRow || !String(profileRow.profile_msg || "").trim()) {
-      const legacyResult = await dbPool.query(`SELECT "msg", "idreg" FROM "users" WHERE "id" = $1 LIMIT 1`, [user.id]);
+      const legacyResult = await dbPool.query(`SELECT "msg", "idreg", "ucol", "mcol" FROM "users" WHERE "id" = $1 LIMIT 1`, [user.id]);
       legacyRow = legacyResult.rows[0];
     }
 
@@ -47,11 +51,27 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       dbStatusMsg = (profileRow.profile_msg || "").toString().trim() || dbStatusMsg;
       dbMemberCardBg = (profileRow.member_card_bg_url || "").toString().trim();
       dbAvatarFrameUrl = (profileRow.avatar_frame_url || "").toString().trim();
+      dbNameColor = (profileRow.name_color || "").toString().trim();
+      dbMessageColor = (profileRow.message_color || "").toString().trim();
     } else if (legacyRow) {
       dbIdreg = (legacyRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (legacyRow.msg || "").toString().trim() || dbStatusMsg;
+      dbNameColor = (legacyRow.ucol || "").toString().trim();
+      dbMessageColor = (legacyRow.mcol || "").toString().trim();
     }
   } catch (_) {}
+
+  // Final fallback: read legacy ucol/mcol if still empty
+  if (!dbNameColor || !dbMessageColor) {
+    try {
+      const result = await dbPool.query(`SELECT "ucol", "mcol" FROM "users" WHERE "id" = $1 LIMIT 1`, [user.id]);
+      legacyColors = result.rows[0];
+      if (legacyColors) {
+        if (!dbNameColor) dbNameColor = (legacyColors.ucol || "").toString().trim();
+        if (!dbMessageColor) dbMessageColor = (legacyColors.mcol || "").toString().trim();
+      }
+    } catch (_) {}
+  }
 
   addConnectedUser(socket.id, {
     id: user.id,
@@ -62,6 +82,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     avatarFrameUrl: dbAvatarFrameUrl || user.avatarFrameUrl || "",
     giftIconUrl: user.giftIconUrl || "",
     memberCardBgUrl: dbMemberCardBg || user.memberCardBgUrl || "",
+    nameColor: dbNameColor || user.nameColor || "",
+    messageColor: dbMessageColor || user.messageColor || "",
     messageBubbleStyle: user.messageBubbleStyle || "default",
     roomId: "",
     connectedAt: user.connectedAt,
@@ -85,6 +107,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       avatarFrameUrl: frameUrl ? normalizeMinioUrl(frameUrl) : "",
       giftIconUrl: user.giftIconUrl || "",
       memberCardBgUrl: bgUrl,
+      nameColor: dbNameColor || user.nameColor || "",
+      messageColor: dbMessageColor || user.messageColor || "",
       roomId: socket.data.user.roomId || "",
       status: user.status || "online",
       idreg: dbIdreg,
@@ -106,20 +130,20 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
 
       // Batch-query modern and legacy profile tables for statusMsg + idreg
       const allIds = onlineUsers.map((u) => u.id).filter(Boolean);
-      let profileMap = new Map<string, { msg: string | null; idreg: string | null }>();
+      let profileMap = new Map<string, { msg: string | null; idreg: string | null; nameColor: string | null; messageColor: string | null }>();
       if (allIds.length > 0) {
         const placeholders = allIds.map((_, i) => `$${i + 1}`).join(", ");
         const result = await dbPool.query(
-          `SELECT "user_id" AS id, "profile_msg" AS msg, "idreg" FROM "user_profiles" WHERE "user_id" IN (${placeholders})`,
+          `SELECT "user_id" AS id, "profile_msg" AS msg, "idreg", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" IN (${placeholders})`,
           allIds
         );
         for (const r of result.rows) {
-          profileMap.set(r.id, { msg: r.msg, idreg: r.idreg });
+          profileMap.set(r.id, { msg: r.msg, idreg: r.idreg, nameColor: r.name_color, messageColor: r.message_color });
         }
 
         if (profileMap.size < allIds.length) {
           const legacyResult = await dbPool.query(
-            `SELECT "id", "msg", "idreg" FROM "users" WHERE "id" IN (${placeholders})`,
+            `SELECT "id", "msg", "idreg", "ucol", "mcol" FROM "users" WHERE "id" IN (${placeholders})`,
             allIds
           );
           for (const r of legacyResult.rows) {
@@ -127,6 +151,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
             profileMap.set(r.id, {
               msg: existing?.msg || r.msg || null,
               idreg: existing?.idreg || r.idreg || null,
+              nameColor: existing?.nameColor || r.ucol || null,
+              messageColor: existing?.messageColor || r.mcol || null,
             });
           }
         }
@@ -145,6 +171,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
           avatarFrameUrl: u.avatarFrameUrl,
           giftIconUrl: u.giftIconUrl,
           memberCardBgUrl: u.memberCardBgUrl || "",
+          nameColor: dbProfile?.nameColor || u.nameColor || "",
+          messageColor: dbProfile?.messageColor || u.messageColor || "",
           roomId: u.roomId,
           status: u.status || "online",
           idreg,
@@ -166,7 +194,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   const handleProfileUpdate = async (data: Record<string, any>) => {
     if (!data || typeof data !== "object") return;
 
-    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl"];
+    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl", "nameColor", "messageColor"];
     for (const key of allowedKeys) {
       if (typeof data[key] === "string") {
         const val = data[key].trim().slice(0, 255);
@@ -201,7 +229,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     // تحديث البيانات في كاش الحضور بـ Redis
     try {
       // Also update the in-memory user profile (source of truth for get_online_users)
-      const profileUpdates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string } = {};
+      const profileUpdates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
       if (typeof data.avatar === "string" || typeof data.avatarUrl === "string") {
         profileUpdates.avatar = socket.data.user.avatar;
       }
@@ -213,6 +241,14 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       }
       if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
         profileUpdates.displayName = user.username;
+      }
+      if (typeof data.nameColor === "string") {
+        console.log("[presenceHandlers] Setting nameColor in socket.data.user:", data.nameColor);
+        profileUpdates.nameColor = data.nameColor.trim().slice(0, 20);
+      }
+      if (typeof data.messageColor === "string") {
+        console.log("[presenceHandlers] Setting messageColor in socket.data.user:", data.messageColor);
+        profileUpdates.messageColor = data.messageColor.trim().slice(0, 20);
       }
       if (Object.keys(profileUpdates).length > 0) {
         updateInMemoryUserProfile(user.username, profileUpdates);
@@ -232,6 +268,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         avatarFrameUrl: socket.data.user.avatarFrameUrl || "",
         giftIconUrl: socket.data.user.giftIconUrl || "",
         memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
+        nameColor: socket.data.user.nameColor || "",
+        messageColor: socket.data.user.messageColor || "",
         messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
         roomId: socket.data.user.roomId || "",
         connectedAt: user.connectedAt,
@@ -240,13 +278,24 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         siteBadge: socket.data.user.siteBadge || "",
         statusMsg: socket.data.user.statusMsg || "",
       });
+
+      console.log("[presenceHandlers] addConnectedUser called with nameColor:", socket.data.user.nameColor);
     } catch (err) {
       console.error("Failed to update profile in Redis:", err);
     }
 
+    // Update cached room messages with the new profile data
+    updateUserMessageIdentity(user.username, {
+      avatar: socket.data.user.avatar || user.avatar,
+      nameColor: socket.data.user.nameColor || "",
+    });
+
     updateCachedWallAuthorProfile(
       { userId: user.id, username: user.username },
-      { avatar: socket.data.user.avatar || user.avatar },
+      {
+        avatar: socket.data.user.avatar || user.avatar,
+        nameColor: socket.data.user.nameColor !== undefined ? socket.data.user.nameColor : "",
+      },
     );
 
     io.emit("user_profile_updated", {
@@ -263,6 +312,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       avatarFrameUrl: socket.data.user.avatarFrameUrl ? normalizeMinioUrl(socket.data.user.avatarFrameUrl) : "",
       giftIconUrl: socket.data.user.giftIconUrl || "",
       memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
+      nameColor: socket.data.user.nameColor || "",
+      messageColor: socket.data.user.messageColor || "",
       messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
       roomId: socket.data.user.roomId || "",
       idreg: socket.data.user.idreg || user.idreg || "",
@@ -294,6 +345,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         avatarFrameUrl: socket.data.user.avatarFrameUrl || "",
         giftIconUrl: socket.data.user.giftIconUrl || "",
         memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
+        nameColor: socket.data.user.nameColor || "",
+        messageColor: socket.data.user.messageColor || "",
         messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
         roomId: socket.data.user.roomId || "",
         connectedAt: user.connectedAt,

@@ -138,6 +138,8 @@ export async function runAutoMigrations() {
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "mic" integer DEFAULT 0;
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "needpass" integer DEFAULT 0;
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "deleted" integer DEFAULT 0;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "verified" boolean DEFAULT false;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "room_layout" varchar(50) DEFAULT 'normal';
     `);
 
     // 7. التأكد من وجود قيد فريد على حقل id في جدول users لتمكين الجداول الأخرى من الإشارة إليه كمفتاح خارجي
@@ -1133,6 +1135,11 @@ export async function ensureUserProfilesColumns() {
   try {
     await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "member_card_bg_url" text;`);
     await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "avatar_frame_url" text;`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "name_color" varchar(20);`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "message_color" varchar(20);`);
+    // Populate name_color and message_color from legacy users table for existing rows
+    await client.query(`UPDATE "user_profiles" SET "name_color" = "users"."ucol" FROM "users" WHERE CAST("users"."id" AS text) = "user_profiles"."user_id" AND ("user_profiles"."name_color" IS NULL OR "user_profiles"."name_color" = '')`);
+    await client.query(`UPDATE "user_profiles" SET "message_color" = "users"."mcol" FROM "users" WHERE CAST("users"."id" AS text) = "user_profiles"."user_id" AND ("user_profiles"."message_color" IS NULL OR "user_profiles"."message_color" = '')`);
   } catch (err) {
     // تجاهل الخطأ
   } finally {

@@ -13,6 +13,10 @@ export type ChatRoom = {
   mics: number;
   likes: number;
   locked: boolean;
+  color?: string;
+  welcome?: string;
+  verified?: boolean;
+  roomLayout?: string;
 };
 
 export type RoomReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
@@ -32,6 +36,7 @@ export type ChatMessage = {
   avatarFrameUrl?: string;
   giftIconUrl?: string;
   messageBubbleStyle?: string;
+  nameColor?: string;
   color: string;
   isOwner?: boolean;
   isSystem?: boolean;
@@ -98,6 +103,7 @@ const DEFAULT_ROOMS = [
     owner: "إدارة الموقع",
     image: "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&h=400&fit=crop",
     members: 0, mics: 5, likes: 1000, locked: false,
+    color: "#000000", welcome: "أهلاً بك {user} في الغرفة العامة", verified: false, roomLayout: "normal",
   },
   {
     id: "events",
@@ -106,6 +112,7 @@ const DEFAULT_ROOMS = [
     owner: "المشرف الذهبي",
     image: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&h=400&fit=crop",
     members: 0, mics: 3, likes: 500, locked: false,
+    color: "#000000", welcome: "أهلاً بك {user} في غرفة المسابقات", verified: false, roomLayout: "normal",
   }
 ];
 
@@ -136,7 +143,11 @@ const loadRoomsFromDatabase = async () => {
         owner,
         pic as "image",
         mic as "mics",
-        COALESCE(needpass, 0) != 0 as "locked"
+        COALESCE(needpass, 0) != 0 as "locked",
+        color,
+        welcome,
+        COALESCE(verified, false) as "verified",
+        COALESCE(room_layout, 'normal') as "roomLayout"
       FROM rooms 
       WHERE COALESCE(deleted, 0) = 0
       ORDER BY idroom ASC
@@ -158,6 +169,10 @@ const loadRoomsFromDatabase = async () => {
       mics: Number(r.mics) || 0,
       likes: 0,
       locked: Boolean(r.locked),
+      color: r.color || "#000000",
+      welcome: r.welcome || "",
+      verified: Boolean(r.verified),
+      roomLayout: r.roomLayout || "normal",
     }));
     setRoomCache(rooms);
     return rooms;
@@ -192,12 +207,79 @@ export const listMessages = (roomId: string, after?: string) => {
   return [];
 };
 
+export const createRoomInDatabase = async (data: {
+  id: string;
+  topic: string;
+  about: string;
+  welcome: string;
+  pass: string;
+  max: number;
+  like: number;
+  deleted: boolean;
+  broadcast: boolean;
+  mic: number;
+  pic: string;
+  color: string;
+  owner: string;
+  user: string;
+  verified: boolean;
+  roomLayout: string;
+  stageLocks?: Record<string, boolean>;
+}) => {
+  const needpass = data.pass ? 1 : 0;
+  const stageCountSafe = Math.max(0, Math.min(Number(data.mic) || 0, 5));
+  const initialStageState = data.stageLocks
+    ? JSON.stringify(Object.fromEntries(
+        Object.entries(data.stageLocks).map(([key, val]) => [key, val ? 1 : 0]),
+      ))
+    : JSON.stringify({ "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 });
+  const roomOwnerMeta = JSON.stringify({
+    ownerId: data.owner,
+    ownerUser: data.user,
+    ownerTopic: data.user,
+    badge_id: "",
+    badge: { name: "", bg: "", icon: "", bg_type: "static" },
+    assignments: [],
+  });
+
+  try {
+    await dbPool.query(
+      `INSERT INTO rooms
+        (id, topic, about, welcome, pass, max, rmli, deleted, broadcast, mic, stage_count, stage_state, pic, color, "user", owner, needpass, room_owner_meta, message_mode, verified, room_layout)
+       VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+      [
+        data.id, data.topic, data.about, data.welcome, data.pass || "",
+        data.max, data.like || 0, data.deleted ? 1 : 0,
+        data.broadcast ? 1 : 0, data.mic, stageCountSafe, initialStageState,
+        data.pic || "room.png", data.color || "#000000", data.user, data.owner,
+        needpass, roomOwnerMeta, "real", data.verified ? 1 : 0, data.roomLayout || "normal",
+      ],
+    );
+    invalidateRoomCache();
+    return true;
+  } catch (err) {
+    console.error("Failed to create room:", err);
+    return false;
+  }
+};
+
 export const updateUserMessageIdentity = (
   username: string,
-  updates: { avatar?: string; avatarFrameUrl?: string; giftIconUrl?: string; messageBubbleStyle?: string },
+  updates: { avatar?: string; avatarFrameUrl?: string; giftIconUrl?: string; messageBubbleStyle?: string; nameColor?: string },
 ) => {
-  void username;
-  void updates;
+  if (!username) return;
+  const normalized = username.trim().toLowerCase();
+  for (const roomMsgs of roomMessagesCache.values()) {
+    for (const [msgId, msg] of roomMsgs) {
+      if (msg.user.trim().toLowerCase() !== normalized) continue;
+      if (updates.avatar !== undefined) msg.avatar = updates.avatar;
+      if (updates.avatarFrameUrl !== undefined) msg.avatarFrameUrl = updates.avatarFrameUrl;
+      if (updates.giftIconUrl !== undefined) msg.giftIconUrl = updates.giftIconUrl;
+      if (updates.messageBubbleStyle !== undefined) msg.messageBubbleStyle = updates.messageBubbleStyle;
+      if (updates.nameColor !== undefined) msg.nameColor = updates.nameColor;
+    }
+  }
 };
 
 export const addMessage = (input: {
@@ -211,6 +293,7 @@ export const addMessage = (input: {
   avatarFrameUrl?: string;
   giftIconUrl?: string;
   messageBubbleStyle?: string;
+  nameColor?: string;
   text: string;
   isSystem?: boolean;
   replyToId?: string;
@@ -235,6 +318,7 @@ export const addMessage = (input: {
     avatarFrameUrl: input.avatarFrameUrl?.trim().slice(0, 255) || "",
     giftIconUrl: input.giftIconUrl?.trim().slice(0, 255) || "",
     messageBubbleStyle: input.messageBubbleStyle?.trim().slice(0, 64) || "default",
+    nameColor: input.nameColor?.trim().slice(0, 20) || "",
     text: input.text.trim().slice(0, 1000) || (input.mediaType === "audio" ? "🎤 رسالة صوتية" : ""),
     color: input.role === "admin" ? "text-red-600" : "text-slate-700",
     isOwner: input.role === "admin",

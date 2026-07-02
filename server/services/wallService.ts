@@ -50,6 +50,7 @@ const mapWallPost = (row: any) => {
       id: String(row.authorId || ""),
       name: row.authorName || row.fallbackAuthorName || row.authorId || "زائر",
       avatar: normalizeAssetPath(row.authorAvatar, "/pic.png"),
+      nameColor: row.authorNameColor || "",
     },
   };
 };
@@ -80,9 +81,11 @@ export const listWallPosts = async () => {
       SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.media_urls as "mediaUrls", b.animated_faces as "animatedFaces",
              b.uid as "authorId", b.topic as "fallbackAuthorName",
              COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as "authorName",
-             NULLIF(u.pic, '') as "authorAvatar"
+             NULLIF(u.pic, '') as "authorAvatar",
+             COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor"
       FROM bars b
       LEFT JOIN users u ON b.uid = u.uid OR b.uid = u.id OR b.uid = u.idreg::text OR lower(b.topic) = lower(u.username)
+      LEFT JOIN user_profiles up ON up.user_id = u.id
       ORDER BY b.id DESC
       LIMIT 50
     `);
@@ -133,6 +136,7 @@ export const createWallPost = async (
     ...row,
     authorName,
     authorAvatar: user?.pic,
+    authorNameColor: user?.ucol || "",
     createdAt: new Date().toISOString(),
   });
 
@@ -142,9 +146,9 @@ export const createWallPost = async (
 
 export const updateCachedWallAuthorProfile = (
   identity: { userId?: string; username?: string },
-  updates: { avatar?: string },
+  updates: { avatar?: string; nameColor?: string },
 ) => {
-  if (!cachedWallPosts || !updates.avatar) return;
+  if (!cachedWallPosts || (!updates.avatar && updates.nameColor === undefined)) return;
 
   const userId = String(identity.userId || "").trim();
   const username = String(identity.username || "").trim();
@@ -156,7 +160,8 @@ export const updateCachedWallAuthorProfile = (
       ...post,
       author: {
         ...author,
-        avatar: updates.avatar,
+        ...(updates.avatar !== undefined ? { avatar: updates.avatar } : {}),
+        ...(updates.nameColor !== undefined ? { nameColor: updates.nameColor } : {}),
       },
     };
   });
@@ -195,6 +200,7 @@ export const createWallComment = async (
       id: resolvedId,
       name: resolvedName,
       avatar: user?.pic ? normalizeAssetPath(user.pic, "/pic.png") : "/pic.png",
+      nameColor: user?.ucol || "",
     },
     parentId: parentId || null,
     replies: [],
@@ -203,12 +209,15 @@ export const createWallComment = async (
 
 export const listPostComments = async (postId: string) => {
   const result = await dbPool.query(
-    `SELECT id, body, COALESCE(created_at, NOW()) as "createdAt",
-            author_topic as "authorName", author_pic as "authorAvatar",
-            author_id as "authorId", parent_id as "parentId"
-     FROM bar_comments
-     WHERE bar_id = $1
-     ORDER BY id ASC`,
+    `SELECT bc.id, bc.body, COALESCE(bc.created_at, NOW()) as "createdAt",
+            bc.author_topic as "authorName", bc.author_pic as "authorAvatar",
+            bc.author_id as "authorId", bc.parent_id as "parentId",
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor"
+     FROM bar_comments bc
+     LEFT JOIN users u ON u.id::text = bc.author_id::text
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE bc.bar_id = $1
+     ORDER BY bc.id ASC`,
     [parseInt(postId, 10)],
   );
 
@@ -220,6 +229,7 @@ export const listPostComments = async (postId: string) => {
       id: String(row.authorId || ""),
       name: row.authorName || "زائر",
       avatar: row.authorAvatar ? normalizeAssetPath(row.authorAvatar, "/pic.png") : "/pic.png",
+      nameColor: row.authorNameColor || "",
     },
     parentId: row.parentId ? String(row.parentId) : null,
     replies: [] as any[],

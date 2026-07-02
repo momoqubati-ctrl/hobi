@@ -5,6 +5,7 @@ export type Story = {
   id: string;
   authorId: string;
   authorUsername: string;
+  authorNameColor?: string;
   authorRole: string;
   authorAvatar: string;
   authorCover: string;
@@ -144,14 +145,15 @@ export function getStoriesByUser(stories: Story[], userIndex: number): Story[] {
   return stories.filter((s) => s.authorId === authorId);
 }
 
-export function getStoryUsers(stories: Story[]): { authorId: string; authorUsername: string; authorAvatar: string; hasUnviewed: boolean }[] {
-  const seen = new Map<string, { authorId: string; authorUsername: string; authorAvatar: string; hasUnviewed: boolean }>();
+export function getStoryUsers(stories: Story[]): { authorId: string; authorUsername: string; authorAvatar: string; authorNameColor?: string; hasUnviewed: boolean }[] {
+  const seen = new Map<string, { authorId: string; authorUsername: string; authorAvatar: string; authorNameColor?: string; hasUnviewed: boolean }>();
   for (const s of stories) {
     if (!seen.has(s.authorId)) {
       seen.set(s.authorId, {
         authorId: s.authorId,
         authorUsername: s.authorUsername,
         authorAvatar: s.authorAvatar,
+        authorNameColor: s.authorNameColor,
         hasUnviewed: !s.viewedByMe,
       });
     } else {
@@ -180,6 +182,7 @@ export function initStoriesListeners() {
             ...st,
             authorAvatar: data.avatar || data.avatarUrl || st.authorAvatar,
             authorUsername: data.username || st.authorUsername,
+            authorNameColor: data.nameColor !== undefined ? data.nameColor : st.authorNameColor,
           };
         }
         return st;

@@ -28,6 +28,8 @@ export default defineEventHandler(async (event) => {
       welcomeMessage,
       stageLocks,
       localSendMode,
+      verified,
+      roomLayout,
     } = body || {};
 
     if (!name || !slug) {
@@ -69,9 +71,9 @@ export default defineEventHandler(async (event) => {
 
     const created = await dbPool.query(
       `INSERT INTO rooms
-        (about, "user", pass, id, owner, topic, pic, rmli, mic, welcome, broadcast, deleted, needpass, color, max, stage_count, stage_state, room_owner_meta, message_mode)
+        (about, "user", pass, id, owner, topic, pic, rmli, mic, welcome, broadcast, deleted, needpass, color, max, stage_count, stage_state, room_owner_meta, message_mode, verified, room_layout)
        VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, $16, $17, $18)
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
         description || "",
@@ -92,6 +94,8 @@ export default defineEventHandler(async (event) => {
         JSON.stringify(stageState),
         JSON.stringify(roomOwnerMeta),
         localSendMode || "real",
+        verified ? 1 : 0,
+        roomLayout || "normal",
       ],
     );
 

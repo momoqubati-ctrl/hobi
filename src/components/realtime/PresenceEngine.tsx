@@ -352,6 +352,8 @@ const PresenceEngine = () => {
           avatarFrameUrl: data.avatarFrameUrl || "",
           giftIconUrl: data.giftIconUrl || "",
           memberCardBgUrl: data.memberCardBgUrl || "",
+          nameColor: data.nameColor || "",
+          messageColor: data.messageColor || "",
           roomId: data.roomId || "",
           status: data.status || "online",
           idreg: data.idreg || "",
@@ -372,11 +374,17 @@ const PresenceEngine = () => {
     };
 
     const onUserProfileUpdated = (data: any) => {
-      console.debug("[socket] user_profile_updated", new Date().toISOString(), data);
-      if (!data?.userId) return;
+      console.log("[PresenceEngine] user_profile_updated received:", data);
+      if (!data?.userId) {
+        console.log("[PresenceEngine] No userId in data, ignoring event");
+        return;
+      }
+
+      console.log("[PresenceEngine] Calling mergeOnlineUser for user:", data.userId, data.username);
+      console.log("[PresenceEngine] nameColor in data:", data.nameColor, "messageColor:", data.messageColor);
 
       // Update online user (including display name)
-      mergeOnlineUser(hydratePresenceUser({
+      const merged = mergeOnlineUser(hydratePresenceUser({
         id: data.userId,
         username: data.username,
         avatar: data.avatar || data.avatarUrl,
@@ -384,17 +392,23 @@ const PresenceEngine = () => {
         profileCover: data.profileCover,
         avatarFrameUrl: data.avatarFrameUrl || "",
         memberCardBgUrl: data.memberCardBgUrl || "",
+        nameColor: data.nameColor || "",
+        messageColor: data.messageColor || "",
         statusMsg: data.statusMsg || data.profileMsg || "",
         siteBadge: data.siteBadge || "",
         idreg: data.idreg || "",
       }));
+
+      console.log("[PresenceEngine] mergeOnlineUser result:", merged ? "success" : "not found");
+      console.log("[PresenceEngine] Updated onlineUsers list now contains", useRealtimeStore.getState().onlineUsers.length, "users");
 
       // Update wall post author (avatar + display name)
       updateWallAuthorProfile(
         data.userId,
         data.username,
         data.avatar || data.avatarUrl,
-        data.previousUsername
+        data.previousUsername,
+        data.nameColor !== undefined ? data.nameColor : undefined
       );
     };
 

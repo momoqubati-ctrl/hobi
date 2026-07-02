@@ -37,7 +37,12 @@ export default defineEventHandler(async (event) => {
          r.broadcast,
          r.deleted,
          r.stage_count AS "stageCount",
-         r.message_mode AS "messageMode"
+         r.message_mode AS "messageMode",
+         r.rmli AS "likesRequired",
+         r.stage_state AS "stageState",
+         r.room_owner_meta AS "roomOwnerMeta",
+         COALESCE(r.verified, false) AS "verified",
+         COALESCE(r.room_layout, 'normal') AS "roomLayout"
        FROM rooms r
        LEFT JOIN users u ON r.owner = CONCAT('#', u.idreg::text)
        ${where}

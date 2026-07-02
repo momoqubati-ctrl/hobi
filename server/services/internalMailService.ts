@@ -15,13 +15,19 @@ export const sendMail = async (senderId: string, recipientId: string, body: stri
   const row = result.rows[0];
 
   const senderRes = await dbPool.query(
-    `SELECT COALESCE(NULLIF(topic,''), NULLIF(username,'')) as name, pic as avatar
-     FROM users WHERE id = $1 OR uid = $1 OR idreg::text = $1 LIMIT 1`,
+    `SELECT COALESCE(NULLIF(u.topic,''), NULLIF(u.username,'')) as name, u.pic as avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as name_color
+     FROM users u
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE u.id = $1 OR u.uid = $1 OR u.idreg::text = $1 LIMIT 1`,
     [senderId],
   );
   const recipientRes = await dbPool.query(
-    `SELECT COALESCE(NULLIF(topic,''), NULLIF(username,'')) as name, pic as avatar
-     FROM users WHERE id = $1 OR uid = $1 OR idreg::text = $1 LIMIT 1`,
+    `SELECT COALESCE(NULLIF(u.topic,''), NULLIF(u.username,'')) as name, u.pic as avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as name_color
+     FROM users u
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE u.id = $1 OR u.uid = $1 OR u.idreg::text = $1 LIMIT 1`,
     [recipientId],
   );
 
@@ -38,8 +44,10 @@ export const sendMail = async (senderId: string, recipientId: string, body: stri
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
     senderName: senderUser?.name || senderId,
     senderAvatar: senderUser?.avatar || "/pic.png",
+    senderNameColor: senderUser?.name_color || "",
     recipientName: recipientUser?.name || recipientId,
     recipientAvatar: recipientUser?.avatar || "/pic.png",
+    recipientNameColor: recipientUser?.name_color || "",
   };
 };
 
@@ -47,9 +55,11 @@ export const getInbox = async (userId: string) => {
   const mails = await dbPool.query(
     `SELECT im.*,
             COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as sender_name,
-            u.pic as sender_avatar
+            u.pic as sender_avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as sender_name_color
      FROM internal_mail im
      LEFT JOIN users u ON u.id = im.sender_id OR u.uid = im.sender_id OR u.idreg::text = im.sender_id
+     LEFT JOIN user_profiles up ON up.user_id = u.id
      WHERE im.recipient_id = $1
      ORDER BY im.created_at DESC`,
     [userId],
@@ -65,6 +75,7 @@ export const getInbox = async (userId: string) => {
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
     senderName: row.sender_name || row.sender_id,
     senderAvatar: row.sender_avatar || "/pic.png",
+    senderNameColor: row.sender_name_color || "",
   }));
 };
 
@@ -72,9 +83,11 @@ export const getOutbox = async (userId: string) => {
   const mails = await dbPool.query(
     `SELECT im.*,
             COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as recipient_name,
-            u.pic as recipient_avatar
+            u.pic as recipient_avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as recipient_name_color
      FROM internal_mail im
      LEFT JOIN users u ON u.id = im.recipient_id OR u.uid = im.recipient_id OR u.idreg::text = im.recipient_id
+     LEFT JOIN user_profiles up ON up.user_id = u.id
      WHERE im.sender_id = $1
      ORDER BY im.created_at DESC`,
     [userId],
@@ -90,6 +103,7 @@ export const getOutbox = async (userId: string) => {
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
     recipientName: row.recipient_name || row.recipient_id,
     recipientAvatar: row.recipient_avatar || "/pic.png",
+    recipientNameColor: row.recipient_name_color || "",
   }));
 };
 

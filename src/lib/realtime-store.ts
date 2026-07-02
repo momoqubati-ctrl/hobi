@@ -69,7 +69,7 @@ interface RealtimeState {
   setWallPosts: (posts: any[]) => void;
   addWallPost: (post: any) => void;
   removeWallPost: (postId: string) => void;
-  updateWallAuthorProfile: (userId: string, username: string, avatar: string, previousUsername?: string) => void;
+  updateWallAuthorProfile: (userId: string, username: string, avatar: string, previousUsername?: string, nameColor?: string) => void;
   setLoadingWallPosts: (val: boolean) => void;
   setHasNewWallPosts: (val: boolean) => void;
   setIsWallLoaded: (val: boolean) => void;
@@ -211,8 +211,10 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       found = true;
       const updated = { ...user } as any;
       for (const [key, value] of Object.entries(incoming)) {
-        const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl";
-        if (value !== undefined && (canBeEmpty || !(typeof value === 'string' && value === ''))) {
+        const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
+        const isStringEmpty = typeof value === 'string' && value === '';
+        const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
+        if (shouldUpdate) {
           updated[key] = value;
         }
       }
@@ -225,15 +227,41 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
         const incomingId = String(incoming.id).trim();
         for (let i = 0; i < next.length; i++) {
           const u = next[i];
-          // match by socketId or username to attach the id to the existing entry
+          const existingId = String(u.id).trim();
           const sameSocket = u.socketId && incoming.socketId && u.socketId === incoming.socketId;
           const sameUsername = u.username && incoming.username && String(u.username).trim().toLowerCase() === String(incoming.username).trim().toLowerCase();
-          const sameId = u.id && incoming.id && String(u.id).trim() === incomingId;
+          const sameId = existingId === incomingId;
           if (sameSocket || sameUsername || sameId) {
             const updated = { ...u } as any;
             for (const [key, value] of Object.entries(incoming)) {
-              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl";
-              if (value !== undefined && (canBeEmpty || !(typeof value === 'string' && value === ''))) updated[key] = value;
+              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
+              const isStringEmpty = typeof value === 'string' && value === '';
+              const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
+              if (shouldUpdate) {
+                updated[key] = value;
+              }
+            }
+            next[i] = updated;
+            merged = true;
+            break;
+          }
+        }
+      }
+
+      if (!merged && incoming && incoming.id) {
+        const incomingId = String(incoming.id).trim();
+        for (let i = 0; i < next.length; i++) {
+          const u = next[i];
+          const existingId = String(u.id).trim();
+          if (existingId === incomingId) {
+            const updated = { ...u } as any;
+            for (const [key, value] of Object.entries(incoming)) {
+              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
+              const isStringEmpty = typeof value === 'string' && value === '';
+              const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
+              if (shouldUpdate) {
+                updated[key] = value;
+              }
             }
             next[i] = updated;
             merged = true;
@@ -341,7 +369,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     }
     return { wallPosts, wallLikeCounts: likeCounts, wallCommentCounts: commentCounts, wallLikedPosts: likedSet };
   }),
-  updateWallAuthorProfile: (userId, username, avatar, previousUsername?) => set((state) => ({
+  updateWallAuthorProfile: (userId, username, avatar, previousUsername?, nameColor?) => set((state) => ({
     wallPosts: state.wallPosts.map((post) => {
       const author = post.author || {};
       const nameMatch = author.name === username || (previousUsername && author.name === previousUsername);
@@ -352,6 +380,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           ...author,
           name: username || author.name,
           avatar: avatar || author.avatar,
+          ...(nameColor !== undefined ? { nameColor } : {}),
         }
       };
     })

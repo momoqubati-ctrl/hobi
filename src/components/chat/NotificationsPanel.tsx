@@ -18,7 +18,7 @@ interface NotificationItem {
   metadata: Record<string, any>;
   readAt: string | null;
   createdAt: string;
-  actor: { name: string; avatar: string };
+  actor: { name: string; avatar: string; nameColor?: string };
   isRead?: boolean; // توافقاً مع Zustand store
 }
 
@@ -188,7 +188,13 @@ const NotificationsList = ({ compact, onClose }: NotificationsListProps) => {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs truncate">{n.actor?.name}</span>
+                      <span className="font-bold text-xs truncate" style={(() => {
+                        const actorId = n.actorId || n.actor?.id;
+                        if (!actorId) return undefined;
+                        const u = onlineUsers.find(o => String(o.id) === String(actorId));
+                        const resolvedColor = u?.nameColor || (n.actor as any)?.nameColor || "";
+                        return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                      })()}>{n.actor?.name}</span>
                       <NotificationIcon type={n.type} />
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">{getNotificationText(n)}</p>

@@ -23,13 +23,17 @@ export const createNotification = async (
 
   const row = result.rows[0];
 
-  // جلب معلومات المستخدم (الاسم المستعار + صورة البروفايل)
+  // جلب معلومات المستخدم (الاسم المستعار + صورة البروفايل + اللون)
   let actorName = "مستخدم";
   let actorAvatar = "/pic.png";
+  let actorNameColor = "";
   try {
     console.log("[Notification] Looking up actor:", actorId, typeof actorId);
     const actorRes = await dbPool.query(
-      `SELECT username, topic, pic FROM users WHERE CAST(id AS TEXT) = $1 OR CAST(uid AS TEXT) = $1 OR CAST(idreg AS TEXT) = $1 LIMIT 1`,
+      `SELECT u.username, u.topic, u.pic, COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE CAST(u.id AS TEXT) = $1 OR CAST(u.uid AS TEXT) = $1 OR CAST(u.idreg AS TEXT) = $1 LIMIT 1`,
       [String(actorId)]
     );
     console.log("[Notification] Actor query result:", actorRes.rows);
@@ -37,6 +41,7 @@ export const createNotification = async (
       const actor = actorRes.rows[0];
       actorName = actor.topic || actor.username || "مستخدم";
       actorAvatar = actor.pic || "/pic.png";
+      actorNameColor = actor.actor_name_color || "";
     }
   } catch (e) {
     console.error("[Notification] Failed to fetch actor info:", e);
@@ -55,6 +60,7 @@ export const createNotification = async (
     actor: {
       name: actorName,
       avatar: actorAvatar,
+      nameColor: actorNameColor,
     },
   };
 
@@ -75,9 +81,11 @@ export const createNotification = async (
 export const getNotifications = async (userId: string, limit = 30, offset = 0) => {
   const result = await dbPool.query(
     `SELECT n.id, n.user_id, n.actor_id, n.type, n.entity_type, n.entity_id, n.metadata, n.read_at, n.created_at,
-            u.username as actor_name, u.topic as actor_display, u.pic as actor_avatar
+            u.username as actor_name, u.topic as actor_display, u.pic as actor_avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color
      FROM notifications n
      LEFT JOIN users u ON CAST(u.id AS TEXT) = n.actor_id OR CAST(u.uid AS TEXT) = n.actor_id OR CAST(u.idreg AS TEXT) = n.actor_id
+     LEFT JOIN user_profiles up ON up.user_id = u.id
      WHERE n.user_id = $1
      ORDER BY n.created_at DESC
      LIMIT $2 OFFSET $3`,
@@ -97,6 +105,7 @@ export const getNotifications = async (userId: string, limit = 30, offset = 0) =
     actor: {
       name: row.actor_display || row.actor_name || "مستخدم",
       avatar: row.actor_avatar || "/pic.png",
+      nameColor: row.actor_name_color || "",
     },
   }));
 };

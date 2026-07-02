@@ -43,10 +43,12 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const body = await readBody(event);
-    const { avatar, cover, profileMsg, displayName, nameColor, messageColor } = body;
+const body = await readBody(event);
+      const { avatar, cover, profileMsg, displayName, nameColor, messageColor } = body;
 
-    const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
+      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor });
+
+      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
 
     if (avatar && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
@@ -121,6 +123,10 @@ export default defineEventHandler(async (event) => {
       messageColor: updates.messageColor,
     };
 
+    console.log("[API] Profile update eventPayload:", eventPayload);
+    console.log("[API] nameColor in eventPayload:", eventPayload.nameColor);
+    console.log("[API] messageColor in eventPayload:", eventPayload.messageColor);
+
     // Always read the latest canonical profile data from DB after update to ensure correct broadcast
     try {
       const latestRow = await dbPool.query(
@@ -149,13 +155,15 @@ export default defineEventHandler(async (event) => {
       }
     } catch {}
 
-    // Try direct broadcast via Socket.IO instance (more reliable across Vite contexts)
-    const io = getIO();
-    if (io) {
-      io.emit("user_profile_updated", eventPayload);
-    } else {
-      publishGlobalEvent("user_profile_updated", eventPayload).catch((err) => console.error("profile update broadcast failed:", err));
-    }
+// Try direct broadcast via Socket.IO instance (more reliable across Vite contexts)
+        const io = getIO();
+        console.log("[API] Broadcasting user_profile_updated via io:", eventPayload);
+        if (io) {
+          io.emit("user_profile_updated", eventPayload);
+          console.log("[API] user_profile_updated event sent successfully");
+        } else {
+          publishGlobalEvent("user_profile_updated", eventPayload).catch((err) => console.error("profile update broadcast failed:", err));
+        }
 
     return {
       success: true,

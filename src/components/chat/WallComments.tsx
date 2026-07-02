@@ -55,7 +55,7 @@ const CommentThread = ({
   const [replyText, setReplyText] = useState("");
   const [isReplying, setIsReplying] = useState(false);
   const [showReplies, setShowReplies] = useState(depth < 1);
-  const { wallCommentLiked, wallCommentLikeCounts } = useRealtimeStore();
+  const { wallCommentLiked, wallCommentLikeCounts, onlineUsers } = useRealtimeStore();
   const isLiked = wallCommentLiked.has(String(comment.id));
   const likeCount = wallCommentLikeCounts[String(comment.id)] ?? 0;
   const replyCount = comment.replies?.length || 0;
@@ -97,6 +97,12 @@ const CommentThread = ({
             <span
               className="text-[10px] font-black text-foreground cursor-pointer hover:underline"
               onClick={() => onOpenProfile?.(comment.author.id || comment.author.name)}
+              style={(() => {
+                if (!comment.author?.id) return undefined;
+                const u = onlineUsers.find(o => String(o.id) === String(comment.author.id));
+                const resolvedColor = u?.nameColor || (comment.author as any)?.nameColor || "";
+                return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+              })()}
             >
               {comment.author.name}
             </span>
