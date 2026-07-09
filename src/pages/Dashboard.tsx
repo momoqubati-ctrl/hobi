@@ -62,7 +62,9 @@ const Dashboard = () => {
     if (!socket?.connected) return;
     setLockedRoomLoading(true);
     setLockedRoomError("");
+    console.log("[CLIENT_JOIN] emitting join_room", { roomId: room.id, password });
     socket.emit("join_room", { roomId: room.id, password }, (res: any) => {
+      console.log("[CLIENT_JOIN] callback", { roomId: room.id, res });
       setLockedRoomLoading(false);
       if (res?.success) {
         setLockedRoom(null);

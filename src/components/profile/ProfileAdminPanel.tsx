@@ -21,7 +21,9 @@ export function ProfileAdminPanel({ profileId, currentRole, isMuted: initialMute
 
   const runAction = (action: string, value?: any, reason?: string) => {
     try {
+      console.log("[CLIENT_ADMIN] emitting profile:adminAction", { profileId, action, value, reason });
       socket.emit("profile:adminAction", { profileId, action, value, reason }, (res: any) => {
+        console.log("[CLIENT_ADMIN] callback", { profileId, action, res });
         try {
           if (res?.success) {
             toast.success(res.notice || "تم تنفيذ الإجراء");

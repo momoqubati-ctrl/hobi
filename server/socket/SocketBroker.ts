@@ -59,7 +59,8 @@ export async function publishSocketEvent(roomId: string, event: string, payload:
     if (localIo) {
       const roomName = `room:${roomId}`;
       const sockets = await localIo.in(roomName).fetchSockets();
-      console.log(`[SocketBroker] Publishing to room "${roomName}": ${sockets.length} sockets connected`);
+      const socketIds = sockets.map((s: any) => s.id);
+      console.log(`[SocketBroker] Publishing to room "${roomName}": ${sockets.length} sockets connected; socketIds=${JSON.stringify(socketIds)}`);
       let target = localIo.to(roomName);
       if (excludeSocketId) {
         target = target.except(excludeSocketId) as any;

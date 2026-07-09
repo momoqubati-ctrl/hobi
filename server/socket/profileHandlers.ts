@@ -472,8 +472,8 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         const targetNameLow = normalizeId(targetProfile.username).toLowerCase();
 
         console.log("[KICK_DIAG] target:", JSON.stringify({ roomId: target?.roomId, socketId: target?.socketId }));
-        console.log("[KICK_DIAG] targetProfile:", JSON.stringify({ id: targetProfile.id, username: targetProfile.username }));
-        console.log("[KICK_DIAG] targetIdLow:", targetIdLow, "targetNameLow:", targetNameLow);
+        console.log("[KICK_DIAG] targetProfile:", JSON.stringify({ id: targetProfile.id, username: targetProfile.username, idreg: targetProfile.idreg }));
+        console.log("[KICK_DIAG] targetIdentity:", JSON.stringify({ targetIdLow, targetNameLow, adminUser: socket.data.user?.username, adminId: socket.data.user?.id }));
 
         if (!kickTargetRoomId) {
           for (const [, s] of io.sockets.sockets) {
@@ -502,26 +502,111 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
         const minutes = Number(data.value) || 15;
         const bannedUntil = new Date(Date.now() + minutes * 60 * 1000);
+        const { resolveRoomId, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
+        const resolvedRoomId = await resolveRoomId(kickTargetRoomId);
+        const roomIdVariants = await resolveRoomIdVariants(kickTargetRoomId);
+        // Also include any exact room ids observed on the target's sockets
+        const observedRoomIds = new Set<string>();
+        for (const [, s] of io.sockets.sockets) {
+          const ud = s.data?.user;
+          if (!ud) continue;
+          const sid = normalizeId(ud.id).toLowerCase();
+          const sname = normalizeId(ud.username).toLowerCase();
+          if (sid === targetIdLow || sname === targetNameLow) {
+            for (const rm of s.rooms) {
+              if (!rm) continue;
+              if (rm.startsWith("room:")) {
+                const val = rm.substring(5);
+                observedRoomIds.add(val);
+                observedRoomIds.add(rm);
+              } else {
+                observedRoomIds.add(rm);
+              }
+            }
+          }
+        }
 
-        // جلب الـ UUID الصحيح للمستخدم من قاعدة البيانات
-        // لضمان التطابق مع فحص join_room لاحقاً
+        const roomVariants = Array.from(new Set([
+          resolvedRoomId,
+          kickTargetRoomId,
+          ...roomIdVariants,
+          ...Array.from(observedRoomIds.values()),
+          normalizeRoomIdValue(kickTargetRoomId),
+          normalizeRoomIdValue(resolvedRoomId),
+        ].filter(Boolean)));
+        console.log("[KICK_DIAG] resolvedRoomId=", resolvedRoomId, "roomIdVariants=", JSON.stringify(roomIdVariants), "roomVariants=", JSON.stringify(roomVariants));
+
+        // جلب الهوية الصحيحة للمستخدم من قاعدة البيانات
+        // وتسجيل الطرد عبر أكثر من معرف ممكن لضمان فحص join_room لاحقاً
         let dbUserId = targetProfile.id;
+        let resolvedIdentifiers: string[] = [];
+        let userLookup: any = null;
         try {
-          const userLookup = await dbPool.query(
-            `SELECT CAST(id AS text) as id FROM users 
-             WHERE CAST(id AS text) = $1 OR lower(username) = lower($2)
+          userLookup = await dbPool.query(
+            `SELECT CAST(id AS text) as id, CAST(uid AS text) as uid, CAST(idreg AS varchar) as idreg, username
+             FROM users
+             WHERE CAST(id AS text) = $1
+                OR CAST(uid AS text) = $2
+                OR CAST(idreg AS varchar) = $3
+                OR lower(username) = lower($4)
+             ORDER BY CASE WHEN CAST(id AS text) = $1 THEN 0 ELSE 1 END
              LIMIT 1`,
-            [String(targetProfile.id), String(targetProfile.username)]
+            [String(targetProfile.id || ""), String(targetProfile.id || ""), String(targetProfile.id || ""), String(targetProfile.username || "")]
           );
           if (userLookup.rows[0]?.id) dbUserId = userLookup.rows[0].id;
-        } catch (_) {}
 
-        // حفظ الطرد في قاعدة البيانات بالمعرف الصحيح
-        await dbPool.query(
-          `INSERT INTO room_kicks (room_id, user_id, banned_until) VALUES ($1, $2, $3)`,
-          [kickTargetRoomId, dbUserId, bannedUntil]
+          const row = userLookup.rows[0];
+          const candidateValues = [
+            String(dbUserId || ""),
+            String(targetProfile.id || ""),
+            String(targetProfile.username || ""),
+            String(targetProfile.idreg || ""),
+            String(row?.uid || ""),
+            String(row?.idreg || ""),
+            String(row?.username || ""),
+          ];
+          resolvedIdentifiers = Array.from(new Set(candidateValues.filter((value) => String(value).trim())));
+        } catch (_) {
+          resolvedIdentifiers = Array.from(new Set([
+            String(dbUserId || ""),
+            String(targetProfile.id || ""),
+            String(targetProfile.username || ""),
+            String(targetProfile.idreg || ""),
+          ].filter((value) => String(value).trim())));
+        }
+
+        console.log("[KICK_DIAG] userLookup", JSON.stringify({ rowCount: userLookup?.rowCount || 0, row: userLookup?.rows?.[0] || null, dbUserId, resolvedIdentifiers }));
+        console.log("[KICK_DIAG] inserting kick for", JSON.stringify({ roomVariants, identifiers: resolvedIdentifiers, bannedUntil: bannedUntil.toISOString(), minutes }));
+        const insertResults = await Promise.all(
+          roomVariants.flatMap((roomVariant) =>
+            resolvedIdentifiers.map((identifier) =>
+              dbPool.query(
+                `INSERT INTO room_kicks (room_id, user_id, banned_until) VALUES ($1, $2, $3)`,
+                [roomVariant, identifier, bannedUntil]
+              )
+            )
+          )
         );
+        console.log("[KICK_DIAG] insert results", insertResults.map((result) => ({ rowCount: result.rowCount })));
 
+        try {
+          const verifyRes = await dbPool.query(
+            `SELECT room_id, user_id, banned_until, created_at
+             FROM room_kicks
+             WHERE room_id = ANY($1::text[])
+               AND (
+                 user_id = ANY($2::text[])
+                 OR lower(user_id) = ANY($3::text[])
+               )
+             ORDER BY created_at DESC
+             LIMIT 50`,
+            [roomVariants, resolvedIdentifiers, resolvedIdentifiers.map((v) => v.toLowerCase())]
+          );
+          console.log("[KICK_DIAG] verify inserted rows count=", verifyRes.rowCount);
+          if (verifyRes.rowCount > 0) console.log("[KICK_DIAG] verify rows:", JSON.stringify(verifyRes.rows));
+        } catch (err) {
+          console.error("[KICK_DIAG] verify query failed:", err);
+        }
         // فصل كافة سوكيتات العضو من الغرفة
         // الاعتماد فقط على s.rooms.has() لأنه المصدر الموثوق الوحيد لعضوية الغرفة
         const { leaveRoom, getRoomMemberCount } = await import("./presenceManager");
@@ -540,8 +625,10 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           if (!isTarget) continue;
 
           // التحقق من وجوده بالغرفة عبر s.rooms مباشرةً (الأكثر موثوقية)
-          if (!s.rooms.has(`room:${kickTargetRoomId}`)) {
-            console.log(`[KICK_DIAG] NOT in room. looking for room:${kickTargetRoomId}`);
+          const hasCanonicalRoom = s.rooms.has(`room:${resolvedRoomId}`);
+          const hasLegacyRoom = !hasCanonicalRoom && s.rooms.has(`room:${kickTargetRoomId}`);
+          if (!hasCanonicalRoom && !hasLegacyRoom) {
+            console.log(`[KICK_DIAG] NOT in room. looking for room:${kickTargetRoomId} canonical:${resolvedRoomId}`);
             continue;
           }
 
@@ -549,27 +636,43 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
           // إبلاغ العضو المستهدف بالطرد
           s.emit("room_kicked", {
-            roomId: kickTargetRoomId,
+            roomId: resolvedRoomId,
             duration: minutes,
             message: `تم طردك من الغرفة مؤقتاً لمدة ${minutes} دقائق`
           });
 
           // تنفيذ الخروج الفعلي من الغرفة
-          s.leave(`room:${kickTargetRoomId}`);
+          // Log s.rooms before leaving
+          try {
+            console.log(`[KICK_DIAG] before leave s.id=${s.id} s.rooms=${JSON.stringify(Array.from(s.rooms))}`);
+          } catch (err) {
+            console.warn('[KICK_DIAG] failed to stringify s.rooms before leave', err);
+          }
+          s.leave(`room:${resolvedRoomId}`);
+          if (kickTargetRoomId !== resolvedRoomId) {
+            s.leave(`room:${kickTargetRoomId}`);
+          }
+          try {
+            // fetch sockets in the room after leaving to show state
+            const post = await io.in(`room:${resolvedRoomId}`).fetchSockets();
+            console.log(`[KICK_DIAG] after leave room=${resolvedRoomId} sockets=${post.length} ids=${JSON.stringify(post.map(p=>p.id))}`);
+          } catch (err) {
+            console.warn('[KICK_DIAG] failed to fetch sockets after leave:', err);
+          }
           await leaveRoom(s.id);
           s.data.user.roomId = "";
 
-          const memberCount = await getRoomMemberCount(kickTargetRoomId);
-          await publishSocketEvent(kickTargetRoomId, "user_left", {
+          const memberCount = await getRoomMemberCount(resolvedRoomId);
+          await publishSocketEvent(resolvedRoomId, "user_left", {
             socketId: s.id,
             username: s.data.user.username,
-            roomId: kickTargetRoomId,
+            roomId: resolvedRoomId,
             memberCount,
           });
 
-          await publishSocketEvent(kickTargetRoomId, "system_message", {
+          await publishSocketEvent(resolvedRoomId, "system_message", {
             text: `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`,
-            roomId: kickTargetRoomId,
+            roomId: resolvedRoomId,
             systemType: "leave",
             user: {
               id: s.data.user.id,
@@ -582,7 +685,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
             }
           });
 
-          await publishGlobalEvent("room_count_update", { roomId: kickTargetRoomId, memberCount });
+          await publishGlobalEvent("room_count_update", { roomId: resolvedRoomId, memberCount });
         }
 
         responsePayload.notice = kicked

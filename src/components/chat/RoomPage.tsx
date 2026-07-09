@@ -844,6 +844,7 @@ const RoomPage = ({
     const onConnect = () => {
       setIsConnected(true);
       // الانضمام للغرفة
+      console.log("[CLIENT_JOIN] emitting join_room", { roomId, isReconnect: hasJoinedOnceRef.current, password: roomPassword || "" });
       socket.emit("join_room", { roomId, isReconnect: hasJoinedOnceRef.current, password: roomPassword || "" }, (res: any) => {
         console.log("[JOIN_ROOM_DEBUG] roomId:", roomId, "response:", JSON.stringify(res));
         if (res?.success) {

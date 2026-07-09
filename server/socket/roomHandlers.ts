@@ -270,61 +270,71 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Check if user is temporarily kicked/banned from this room ──
     try {
       const { dbPool } = await import("../db");
+      const { resolveRoomId, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
       const uid = String(user.id || "");
       const uname = String(user.username || "").toLowerCase();
       const uidreg = String(user.idreg || "");
-      console.log(`[KICK_BAN_CHECK] roomId=${roomId} uid=${uid} uname=${uname} uidreg=${uidreg}`);
+      const roomIdVariants = await resolveRoomIdVariants(roomId);
+      const canonicalRoomId = await resolveRoomId(roomId);
+      const roomCheckValues = Array.from(new Set([canonicalRoomId, roomId, ...roomIdVariants, normalizeRoomIdValue(roomId), normalizeRoomIdValue(canonicalRoomId)].filter(Boolean)));
+      const normalizedRoomCheckValues = roomCheckValues.map((value) => normalizeRoomIdValue(value).toLowerCase());
+      console.log(`[JOIN_ROOM_TRACE] incoming`, JSON.stringify({ socketId: socket.id, userId: uid, userName: user.username, userIdReg: uidreg, requestedRoomId: roomId, canonicalRoomId, roomIdVariants, roomCheckValues, normalizedRoomCheckValues }));
 
-      // خطوة 1: جلب UUID الحقيقي من جدول users
-      // user.id قد يكون uid (نص) أو UUID أو idreg - نبحث بكل الصيغ
+      // خطوة 1: جلب الهوية الصحيحة للمستخدم من جدول users
+      // user.id قد يكون uid أو UUID أو idreg - نبحث بكل الصيغ
       let realUserId = uid;
+      let resolvedIdentifiers: string[] = [];
       try {
         const userLookup = await dbPool.query(
-          `SELECT CAST(id AS text) as id FROM users 
+          `SELECT CAST(id AS text) as id, CAST(uid AS text) as uid, CAST(idreg AS varchar) as idreg, username
+           FROM users
            WHERE lower(username) = lower($1)
               OR CAST(id AS text) = $2
               OR CAST(uid AS text) = $2
               OR CAST(idreg AS varchar) = $3
+           ORDER BY CASE WHEN lower(username) = lower($1) THEN 0 ELSE 1 END
            LIMIT 1`,
-          [uname, uid, uidreg]
+          [uname, uid, uidreg, uname]
         );
         if (userLookup.rows[0]?.id) {
           realUserId = userLookup.rows[0].id;
         }
-        console.log(`[KICK_BAN_CHECK] realUserId resolved: ${realUserId}`);
-      } catch (_) {}
 
-      // خطوة 2: فحص الطرد بجميع المعرفات الممكنة (user.id, user.uid, user.idreg, user.username)
-      // room_kicks.user_id قد يُخزَّن بأي من هذه القيم
+        const row = userLookup.rows[0];
+        const candidateValues = [
+          uid,
+          uidreg,
+          uname,
+          String(realUserId || ""),
+          String(row?.uid || ""),
+          String(row?.idreg || ""),
+          String(row?.username || ""),
+        ];
+        resolvedIdentifiers = Array.from(new Set(candidateValues.filter((value) => String(value).trim())));
+        console.log(`[JOIN_ROOM_TRACE] userLookup`, JSON.stringify({ rowCount: userLookup.rowCount, row: row || null, realUserId, resolvedIdentifiers }));
+      } catch (_) {
+        resolvedIdentifiers = Array.from(new Set([uid, uidreg, uname].filter((value) => String(value).trim())));
+      }
+
+      // خطوة 2: فحص الطرد عبر جميع المعرفات الممكنة للمستخدم
+      const checkValues = roomCheckValues.length > 0 ? roomCheckValues : [canonicalRoomId, roomId];
       const kickRes = await dbPool.query(
-        `WITH user_identifiers AS (
-           SELECT 
-             CAST(id AS text) as id_val,
-             CAST(uid AS text) as uid_val,
-             CAST(idreg AS varchar) as idreg_val
-           FROM users 
-           WHERE lower(username) = lower($4)
-              OR CAST(id AS text) = $2
-              OR CAST(uid AS text) = $2
-              OR CAST(idreg AS varchar) = $3
-           LIMIT 1
-         )
-         SELECT k.banned_until, k.user_id, k.room_id 
-         FROM room_kicks k, user_identifiers u
-         WHERE k.room_id = $1 
+        `SELECT k.banned_until, k.user_id, k.room_id 
+         FROM room_kicks k
+         WHERE (
+             k.room_id = ANY($1::text[])
+             OR lower(k.room_id) = ANY($2::text[])
+             OR lower(regexp_replace(k.room_id, '^(room|social|channel|chat):', '')) = ANY($3::text[])
+           )
            AND (
-             k.user_id = u.id_val
-             OR k.user_id = u.uid_val
-             OR k.user_id = u.idreg_val
-             OR k.user_id = $2
-             OR k.user_id = $3
-             OR lower(k.user_id) = lower($4)
+             k.user_id = ANY($4::text[])
+             OR lower(k.user_id) = ANY($5::text[])
            )
          ORDER BY k.banned_until DESC
          LIMIT 1`,
-        [roomId, uid, uidreg, uname]
+        [checkValues, checkValues.map((value) => value.toLowerCase()), normalizedRoomCheckValues, resolvedIdentifiers, resolvedIdentifiers.map((value) => value.toLowerCase())]
       );
-      console.log(`[KICK_BAN_CHECK] rows found: ${kickRes.rows.length}`, kickRes.rows.length > 0 ? JSON.stringify(kickRes.rows[0]) : "none");
+      console.log(`[JOIN_ROOM_TRACE] kickQuery`, JSON.stringify({ checkValues, normalizedRoomCheckValues, identifiers: resolvedIdentifiers, rowCount: kickRes.rowCount, row: kickRes.rows[0] || null }));
       if (kickRes.rows.length > 0) {
         const bannedUntil = new Date(kickRes.rows[0].banned_until);
         const now = new Date();
@@ -340,6 +350,16 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             timeRemainingStr = `${diffSecs} ثانية`;
           }
           console.log(`[KICK_BAN_CHECK] BLOCKING entry. timeRemaining=${timeRemainingStr}`);
+          socket.emit("room_kicked", {
+            roomId: canonicalRoomId,
+            duration: Math.max(1, Math.ceil(remaining / 60000)),
+            message: `تم طردك من الغرفة مؤقتاً ومتبقي لديك ${timeRemainingStr}`,
+          });
+          socket.emit("system_alert", {
+            title: "منع الدخول",
+            message: `لا يمكنك الدخول للغرفة حالياً لأنك طُردت مؤقتاً ومتبقي لديك ${timeRemainingStr}`,
+            from: "النظام",
+          });
           callback?.({
             success: false,
             message: `لا يمكنك الدخول للغرفة، تم طردك مؤقتاً ومتبقي لديك ${timeRemainingStr}`,
@@ -354,7 +374,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Password check for locked rooms ──
     try {
       const rooms = await listRooms();
-      const room = rooms.find((r: any) => r.id === roomId);
+      const room = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (room?.locked) {
         let canBypass = false;
         try {
@@ -383,7 +403,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Likes required check ──
     try {
       const allRooms = await listRooms();
-      const roomInfo = allRooms.find((r: any) => r.id === roomId);
+      const roomInfo = allRooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (roomInfo && roomInfo.likesRequired > 0) {
         let userLikes = 0;
         try {
@@ -406,8 +426,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Max capacity check ──
     try {
       const rooms = await listRooms();
-      const roomInfo = rooms.find((r: any) => r.id === roomId);
-      const currentCount = await getRoomMemberCount(roomId);
+      const roomInfo = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
+      const currentCount = await getRoomMemberCount(canonicalRoomId);
       const maxMembers = roomInfo?.maxMembers || 50;
       if (currentCount >= maxMembers) {
         callback?.({ success: false, message: "الغرفة ممتلئة حالياً، لا يمكنك الدخول", full: true });
@@ -454,7 +474,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     let prevRoomName = previousRoomId || "";
     try {
       const rooms = await listRooms();
-      const currentRoom = rooms.find((r: any) => r.id === roomId);
+      const currentRoom = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (currentRoom) {
         roomName = currentRoom.name;
         roomImage = currentRoom.image || roomImage;
@@ -467,9 +487,15 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       console.error("Error listing rooms inside join_room production resolver:", e);
     }
 
-    if (previousRoomId && previousRoomId !== roomId) {
+    if (previousRoomId && previousRoomId !== canonicalRoomId) {
       socket.leave(`room:${previousRoomId}`);
       await leaveRoom(socket.id);
+      try {
+        const prevSockets = await io.in(`room:${previousRoomId}`).fetchSockets();
+        console.log(`[JOIN_ROOM_TRACE] after leave previousRoom=${previousRoomId} sockets=${prevSockets.length} ids=${JSON.stringify(prevSockets.map(s=>s.id))}`);
+      } catch (err) {
+        console.warn('[JOIN_ROOM_TRACE] failed to fetch sockets for previous room:', err);
+      }
       eventBus.publish({
         type: "room.left",
         stream: "rooms",
@@ -512,9 +538,16 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       await publishGlobalEvent("room_count_update", { roomId: previousRoomId, memberCount });
     }
 
-    socket.join(`room:${roomId}`);
-    await joinRoom(socket.id, roomId);
-    socket.data.user.roomId = roomId;
+    socket.join(`room:${canonicalRoomId}`);
+    await joinRoom(socket.id, canonicalRoomId);
+    socket.data.user.roomId = canonicalRoomId;
+
+    try {
+      const currentSockets = await io.in(`room:${canonicalRoomId}`).fetchSockets();
+      console.log(`[JOIN_ROOM_TRACE] postJoin room=${canonicalRoomId} sockets=${currentSockets.length} ids=${JSON.stringify(currentSockets.map(s=>s.id))} socketRooms=${JSON.stringify(Array.from(socket.rooms))}`);
+    } catch (err) {
+      console.warn('[JOIN_ROOM_TRACE] failed to fetch sockets for joined room:', err);
+    }
 
     eventBus.publish({
       type: "room.joined",

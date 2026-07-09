@@ -63,6 +63,14 @@ export function getSocket(): Socket {
     timeout: 20000,
   });
 
+  socket.on("connect", () => {
+    console.log("[CLIENT_SOCKET] connected", { id: socket?.id, auth: readSocketAuth() });
+  });
+
+  socket.on("disconnect", (reason: string) => {
+    console.log("[CLIENT_SOCKET] disconnected", { reason, id: socket?.id });
+  });
+
   socket.on("connected", (payload: any) => {
     try {
       const serverUser = payload?.user;
@@ -118,6 +126,12 @@ export function getSocket(): Socket {
         }
       }
     } catch {}
+  });
+
+  socket.onAny((eventName: string, ...args: unknown[]) => {
+    if (eventName === "room_kicked" || eventName === "system_alert" || eventName === "connect" || eventName === "disconnect") {
+      console.log("[CLIENT_SOCKET] event", eventName, args);
+    }
   });
 
   return socket;
