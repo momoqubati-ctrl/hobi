@@ -111,8 +111,10 @@ const RoomList = ({ onSelectRoom, onLockedRoom, activeRoomId }: { onSelectRoom: 
 
   const filteredRooms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return rooms;
-    return rooms.filter((room) => `${room.name} ${room.description} ${room.owner}`.toLowerCase().includes(query));
+    const baseRooms = query
+      ? rooms.filter((room) => `${room.name} ${room.description} ${room.owner}`.toLowerCase().includes(query))
+      : rooms;
+    return [...baseRooms].sort((a, b) => (b.members || 0) - (a.members || 0));
   }, [rooms, searchQuery]);
 
   return (

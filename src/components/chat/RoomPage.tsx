@@ -751,11 +751,14 @@ const RoomPage = ({
   onOpenNotifications,
   onLogout,
   roomPassword,
+  autoJoin = true,
 }: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [members, setMembers] = useState<RoomMember[]>([]);
   const onlineUsers = useRealtimeStore((state) => state.onlineUsers);
-  const [memberCount, setMemberCount] = useState(0);
+  const roomId = useMemo(() => String(room?.id ?? "general"), [room?.id]);
+  const roomFromStore = useRealtimeStore((state) => state.rooms.find((r) => String(r.id) === roomId));
+  const [members, setMembers] = useState<RoomMember[]>([]);
+  const [memberCount, setMemberCount] = useState(() => roomFromStore?.members ?? room?.members ?? 0);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState("");
@@ -771,9 +774,13 @@ const RoomPage = ({
   const reactionPickerRef = useRef<HTMLDivElement>(null);
   const currentUser = getStoredUser();
 
-  const roomId = useMemo(() => String(room?.id ?? "general"), [room?.id]);
+  const skipInitialJoinRef = useRef(false);
 
   useEffect(() => {
+    if (!autoJoin) {
+      hasJoinedOnceRef.current = true;
+    }
+
     setMessages([]);
     setTypingUsers([]);
     setError("");
@@ -782,7 +789,8 @@ const RoomPage = ({
     setActiveReactionMsgId(null);
     setOpenActionMsgId(null);
     setActiveYouTubeEmbedUrl(null);
-  }, [roomId]);
+    setMemberCount(roomFromStore?.members ?? room?.members ?? 0);
+  }, [roomId, autoJoin, roomFromStore?.members, room?.members]);
 
   // إغلاق قائمة التفاعل عند النقر خارجها
   useEffect(() => {
@@ -843,9 +851,23 @@ const RoomPage = ({
 
     const onConnect = () => {
       setIsConnected(true);
+      if (!autoJoin) {
+        setIsLoading(false);
+        return;
+      }
       // الانضمام للغرفة
       console.log("[CLIENT_JOIN] emitting join_room", { roomId, isReconnect: hasJoinedOnceRef.current, password: roomPassword || "" });
+      let joinTimeout: ReturnType<typeof setTimeout> | null = window.setTimeout(() => {
+        console.warn("[JOIN_ROOM_DEBUG] join_room timeout for roomId:", roomId);
+        setError("تعذر الانضمام للغرفة، لم يأتِ رد من السيرفر.");
+        setIsLoading(false);
+      }, 15000);
+
       socket.emit("join_room", { roomId, isReconnect: hasJoinedOnceRef.current, password: roomPassword || "" }, (res: any) => {
+        if (joinTimeout) {
+          window.clearTimeout(joinTimeout);
+          joinTimeout = null;
+        }
         console.log("[JOIN_ROOM_DEBUG] roomId:", roomId, "response:", JSON.stringify(res));
         if (res?.success) {
           hasJoinedOnceRef.current = true;
@@ -1025,7 +1047,12 @@ const RoomPage = ({
 
     // إذا كان متصل بالفعل، انضم للغرفة مباشرة
     if (socket.connected) {
-      onConnect();
+      if (autoJoin) {
+        onConnect();
+      } else {
+        setIsConnected(true);
+        setIsLoading(false);
+      }
     } else {
       socket.connect();
     }

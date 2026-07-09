@@ -125,6 +125,16 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     console.error("Failed to add connected user to presence:", err);
   });
 
+  const pendingDisconnect = pendingDisconnects.get(user.id);
+  if (pendingDisconnect) {
+    if (pendingDisconnect.socketId !== socket.id) {
+      clearTimeout(pendingDisconnect.timeout);
+      clearTimeout(pendingDisconnect.presenceTimeout);
+      pendingDisconnects.delete(user.id);
+      console.debug("[presence] canceled pending disconnect for reconnecting user", { userId: user.id, oldSocketId: pendingDisconnect.socketId, newSocketId: socket.id });
+    }
+  }
+
   // Emit user_connected directly (not inside .then) to ensure it always fires
   try {
     const count = await getTotalOnlineCount();

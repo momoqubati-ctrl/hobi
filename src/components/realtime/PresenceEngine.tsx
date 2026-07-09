@@ -142,8 +142,8 @@ const PresenceEngine = () => {
   }, [isMailLoaded]);
 
   // ===== Initial Fetch Logic =====
-  const fetchOnlineUsers = useCallback(() => {
-    if (isOnlineUsersLoadedRef.current) return;
+  const fetchOnlineUsers = useCallback((force = false) => {
+    if (isOnlineUsersLoadedRef.current && !force) return;
     
     setLoadingOnlineUsers(true);
     const socket = getSocket();
@@ -167,8 +167,8 @@ const PresenceEngine = () => {
     });
   }, [setOnlineUsers, setOnlineCount, setLoadingOnlineUsers, hydratePresenceUser]);
 
-  const fetchRooms = useCallback(async () => {
-    if (isRoomsLoadedRef.current) return;
+  const fetchRooms = useCallback(async (force = false) => {
+    if (isRoomsLoadedRef.current && !force) return;
 
     setLoadingRooms(true);
     try {
@@ -268,16 +268,24 @@ const PresenceEngine = () => {
     const socket = getSocket();
     
     const onConnect = () => {
-      // Fetch online users and other socket-based data on connect
-      fetchOnlineUsers();
+      // Force refresh presence and rooms on reconnect
+      fetchOnlineUsers(true);
+      fetchRooms(true);
       fetchNotifications();
       fetchMail();
+    };
+
+    const handleNetworkOnline = () => {
+      fetchOnlineUsers(true);
+      fetchRooms(true);
     };
 
     socket.on("connect", onConnect);
     if (socket.connected) {
       onConnect();
     }
+
+    window.addEventListener("online", handleNetworkOnline);
 
     fetchRooms();
     fetchWallPosts();
@@ -298,6 +306,7 @@ const PresenceEngine = () => {
 
     return () => {
       socket.off("connect", onConnect);
+      window.removeEventListener("online", handleNetworkOnline);
     };
   }, [fetchOnlineUsers, fetchRooms, fetchWallPosts, fetchNotifications, fetchMail, setPmUnreadCount]);
 

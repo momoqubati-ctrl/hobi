@@ -201,11 +201,17 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   })),
 
   // Rooms Actions
-  setRooms: (rooms) => set({ rooms, isRoomsLoaded: true, isLoadingRooms: false }),
+  setRooms: (rooms) => set({
+    rooms: Array.isArray(rooms)
+      ? [...rooms].sort((a: any, b: any) => (b.members || 0) - (a.members || 0))
+      : [],
+    isRoomsLoaded: true,
+    isLoadingRooms: false,
+  }),
   updateRoomMemberCount: (roomId, count) => set((state) => ({
-    rooms: state.rooms.map((room) =>
-      room.id === roomId ? { ...room, members: count } : room
-    ).sort((a: any, b: any) => (b.members || 0) - (a.members || 0))
+    rooms: state.rooms
+      .map((room) => (room.id === roomId ? { ...room, members: count } : room))
+      .sort((a: any, b: any) => (b.members || 0) - (a.members || 0))
   })),
   setLoadingRooms: (val) => set({ isLoadingRooms: val }),
   setIsRoomsLoaded: (val) => set({ isRoomsLoaded: val }),
@@ -279,6 +285,12 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     return { onlineUsers: next };
   }),
   removeOnlineUser: (target) => set((state) => {
+    const hasSocketId = typeof target.socketId === "string" && target.socketId.trim() !== "";
+    if (hasSocketId) {
+      return {
+        onlineUsers: state.onlineUsers.filter((user) => String(user.socketId) !== String(target.socketId))
+      };
+    }
     const identity = getPresenceKey(target);
     return {
       onlineUsers: state.onlineUsers.filter((user) => getPresenceKey(user) !== identity)

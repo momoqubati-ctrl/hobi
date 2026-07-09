@@ -48,6 +48,9 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState("members");
   const [activeRoom, setActiveRoom] = useState<any>(null);
   const [activeRoomPassword, setActiveRoomPassword] = useState<string>("");
+  const [pendingRoom, setPendingRoom] = useState<any>(null);
+  const [pendingRoomLoading, setPendingRoomLoading] = useState(false);
+  const [pendingRoomError, setPendingRoomError] = useState("");
   const [lockedRoom, setLockedRoom] = useState<any>(null);
   const [lockedRoomPassword, setLockedRoomPassword] = useState("");
   const [lockedRoomError, setLockedRoomError] = useState("");
@@ -57,15 +60,18 @@ const Dashboard = () => {
   const MAX_ATTEMPTS = 3;
   const [fullRoomAlert, setFullRoomAlert] = useState<any>(null);
 
-  const tryJoinLocked = (room: any, password: string) => {
+  const performJoinRoom = useCallback((room: any, password: string) => {
+    if (pendingRoomLoading) return;
     const socket = getSocket();
     if (!socket?.connected) return;
-    setLockedRoomLoading(true);
-    setLockedRoomError("");
+    setPendingRoom(room);
+    setPendingRoomLoading(true);
+    setPendingRoomError("");
     console.log("[CLIENT_JOIN] emitting join_room", { roomId: room.id, password });
     socket.emit("join_room", { roomId: room.id, password }, (res: any) => {
       console.log("[CLIENT_JOIN] callback", { roomId: room.id, res });
-      setLockedRoomLoading(false);
+      setPendingRoomLoading(false);
+      setPendingRoom(null);
       if (res?.success) {
         setLockedRoom(null);
         lockedAttemptsRef.current = 0;
@@ -73,7 +79,10 @@ const Dashboard = () => {
         setActiveRoom(room);
         setActiveRoomPassword(password);
         setSidebarOpen(false);
+        setPendingRoomError("");
       } else if (res?.needPassword) {
+        setLockedRoom(room);
+        setLockedRoomPassword("");
         const next = lockedAttemptsRef.current + 1;
         lockedAttemptsRef.current = next;
         setLockedRoomAttempts(next);
@@ -91,10 +100,24 @@ const Dashboard = () => {
         setLockedRoomError(res?.message || "ليس لديك عدد الإعجابات الكافي");
         setTimeout(() => { setLockedRoom(null); }, 2500);
       } else {
-        setLockedRoomError(res?.message || "حدث خطأ");
+        const message = res?.message || "حدث خطأ";
+        setPendingRoomError(message);
+        window.dispatchEvent(new CustomEvent("show-client-alert", {
+          detail: {
+            alertId: String(Date.now()),
+            fromUsername: "النظام",
+            fromAvatar: "/pic.png",
+            message,
+            timestamp: Date.now(),
+          }
+        }));
       }
     });
-  };
+  }, [pendingRoomLoading]);
+
+  const tryJoinLocked = useCallback((room: any, password: string) => {
+    performJoinRoom(room, password);
+  }, [performJoinRoom]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminSection, setAdminSection] = useState("overview");
   const [openChatUserId, setOpenChatUserId] = useState<string | null>(null);
@@ -330,7 +353,7 @@ const Dashboard = () => {
                 setFullRoomAlert(room);
                 return;
               }
-              setActiveRoom(room); setActiveRoomPassword(password || ""); setSidebarOpen(false);
+              performJoinRoom(room, password || "");
             }} onLockedRoom={(room: any) => { setLockedRoom(room); setLockedRoomPassword(""); setLockedRoomError(""); lockedAttemptsRef.current = 0; setLockedRoomAttempts(0); }} activeRoomId={activeRoom?.id} />
           </div>
 
@@ -509,8 +532,9 @@ const Dashboard = () => {
               room={activeRoom} 
               roomPassword={activeRoomPassword}
               onBack={() => setActiveRoom(null)} 
-              onSelectRoom={setActiveRoom} 
+              onSelectRoom={performJoinRoom} 
               isEmbedded 
+              autoJoin={false}
               onOpenProfile={(uid) => setViewProfileId(uid)} 
               onOpenSidebar={() => setSidebarOpen(true)}
               onOpenNotifications={() => handleTabChange("notifications")}
@@ -525,10 +549,14 @@ const Dashboard = () => {
                       setFullRoomAlert(room);
                       return;
                     }
-                    setActiveRoom(room);
-                    setActiveRoomPassword(password || "");
+                    if (password != null && password !== "") {
+                      performJoinRoom(room, password);
+                      return;
+                    }
+                    performJoinRoom(room, "");
                   }}
                   onLockedRoom={(room: any) => {
+                    if (pendingRoomLoading) return;
                     setLockedRoom(room);
                     setLockedRoomPassword("");
                     setLockedRoomError("");
@@ -537,6 +565,16 @@ const Dashboard = () => {
                   }}
                   activeRoomId={activeRoom?.id}
                 />
+                {pendingRoomLoading && pendingRoom && (
+                  <div className="mx-4 mb-3 rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-xs font-bold text-primary shadow-sm">
+                    جاري الانضمام إلى الغرفة "{pendingRoom.name}"…
+                  </div>
+                )}
+                {pendingRoomError && (
+                  <div className="mx-4 mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700 shadow-sm">
+                    {pendingRoomError}
+                  </div>
+                )}
                 <DashboardMembers
                   onOpenChat={(userId: string) => {
                     handleOpenChat(userId);

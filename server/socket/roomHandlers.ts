@@ -553,15 +553,15 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       type: "room.joined",
       stream: "rooms",
       actor: { id: user.id, username: user.username, role: user.role, socketId: socket.id, ip: socket.handshake.address },
-      target: { id: roomId, type: "room", roomId },
-      payload: { roomId, username: user.username },
-      metadata: { roomId, source: "socket.roomHandlers", shardKey: roomId },
+      target: { id: canonicalRoomId, type: "room", roomId: canonicalRoomId },
+      payload: { roomId: canonicalRoomId, username: user.username },
+      metadata: { roomId: canonicalRoomId, source: "socket.roomHandlers", shardKey: canonicalRoomId },
     }).catch(err => console.error("EventBus publish failed (room.joined):", err));
 
-    const members = await getRoomMembers(roomId);
+    const members = await getRoomMembers(canonicalRoomId);
     callback?.({
       success: true,
-      roomId,
+      roomId: canonicalRoomId,
       messages: [],
       members: members.map((m) => ({
         id: m.id,
@@ -573,13 +573,13 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         giftIconUrl: m.giftIconUrl,
         status: m.status || "online",
         nameColor: m.nameColor || "",
-statusFontColor: m.statusFontColor || "",
+        statusFontColor: m.statusFontColor || "",
       })),
       memberCount: members.length,
     });
 
     if (!isReconnect) {
-      await publishSocketEvent(roomId, "user_joined", {
+      await publishSocketEvent(canonicalRoomId, "user_joined", {
         socketId: socket.id,
         user: {
           id: user.id,
@@ -590,14 +590,14 @@ statusFontColor: m.statusFontColor || "",
           avatarFrameUrl: user.avatarFrameUrl,
           giftIconUrl: user.giftIconUrl,
           status: user.status || "online",
-nameColor: socket.data.user.nameColor || "",
+          nameColor: socket.data.user.nameColor || "",
           statusFontColor: socket.data.user.statusFontColor || "",
         },
         memberCount: members.length,
       }, socket.id);
 
       // Broadcast live counter update globally for the joined room
-      await publishGlobalEvent("room_count_update", { roomId, memberCount: members.length });
+      await publishGlobalEvent("room_count_update", { roomId: canonicalRoomId, memberCount: members.length });
 
       // Broadcast transition/entrance system message to the new room
       if (previousRoomId && previousRoomId !== roomId) {

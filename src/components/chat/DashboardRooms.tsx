@@ -240,7 +240,9 @@ const DashboardRooms = ({
     .sort((a, b) => (b.members || 0) - (a.members || 0))
     .slice(0, 10);
 
-  const allRooms = rooms.slice(0, 20);
+  const allRooms = [...rooms]
+    .sort((a, b) => (b.members || 0) - (a.members || 0))
+    .slice(0, 20);
   const displayRooms = topRooms.length > 0 ? topRooms : allRooms;
 
   if (isLoading && !isRoomsLoaded) {
