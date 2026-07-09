@@ -89,7 +89,11 @@ const PermissionsMatrix = () => {
   const [icons, setIcons] = useState<IconEntry[]>([]);
   const [loadingIcons, setLoadingIcons] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
+
+  // edit icon
+  const [editIcon, setEditIcon] = useState<string>("");
   const [editIconPicker, setEditIconPicker] = useState(false);
+  const [savingIcon, setSavingIcon] = useState(false);
 
   // members modal
   const [membersModal, setMembersModal] = useState<{ open: boolean; role: RoleRow | null; members: MemberRow[]; loading: boolean }>({
@@ -100,7 +104,8 @@ const PermissionsMatrix = () => {
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   useEffect(() => { fetchData(); }, []);
-  useEffect(() => { if (viewMode === 'create') fetchIcons(); }, [viewMode]);
+  useEffect(() => { if (viewMode === 'create' || viewMode === 'edit') fetchIcons(); }, [viewMode]);
+  useEffect(() => { if (viewMode === 'edit' && activeRole) { setEditIcon(activeRole.ico || ""); } }, [viewMode, activeRole]);
 
   // ── Fetch ────────────────────────────────────────────────
   // تطبيع قيم الصلاحيات من jsonb إلى boolean
@@ -207,6 +212,25 @@ const PermissionsMatrix = () => {
     } catch { showError("فشل حذف الرتبة"); }
   };
 
+  const handleSaveIcon = async () => {
+    if (!activeRole) return;
+    setSavingIcon(true);
+    try {
+      const res = await fetch('/api/admin/roles', {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify({ id: activeRole.id, icon: editIcon || null }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccess("تم حفظ الأيقونة بنجاح");
+        setRoles(prev => prev.map(r => r.id === activeRole.id ? { ...r, ico: editIcon || undefined } : r));
+        setActiveRole(prev => prev ? { ...prev, ico: editIcon || undefined } : prev);
+      } else showError(data.message);
+    } catch { showError("فشل حفظ الأيقونة"); }
+    finally { setSavingIcon(false); }
+  };
+
   // ── Permissions helpers ───────────────────────────────────
   const handleToggle = (roleId: string, permKey: string) => {
     setMatrix(prev => {
@@ -246,6 +270,21 @@ const PermissionsMatrix = () => {
     if (!activeRole) return;
     setSaving(true);
     try {
+      // حفظ الأيقونة إذا تغيرت
+      if (editIcon !== (activeRole.ico || "")) {
+        const iconRes = await fetch('/api/admin/roles', {
+          method: 'PUT',
+          headers: getAdminHeaders(),
+          body: JSON.stringify({ id: activeRole.id, icon: editIcon || null }),
+        });
+        const iconData = await iconRes.json();
+        if (!iconData.success) {
+          showError("فشل حفظ الأيقونة: " + iconData.message);
+          setSaving(false);
+          return;
+        }
+      }
+      // حفظ الصلاحيات
       const savedPerms = matrix[activeRole.id] || {};
       const roleMatrix = { [activeRole.id]: savedPerms };
       const res = await fetch('/api/admin/permissions/bulk', {
@@ -254,13 +293,14 @@ const PermissionsMatrix = () => {
       });
       const data = await res.json();
       if (data.success) {
-        showSuccess("تم حفظ صلاحيات الرتبة بنجاح");
-        // تحديث حالة الرتب المحلية فوراً لتعكس الصلاحيات المحفوظة
+        showSuccess("تم حفظ الصلاحيات والأيقونة بنجاح");
+        // تحديث حالة الرتب المحلية فوراً
         setRoles(prev => prev.map(r =>
           r.id === activeRole.id
-            ? { ...r, permissions: savedPerms }
+            ? { ...r, permissions: savedPerms, ico: editIcon || undefined }
             : r
         ));
+        setActiveRole(prev => prev ? { ...prev, permissions: savedPerms, ico: editIcon || undefined } : prev);
       } else showError(data.message);
     } catch { showError("حدث خطأ أثناء الحفظ"); }
     finally { setSaving(false); }
@@ -290,7 +330,7 @@ const PermissionsMatrix = () => {
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-sm">
           <button
-            onClick={() => { setViewMode('list'); setActiveRole(null); setSearch(""); }}
+            onClick={() => { setViewMode('list'); setActiveRole(null); setSearch(""); setEditIcon(""); setEditIconPicker(false); }}
             className="flex items-center gap-1 text-primary hover:underline font-bold"
           >
             <ArrowRight size={14} className="rotate-180" /> الرتب
@@ -304,11 +344,60 @@ const PermissionsMatrix = () => {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            {activeRole.ico && (
+            {/* Icon with edit button */}
+            <div className="relative">
               <div className="w-12 h-12 rounded-2xl border-2 border-slate-100 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-800 flex items-center justify-center shadow">
-                <img src={activeRole.ico} alt="" className="w-9 h-9 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                {editIcon ? (
+                  <img src={editIcon} alt="" className="w-9 h-9 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                ) : (
+                  <Crown size={20} className="text-slate-400" />
+                )}
               </div>
-            )}
+              <button
+                type="button"
+                onClick={() => setEditIconPicker(true)}
+                className="absolute -bottom-1 -left-1 w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center shadow-lg hover:bg-primary/90 transition-colors"
+                title="تغيير الأيقونة"
+              >
+                <Image size={12} />
+              </button>
+              {/* Edit Icon Picker Popup */}
+              {editIconPicker && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setEditIconPicker(false)} />
+                  <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-4 max-h-80 overflow-y-auto w-72 sm:w-96">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">اختر أيقونة</h4>
+                      <div className="flex items-center gap-1">
+                        {editIcon && (
+                          <Button variant="ghost" size="sm" onClick={() => { setEditIcon(""); handleSaveIcon(); }} className="h-7 text-red-400 hover:text-red-600 rounded-full">
+                            <Trash size={12} />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" onClick={() => setEditIconPicker(false)} className="h-7 w-7 p-0 rounded-full"><X size={14} /></Button>
+                      </div>
+                    </div>
+                    {loadingIcons ? (
+                      <div className="py-8 text-center"><Loader2 className="animate-spin mx-auto w-6 h-6 text-primary" /></div>
+                    ) : icons.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">لا توجد أيقونات.</p>
+                    ) : (
+                      <div className="grid grid-cols-5 sm:grid-cols-6 gap-2">
+                        {icons.map(icon => (
+                          <button key={icon.id} type="button"
+                            onClick={() => { setEditIcon(icon.image_url); setEditIconPicker(false); }}
+                            className={`flex items-center justify-center p-2 h-12 w-12 rounded-xl border-2 transition-all hover:border-primary hover:bg-primary/5 ${editIcon === icon.image_url ? 'border-primary bg-primary/10 ring-2 ring-primary/30' : 'border-transparent bg-slate-50 dark:bg-slate-800'}`}
+                            title={icon.name || undefined}
+                          >
+                            <img src={icon.image_url} alt={icon.name || ''} className="max-w-full max-h-full object-contain" loading="lazy" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <div>
               <h2 className="text-xl font-black text-slate-800 dark:text-slate-100">
                 صلاحيات رتبة: <span style={{ color: activeRole.color }}>{activeRole.name}</span>
@@ -317,7 +406,7 @@ const PermissionsMatrix = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { setViewMode('list'); setActiveRole(null); setSearch(""); }} className="rounded-2xl h-10 gap-2">
+            <Button variant="outline" onClick={() => { setViewMode('list'); setActiveRole(null); setSearch(""); setEditIcon(""); setEditIconPicker(false); }} className="rounded-2xl h-10 gap-2">
               <X size={16} /> إلغاء
             </Button>
             <Button onClick={handleSavePermissions} disabled={saving} className="rounded-2xl h-10 gap-2 font-black shadow-lg shadow-primary/20">

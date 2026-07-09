@@ -62,13 +62,87 @@ const canRunAdminAction = async (socket: Socket, userId: string, action: AdminAc
 const findOnlineUser = async (profileId: string, username?: string) => {
   const targetId = normalizeId(profileId).toLowerCase();
   const targetName = normalizeId(username).toLowerCase();
-  const onlineUsers = await getAllOnlineUsers();
+  const candidates: any[] = [];
 
-  return onlineUsers.find((user) => {
-    const id = normalizeId(user.id).toLowerCase();
-    const name = normalizeId(user.username).toLowerCase();
-    return id === targetId || name === targetName || name === targetId;
-  });
+  // 1. البحث في سوكيتات السيرفر المحلية (موثوقة ومحدثة لحظياً)
+  try {
+    const { getIO } = await import("./index");
+    const io = getIO();
+    if (io) {
+      for (const [, s] of io.sockets.sockets) {
+        const ud = s.data?.user;
+        if (!ud) continue;
+        const sid = normalizeId(ud.id).toLowerCase();
+        const sname = normalizeId(ud.username).toLowerCase();
+        if (sid === targetId || sname === targetName) {
+          let rId = ud.roomId || "";
+          if (!rId) {
+            for (const rm of s.rooms) {
+              if (rm.startsWith("room:")) {
+                rId = rm.substring(5);
+                break;
+              }
+            }
+          }
+          candidates.push({
+            id: ud.id,
+            socketId: s.id,
+            username: ud.username,
+            role: ud.role,
+            avatar: ud.avatar,
+            countryCode: ud.countryCode,
+            avatarFrameUrl: ud.avatarFrameUrl,
+            giftIconUrl: ud.giftIconUrl,
+            memberCardBgUrl: ud.memberCardBgUrl,
+            roomId: rId,
+            status: ud.status || "online",
+            connectedAt: ud.connectedAt,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("findOnlineUser local sockets error:", err);
+  }
+
+  // 2. البحث في حضور المستخدمين العام
+  try {
+    const onlineUsers = await getAllOnlineUsers();
+    for (const user of onlineUsers) {
+      if (!user) continue;
+      const id = normalizeId(user.id).toLowerCase();
+      const name = normalizeId(user.username).toLowerCase();
+      if (id === targetId || name === targetName || name === targetId) {
+        candidates.push(user);
+      }
+    }
+  } catch (err) {
+    console.error("findOnlineUser presenceManager error:", err);
+  }
+
+  // 3. اختيار أفضل مرشح (يفضل المرشح الذي يتواجد في غرفة حالياً)
+  const bestWithRoom = candidates.find(c => c && c.roomId);
+  if (bestWithRoom) return bestWithRoom;
+
+  if (candidates.length > 0) return candidates[0];
+  return undefined;
+};
+
+const findTargetSocket = (io: SocketIOServer, profileId: string, username?: string, excludeSocketId?: string) => {
+  const targetId = normalizeId(profileId).toLowerCase();
+  const targetName = normalizeId(username).toLowerCase();
+
+  for (const [, s] of io.sockets.sockets) {
+    if (excludeSocketId && s.id === excludeSocketId) continue;
+    const ud = s.data?.user;
+    if (!ud) continue;
+    const sid = normalizeId(ud.id).toLowerCase();
+    const sname = normalizeId(ud.username).toLowerCase();
+    if (sid === targetId || sname === targetName) {
+      return s;
+    }
+  }
+  return null;
 };
 
 const applyLegacyProfileUpdate = async (profileId: string, updates: Record<string, unknown>) => {
@@ -222,7 +296,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       const onlineTarget = await findOnlineUser(resolvedProfileId, profile.username);
       const stats = await ProfileService.getProfileStats(resolvedProfileId);
-      const relationship = ProfileService.getRelationship(userId, resolvedProfileId);
+      const relationship = await ProfileService.getRelationship(userId, resolvedProfileId);
       const canSeeVisitors = relationship.isSelf || (await canRunAdminAction(socket, userId, "history"));
       const visitors = canSeeVisitors ? ProfileService.getVisitors(resolvedProfileId) : [];
 
@@ -272,6 +346,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       await db.update(userProfiles).set(updates).where(eq(userProfiles.userId, profileId));
 
       io.to(`user:${profileId}`).emit("profile:updated", updates);
+      io.emit("user_profile_updated", { userId: profileId, ...updates });
       callback?.({ success: true });
     } catch (err) {
       console.error("[ProfileAdminUpdate] Error:", err);
@@ -292,9 +367,13 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (!targetProfile) return callback?.({ error: "Profile not found" });
       const target = await findOnlineUser(targetProfile.id, targetProfile.username);
 
-      if (["kick", "ban", "room_kick", "room_mute"].includes(action)) {
-        const powerAction: PowerAction = action === "ban" ? "ban" : action === "room_mute" ? "mute" : "kick";
-        if (target && !canExecuteAction(String(socket.data.user?.role || "guest"), target.role, powerAction)) {
+      if (["kick", "ban", "room_kick", "room_mute", "global_mute"].includes(action)) {
+        if (String(targetProfile.id || profileId) === String(userId)) {
+          return callback?.({ error: "Cannot perform this action on yourself" });
+        }
+        const powerAction: PowerAction = action === "ban" ? "ban" : (action === "room_mute" || action === "global_mute") ? "mute" : "kick";
+        const targetRole = String(target?.role || targetProfile.role || "guest");
+        if (!canExecuteAction(String(socket.data.user?.role || "guest"), targetRole, powerAction)) {
           return callback?.({ error: "Permission denied" });
         }
       }
@@ -318,13 +397,197 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         await applyLegacyProfileUpdate(profileId, updates);
       }
 
-      if (target && (action === "kick" || action === "ban" || action === "room_kick")) {
+      // تحديث حالة الإسكات على الـ socket للمستخدم المستهدف وإرسال إشعار
+      if (action === "room_mute" || action === "global_mute" || action === "room_unmute") {
+        const isMuted = action === "room_mute" || action === "global_mute";
+        
+        // تحديث حالة الكتم لكافة السوكيتات النشطة للعضو
+        const targetId = normalizeId(profileId).toLowerCase();
+        const targetName = normalizeId(targetProfile.username).toLowerCase();
+        for (const [, s] of io.sockets.sockets) {
+          const ud = s.data?.user;
+          if (!ud) continue;
+          const sid = normalizeId(ud.id).toLowerCase();
+          const sname = normalizeId(ud.username).toLowerCase();
+          if (sid === targetId || sname === targetName) {
+            (s.data.user as any).muted = isMuted;
+            s.emit("muted_state", { muted: isMuted });
+          }
+        }
+
+        // إرسال تنبيه ديالوج للعضو المستهدف عند الإسكات العام
+        if (action === "global_mute" && isMuted) {
+          const adminName = socket.data.user?.username || "الإدارة";
+          const adminAvatar = socket.data.user?.avatar || "/pic.png";
+          const alertPayload = {
+            alertId: String(Date.now()),
+            fromUserId: userId,
+            fromUsername: adminName,
+            fromAvatar: adminAvatar,
+            fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+            fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+            fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+            fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+            message: "تم منعك من الحديث في الدردشة",
+            timestamp: Date.now(),
+          };
+          io.to(`user:${profileId}`).emit("alert_received", alertPayload);
+        }
+
+        // إرسال تنبيه ديالوج للعضو المستهدف عند إلغاء الإسكات
+        if (action === "room_unmute") {
+          const adminName = socket.data.user?.username || "الإدارة";
+          const adminAvatar = socket.data.user?.avatar || "/pic.png";
+          const alertPayload = {
+            alertId: String(Date.now()),
+            fromUserId: userId,
+            fromUsername: adminName,
+            fromAvatar: adminAvatar,
+            fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+            fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+            fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+            fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+            message: "تم السماح لك بالدردشة",
+            timestamp: Date.now(),
+          };
+          io.to(`user:${profileId}`).emit("alert_received", alertPayload);
+        }
+
+        responsePayload.notice = isMuted ? "تم تنفيذ الاسكات العام" : "تم الغاء الاسكات العام";
+      }
+
+      if (target && (action === "kick" || action === "ban")) {
         io.to(target.socketId).emit("system_alert", {
           title: action === "ban" ? "حظر" : "طرد",
           message: data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك بواسطة الإدارة"),
           from: socket.data.user?.username,
         });
         io.sockets.sockets.get(target.socketId)?.disconnect(true);
+      }
+
+      if (action === "room_kick") {
+        // اكتشاف الغرفة: أولاً من target، وإذا لم يُعثر عليها نبحث مباشرة في سوكيتات السيرفر
+        let kickTargetRoomId = target?.roomId || "";
+        const targetIdLow = normalizeId(targetProfile.id).toLowerCase();
+        const targetNameLow = normalizeId(targetProfile.username).toLowerCase();
+
+        console.log("[KICK_DIAG] target:", JSON.stringify({ roomId: target?.roomId, socketId: target?.socketId }));
+        console.log("[KICK_DIAG] targetProfile:", JSON.stringify({ id: targetProfile.id, username: targetProfile.username }));
+        console.log("[KICK_DIAG] targetIdLow:", targetIdLow, "targetNameLow:", targetNameLow);
+
+        if (!kickTargetRoomId) {
+          for (const [, s] of io.sockets.sockets) {
+            const ud = s.data?.user;
+            if (!ud) continue;
+            const sid = normalizeId(ud.id).toLowerCase();
+            const sname = normalizeId(ud.username).toLowerCase();
+            if (sid === targetIdLow || sname === targetNameLow) {
+              // استخراج الغرفة مباشرة من s.rooms
+              for (const rm of s.rooms) {
+                if (rm.startsWith("room:")) {
+                  kickTargetRoomId = rm.substring(5);
+                  break;
+                }
+              }
+              if (kickTargetRoomId) break;
+            }
+          }
+        }
+
+        console.log("[KICK_DIAG] kickTargetRoomId:", kickTargetRoomId);
+
+        if (!kickTargetRoomId) {
+          return callback?.({ error: "العضو ليس متواجداً في أي غرفة حالياً" });
+        }
+
+        const minutes = Number(data.value) || 15;
+        const bannedUntil = new Date(Date.now() + minutes * 60 * 1000);
+
+        // جلب الـ UUID الصحيح للمستخدم من قاعدة البيانات
+        // لضمان التطابق مع فحص join_room لاحقاً
+        let dbUserId = targetProfile.id;
+        try {
+          const userLookup = await dbPool.query(
+            `SELECT CAST(id AS text) as id FROM users 
+             WHERE CAST(id AS text) = $1 OR lower(username) = lower($2)
+             LIMIT 1`,
+            [String(targetProfile.id), String(targetProfile.username)]
+          );
+          if (userLookup.rows[0]?.id) dbUserId = userLookup.rows[0].id;
+        } catch (_) {}
+
+        // حفظ الطرد في قاعدة البيانات بالمعرف الصحيح
+        await dbPool.query(
+          `INSERT INTO room_kicks (room_id, user_id, banned_until) VALUES ($1, $2, $3)`,
+          [kickTargetRoomId, dbUserId, bannedUntil]
+        );
+
+        // فصل كافة سوكيتات العضو من الغرفة
+        // الاعتماد فقط على s.rooms.has() لأنه المصدر الموثوق الوحيد لعضوية الغرفة
+        const { leaveRoom, getRoomMemberCount } = await import("./presenceManager");
+        const { publishSocketEvent, publishGlobalEvent } = await import("./SocketBroker");
+
+        let kicked = false;
+        for (const [, s] of io.sockets.sockets) {
+          const ud = s.data?.user;
+          if (!ud) continue;
+          const sid = normalizeId(ud.id).toLowerCase();
+          const sname = normalizeId(ud.username).toLowerCase();
+
+          // التحقق من هوية العضو
+          const isTarget = sid === targetIdLow || sname === targetNameLow;
+          console.log(`[KICK_DIAG] socket: sid=${sid} sname=${sname} isTarget=${isTarget} s.rooms=${JSON.stringify(Array.from(s.rooms))}`);
+          if (!isTarget) continue;
+
+          // التحقق من وجوده بالغرفة عبر s.rooms مباشرةً (الأكثر موثوقية)
+          if (!s.rooms.has(`room:${kickTargetRoomId}`)) {
+            console.log(`[KICK_DIAG] NOT in room. looking for room:${kickTargetRoomId}`);
+            continue;
+          }
+
+          kicked = true;
+
+          // إبلاغ العضو المستهدف بالطرد
+          s.emit("room_kicked", {
+            roomId: kickTargetRoomId,
+            duration: minutes,
+            message: `تم طردك من الغرفة مؤقتاً لمدة ${minutes} دقائق`
+          });
+
+          // تنفيذ الخروج الفعلي من الغرفة
+          s.leave(`room:${kickTargetRoomId}`);
+          await leaveRoom(s.id);
+          s.data.user.roomId = "";
+
+          const memberCount = await getRoomMemberCount(kickTargetRoomId);
+          await publishSocketEvent(kickTargetRoomId, "user_left", {
+            socketId: s.id,
+            username: s.data.user.username,
+            roomId: kickTargetRoomId,
+            memberCount,
+          });
+
+          await publishSocketEvent(kickTargetRoomId, "system_message", {
+            text: `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`,
+            roomId: kickTargetRoomId,
+            systemType: "leave",
+            user: {
+              id: s.data.user.id,
+              username: s.data.user.username,
+              role: s.data.user.role,
+              avatar: s.data.user.avatar,
+              countryCode: s.data.user.countryCode,
+              avatarFrameUrl: s.data.user.avatarFrameUrl,
+              giftIconUrl: s.data.user.giftIconUrl,
+            }
+          });
+
+          await publishGlobalEvent("room_count_update", { roomId: kickTargetRoomId, memberCount });
+        }
+
+        responsePayload.notice = kicked
+          ? `تم طرد العضو من الغرفة مؤقتاً لمدة ${minutes} دقائق`
+          : `تم تسجيل الطرد وسيُطبَّق عند محاولة الدخول لمدة ${minutes} دقائق`;
       }
 
       if (target && action === "room_move") {
@@ -373,8 +636,12 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       const result = await ProfileService.toggleFollow(userId, profileId);
       if (result.error) return callback?.({ error: result.error });
 
-      if (result.following && String(profileId) !== String(userId)) {
-        createNotification(profileId, userId, "follow", "user", userId, {}).catch(() => {});
+      if (String(profileId) !== String(userId)) {
+        if (result.following) {
+          createNotification(profileId, userId, "follow", "user", userId, {}).catch(() => {});
+        } else {
+          createNotification(profileId, userId, "unfollow", "user", userId, {}).catch(() => {});
+        }
       }
 
       io.to(`user:${profileId}`).emit("user:followed", {
@@ -382,10 +649,371 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         following: result.following,
       });
 
-      callback?.({ success: true, following: result.following });
+      callback?.({ success: true, following: result.following, followerCount: result.followerCount });
     } catch (err) {
       console.error("[ProfileFollow] Error:", err);
       callback?.({ error: "Failed to follow" });
+    }
+  });
+
+  socket.on("profile:like", async (data: { profileId: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+
+      const profileId = normalizeId(data?.profileId);
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      const result = await ProfileService.addLike(userId, profileId);
+      if (result.error) return callback?.({ error: result.error });
+
+      if (String(profileId) !== String(userId)) {
+        createNotification(profileId, userId, "like", "user", userId, {}).catch(() => {});
+      }
+
+      io.to(`user:${profileId}`).emit("profile:liked", {
+        likerId: userId,
+        likesCount: result.likesCount,
+      });
+
+      callback?.({ success: true, likesCount: result.likesCount });
+    } catch (err) {
+      console.error("[ProfileLike] Error:", err);
+      callback?.({ error: "Failed to like" });
+    }
+  });
+
+  socket.on("profile:sendAlert", async (data: { profileId: string; message: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+
+      const profileId = normalizeId(data?.profileId);
+      const message = String(data?.message || "").trim();
+      if (!profileId) return callback?.({ error: "Profile not found" });
+      if (!message) return callback?.({ error: "الرسالة مطلوبة" });
+      if (message.length > 500) return callback?.({ error: "الرسالة طويلة جداً" });
+      if (String(profileId) === String(userId)) return callback?.({ error: "لا يمكنك إرسال تنبيه لنفسك" });
+
+      let senderName = "عضو";
+      let senderAvatar = "/pic.png";
+      let senderBanner = "";
+      let senderGiftIcon = "";
+      let senderPromotionIcon = "";
+      let senderAvatarFrame = "";
+      try {
+        const senderRes = await dbPool.query(
+          `SELECT u.username, u.topic, u.pic, u.cover,
+                  up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url, up.avatar_frame_url
+           FROM users u
+           LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+           WHERE CAST(u.id AS TEXT) = $1 OR CAST(u.uid AS TEXT) = $1 LIMIT 1`,
+          [String(userId)]
+        );
+        if (senderRes.rows.length > 0) {
+          const sender = senderRes.rows[0];
+          senderName = sender.topic || sender.username || "عضو";
+          senderAvatar = sender.pic || "/pic.png";
+          senderBanner = sender.gifted_banner_url || "";
+          senderGiftIcon = sender.gifted_gift_icon_url || "";
+          senderPromotionIcon = sender.gifted_promotion_icon_url || "";
+          senderAvatarFrame = sender.avatar_frame_url || "";
+        }
+      } catch {}
+
+      io.to(`user:${profileId}`).emit("alert_received", {
+        alertId: String(Date.now()),
+        fromUserId: userId,
+        fromUsername: senderName,
+        fromAvatar: senderAvatar,
+        fromBanner: senderBanner,
+        fromGiftIcon: senderGiftIcon,
+        fromPromotionIcon: senderPromotionIcon,
+        fromAvatarFrame: senderAvatarFrame,
+        message,
+        timestamp: Date.now(),
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[ProfileSendAlert] Error:", err);
+      callback?.({ error: "Failed to send alert" });
+    }
+  });
+
+  /**
+   * إهداء بنر (أيقونة قبل الاسم) لعضو آخر
+   */
+  socket.on("profile:gift_banner", async (data: { profileId: string; iconUrl: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      const iconUrl = String(data?.iconUrl || "").trim();
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      // تأكد من أن الأيقونة موجودة في جدول swiper_banners أو icons
+      if (iconUrl) {
+        const iconCheck = await dbPool.query(
+          `SELECT id FROM swiper_banners WHERE image_url = $1 UNION ALL SELECT id FROM icons WHERE image_url = $1`,
+          [iconUrl]
+        );
+        if (iconCheck.rows.length === 0) return callback?.({ error: "Icon not found in catalog" });
+      }
+
+      // تحديث في قاعدة البيانات
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_banner_url) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET gifted_banner_url = $2`,
+        [profileId, iconUrl]
+      );
+
+      // تحديث في الذاكرة
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedBannerUrl = iconUrl;
+        }
+      }
+
+      // إرسال إشعار للمستلم
+      io.to(`user:${profileId}`).emit("gift_banner_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl,
+      });
+
+      // بث التحديث لجميع المتصلين
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedBannerUrl: iconUrl,
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[GiftBanner] Error:", err);
+      callback?.({ error: "Failed to gift banner" });
+    }
+  });
+
+  /**
+   * إزالة بنر من عضو
+   */
+  socket.on("profile:remove_banner", async (data: { profileId: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_banner_url) VALUES ($1, '') ON CONFLICT (user_id) DO UPDATE SET gifted_banner_url = ''`,
+        [profileId]
+      );
+
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedBannerUrl = "";
+        }
+      }
+
+      io.to(`user:${profileId}`).emit("gift_banner_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl: "",
+      });
+
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedBannerUrl: "",
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[RemoveBanner] Error:", err);
+      callback?.({ error: "Failed to remove banner" });
+    }
+  });
+
+  /**
+   * إهداء أيقونة هدية لعضو
+   */
+  socket.on("profile:gift_gift_icon", async (data: { profileId: string; iconUrl: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      const iconUrl = String(data?.iconUrl || "").trim();
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      if (iconUrl) {
+        const iconCheck = await dbPool.query(`SELECT id FROM icons WHERE image_url = $1`, [iconUrl]);
+        if (iconCheck.rows.length === 0) return callback?.({ error: "Icon not found in catalog" });
+      }
+
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_gift_icon_url) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET gifted_gift_icon_url = $2`,
+        [profileId, iconUrl]
+      );
+
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedGiftIconUrl = iconUrl;
+        }
+      }
+
+      io.to(`user:${profileId}`).emit("gift_icon_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl,
+      });
+
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedGiftIconUrl: iconUrl,
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[GiftIcon] Error:", err);
+      callback?.({ error: "Failed to gift icon" });
+    }
+  });
+
+  /**
+   * إزالة أيقونة هدية من عضو
+   */
+  socket.on("profile:remove_gift_icon", async (data: { profileId: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_gift_icon_url) VALUES ($1, '') ON CONFLICT (user_id) DO UPDATE SET gifted_gift_icon_url = ''`,
+        [profileId]
+      );
+
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedGiftIconUrl = "";
+        }
+      }
+
+      io.to(`user:${profileId}`).emit("gift_icon_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl: "",
+      });
+
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedGiftIconUrl: "",
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[RemoveGiftIcon] Error:", err);
+      callback?.({ error: "Failed to remove gift icon" });
+    }
+  });
+
+  /**
+   * إهداء أيقونة ترقية لعضو
+   */
+  socket.on("profile:gift_promotion_icon", async (data: { profileId: string; iconUrl: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      const iconUrl = String(data?.iconUrl || "").trim();
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      if (iconUrl) {
+        const iconCheck = await dbPool.query(`SELECT id FROM icons WHERE image_url = $1`, [iconUrl]);
+        if (iconCheck.rows.length === 0) return callback?.({ error: "Icon not found in catalog" });
+      }
+
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_promotion_icon_url) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET gifted_promotion_icon_url = $2`,
+        [profileId, iconUrl]
+      );
+
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedPromotionIconUrl = iconUrl;
+        }
+      }
+
+      io.to(`user:${profileId}`).emit("gift_promotion_icon_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl,
+      });
+
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedPromotionIconUrl: iconUrl,
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[GiftPromotionIcon] Error:", err);
+      callback?.({ error: "Failed to gift promotion icon" });
+    }
+  });
+
+  /**
+   * إزالة أيقونة ترقية من عضو
+   */
+  socket.on("profile:remove_promotion_icon", async (data: { profileId: string }, callback) => {
+    try {
+      if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+
+      const profileId = normalizeId(data?.profileId);
+      if (!profileId) return callback?.({ error: "Profile not found" });
+
+      await dbPool.query(
+        `INSERT INTO user_profiles (user_id, gifted_promotion_icon_url) VALUES ($1, '') ON CONFLICT (user_id) DO UPDATE SET gifted_promotion_icon_url = ''`,
+        [profileId]
+      );
+
+      const targetUser = await findOnlineUser(profileId);
+      if (targetUser) {
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          (targetSocket.data.user as any).giftedPromotionIconUrl = "";
+        }
+      }
+
+      io.to(`user:${profileId}`).emit("gift_promotion_icon_received", {
+        fromUserId: userId,
+        fromUsername: socket.data.user?.username || "",
+        iconUrl: "",
+      });
+
+      io.emit("user_profile_updated", {
+        userId: profileId,
+        giftedPromotionIconUrl: "",
+      });
+
+      callback?.({ success: true });
+    } catch (err) {
+      console.error("[RemovePromotionIcon] Error:", err);
+      callback?.({ error: "Failed to remove promotion icon" });
     }
   });
 }

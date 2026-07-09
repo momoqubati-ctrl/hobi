@@ -35,7 +35,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           members: await getRoomMemberCount(room.id),
         })),
       );
-      callback?.({ success: true, rooms: roomsWithCounts });
+      callback?.({ success: true, rooms: roomsWithCounts.sort((a: any, b: any) => (b.members || 0) - (a.members || 0)) });
     } catch (err) {
       console.error("get_rooms failed:", err);
       callback?.({ success: false, message: "تعذر جلب الغرف" });
@@ -47,6 +47,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
    */
   socket.on("create_room", async (data: {
     topic: string;
+    slug?: string;
     about: string;
     welcome: string;
     pass?: string;
@@ -59,6 +60,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     color: string;
     verified: boolean;
     roomLayout: string;
+    ownerUsername?: string;
     stageLocks?: Record<string, boolean>;
   }, callback?: (res: any) => void) => {
     try {
@@ -93,13 +95,30 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const roomId = randomUUID().slice(0, 10);
 
       // تحديد المالك (رقم العضوية)
-      const ownerRef = `#${user.idreg || user.id || "0"}`;
+      let ownerRef = `#${user.idreg || user.id || "0"}`;
+      let ownerUser = String(user.username || "");
+      if (data.ownerUsername && data.ownerUsername !== "system") {
+        const { dbPool } = await import("../db");
+        const ownerResult = await dbPool.query(
+          "SELECT idreg, username FROM users WHERE username = $1 LIMIT 1",
+          [data.ownerUsername]
+        );
+        if ((ownerResult.rowCount || 0) > 0) {
+          ownerRef = `#${ownerResult.rows[0].idreg}`;
+          ownerUser = ownerResult.rows[0].username;
+        }
+      }
+
+      // Resolve slug
+      const safeSlug = data.slug
+        ? String(data.slug).toLowerCase().replace(/[^a-z0-9_-]/g, "")
+        : roomId;
 
       console.log("[create_room] creating room in DB...");
 
       // إنشاء الغرفة في قاعدة البيانات
       const created = await createRoomInDatabase({
-        id: roomId,
+        id: safeSlug,
         topic: String(data.topic).trim(),
         about: String(data.about).trim(),
         welcome: String(data.welcome).trim(),
@@ -128,12 +147,12 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
       // إعادة تحميل الغرف وبثها لجميع المتصلين
       const updatedRooms = await listRooms();
-      const roomsWithCounts = await Promise.all(
+      const roomsWithCounts = (await Promise.all(
         updatedRooms.map(async (r: any) => ({
           ...r,
           members: await getRoomMemberCount(r.id),
         })),
-      );
+      )).sort((a: any, b: any) => (b.members || 0) - (a.members || 0));
 
       // بث قائمة الغرف المحدثة للجميع
       io.emit("msg", { cmd: "r+", data: roomsWithCounts });
@@ -147,13 +166,255 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   });
 
   /**
+   * تعديل غرفة
+   */
+  socket.on("edit_room", async (data: any, callback?: (res: any) => void) => {
+    try {
+      const roomId = String(data?.roomId || "").trim();
+      if (!roomId) { callback?.({ success: false, message: "معرف الغرفة مطلوب" }); return; }
+
+      const { dbPool } = await import("../db");
+
+      // Check permission: owner of room or has room.edit / room.all
+      const roomCheck = await dbPool.query(
+        "SELECT owner, \"user\" FROM rooms WHERE CAST(id AS text) = $1 OR slug = $1 LIMIT 1",
+        [roomId]
+      );
+      const roomRow = roomCheck.rows[0];
+      if (!roomRow) { callback?.({ success: false, message: "الغرفة غير موجودة" }); return; }
+
+      const isOwner = String(roomRow["user"] || "") === String(user.username || "");
+      let canEdit = isOwner;
+      if (!canEdit) {
+        try {
+          const { hasPermission } = await import("../services/adminPermissions");
+          canEdit = await hasPermission(String(user.id || ""), "room.edit") || await hasPermission(String(user.id || ""), "room.all") || await hasPermission(String(user.id || ""), "rooms.edit") || await hasPermission(String(user.id || ""), "rooms.all");
+        } catch (_) {}
+      }
+      if (!canEdit) {
+        callback?.({ success: false, message: "ليس لديك صلاحية لتعديل هذه الغرفة" });
+        return;
+      }
+
+      const fields: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (data.topic !== undefined) { fields.push(`topic = $${idx++}`); values.push(String(data.topic).trim()); }
+      if (data.about !== undefined) { fields.push(`about = $${idx++}`); values.push(String(data.about).trim()); }
+      if (data.welcome !== undefined) { fields.push(`welcome = $${idx++}`); values.push(String(data.welcome).trim()); }
+      if (data.pass !== undefined) { fields.push(`pass = $${idx++}`); values.push(String(data.pass)); fields.push(`needpass = $${idx++}`); values.push(data.pass ? 1 : 0); }
+      if (data.max !== undefined) { fields.push(`max = $${idx++}`); values.push(Number(data.max) || 10); }
+      if (data.like !== undefined) { fields.push(`rmli = $${idx++}`); values.push(Number(data.like) || 0); }
+      if (data.mic !== undefined) { fields.push(`mic = $${idx++}`); values.push(Number(data.mic) || 0); }
+      if (data.broadcast !== undefined) { fields.push(`broadcast = $${idx++}`); values.push(data.broadcast ? 1 : 0); }
+      if (data.pic !== undefined) { fields.push(`pic = $${idx++}`); values.push(String(data.pic)); }
+      if (data.color !== undefined) { fields.push(`color = $${idx++}`); values.push(String(data.color)); }
+      if (data.verified !== undefined) { fields.push(`verified = $${idx++}`); values.push(data.verified ? true : false); }
+      if (data.roomLayout !== undefined) { fields.push(`room_layout = $${idx++}`); values.push(String(data.roomLayout)); }
+      if (data.stageLocks !== undefined) {
+        const stageState = JSON.stringify(
+          Object.fromEntries(
+            Object.entries(data.stageLocks).map(([k, v]) => [k, v ? 1 : 0])
+          )
+        );
+        fields.push(`stage_state = $${idx++}`); values.push(stageState);
+      }
+      if (data.slug !== undefined) {
+        const safeSlug = String(data.slug).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        if (safeSlug) { fields.push(`slug = $${idx++}`); values.push(safeSlug); }
+      }
+
+      if (fields.length === 0) { callback?.({ success: false, message: "لا توجد بيانات للتعديل" }); return; }
+
+      values.push(roomId);
+      await dbPool.query(
+        `UPDATE rooms SET ${fields.join(", ")} WHERE CAST(id AS text) = $${idx} OR slug = $${idx}`,
+        values
+      );
+
+      const updatedRooms = await listRooms();
+      const roomsWithCounts = await Promise.all(
+        updatedRooms.map(async (r: any) => ({
+          ...r,
+          members: await getRoomMemberCount(r.id),
+        })),
+      ).sort((a: any, b: any) => (b.members || 0) - (a.members || 0));
+
+      io.emit("msg", { cmd: "r+", data: roomsWithCounts });
+      await publishGlobalEvent("rooms_updated", { rooms: roomsWithCounts });
+
+      // Emit real-time update to users inside this room
+      const updatedRoom = roomsWithCounts.find((r: any) => String(r.id) === String(roomId) || String(r.id) === String(data.slug));
+      if (updatedRoom) {
+        io.to(`room:${roomId}`).emit("room_updated", { roomId, room: updatedRoom });
+      }
+
+      callback?.({ success: true, message: "تم تعديل الغرفة بنجاح" });
+    } catch (err) {
+      console.error("edit_room failed:", err);
+      callback?.({ success: false, message: "حدث خطأ أثناء تعديل الغرفة" });
+    }
+  });
+
+  /**
    * دخول غرفة
    */
-  socket.on("join_room", async (data: { roomId: string }, callback?: (res: any) => void) => {
+  socket.on("join_room", async (data: { roomId: string; password?: string }, callback?: (res: any) => void) => {
     const roomId = String(data?.roomId || "").trim();
     if (!roomId) {
       callback?.({ success: false, message: "معرف الغرفة مطلوب" });
       return;
+    }
+
+    // ── Check if user is temporarily kicked/banned from this room ──
+    try {
+      const { dbPool } = await import("../db");
+      const uid = String(user.id || "");
+      const uname = String(user.username || "").toLowerCase();
+      const uidreg = String(user.idreg || "");
+      console.log(`[KICK_BAN_CHECK] roomId=${roomId} uid=${uid} uname=${uname} uidreg=${uidreg}`);
+
+      // خطوة 1: جلب UUID الحقيقي من جدول users
+      // user.id قد يكون uid (نص) أو UUID أو idreg - نبحث بكل الصيغ
+      let realUserId = uid;
+      try {
+        const userLookup = await dbPool.query(
+          `SELECT CAST(id AS text) as id FROM users 
+           WHERE lower(username) = lower($1)
+              OR CAST(id AS text) = $2
+              OR CAST(uid AS text) = $2
+              OR CAST(idreg AS varchar) = $3
+           LIMIT 1`,
+          [uname, uid, uidreg]
+        );
+        if (userLookup.rows[0]?.id) {
+          realUserId = userLookup.rows[0].id;
+        }
+        console.log(`[KICK_BAN_CHECK] realUserId resolved: ${realUserId}`);
+      } catch (_) {}
+
+      // خطوة 2: فحص الطرد بجميع المعرفات الممكنة (user.id, user.uid, user.idreg, user.username)
+      // room_kicks.user_id قد يُخزَّن بأي من هذه القيم
+      const kickRes = await dbPool.query(
+        `WITH user_identifiers AS (
+           SELECT 
+             CAST(id AS text) as id_val,
+             CAST(uid AS text) as uid_val,
+             CAST(idreg AS varchar) as idreg_val
+           FROM users 
+           WHERE lower(username) = lower($4)
+              OR CAST(id AS text) = $2
+              OR CAST(uid AS text) = $2
+              OR CAST(idreg AS varchar) = $3
+           LIMIT 1
+         )
+         SELECT k.banned_until, k.user_id, k.room_id 
+         FROM room_kicks k, user_identifiers u
+         WHERE k.room_id = $1 
+           AND (
+             k.user_id = u.id_val
+             OR k.user_id = u.uid_val
+             OR k.user_id = u.idreg_val
+             OR k.user_id = $2
+             OR k.user_id = $3
+             OR lower(k.user_id) = lower($4)
+           )
+         ORDER BY k.banned_until DESC
+         LIMIT 1`,
+        [roomId, uid, uidreg, uname]
+      );
+      console.log(`[KICK_BAN_CHECK] rows found: ${kickRes.rows.length}`, kickRes.rows.length > 0 ? JSON.stringify(kickRes.rows[0]) : "none");
+      if (kickRes.rows.length > 0) {
+        const bannedUntil = new Date(kickRes.rows[0].banned_until);
+        const now = new Date();
+        const remaining = bannedUntil.getTime() - now.getTime();
+        console.log(`[KICK_BAN_CHECK] bannedUntil=${bannedUntil.toISOString()} now=${now.toISOString()} remaining_ms=${remaining}`);
+        if (remaining > 0) {
+          const diffMins = Math.floor(remaining / 60000);
+          const diffSecs = Math.floor((remaining % 60000) / 1000);
+          let timeRemainingStr = "";
+          if (diffMins > 0) {
+            timeRemainingStr = `${diffMins} دقيقة و ${diffSecs} ثانية`;
+          } else {
+            timeRemainingStr = `${diffSecs} ثانية`;
+          }
+          console.log(`[KICK_BAN_CHECK] BLOCKING entry. timeRemaining=${timeRemainingStr}`);
+          callback?.({
+            success: false,
+            message: `لا يمكنك الدخول للغرفة، تم طردك مؤقتاً ومتبقي لديك ${timeRemainingStr}`,
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("Room kick check error:", e);
+    }
+
+    // ── Password check for locked rooms ──
+    try {
+      const rooms = await listRooms();
+      const room = rooms.find((r: any) => r.id === roomId);
+      if (room?.locked) {
+        let canBypass = false;
+        try {
+          const { hasPermission } = await import("../services/adminPermissions");
+          canBypass = await hasPermission(String(user.id || ""), "lockedroom.read");
+        } catch (_) {}
+
+        if (!canBypass) {
+          const { dbPool } = await import("../db");
+          const roomPassResult = await dbPool.query(
+            "SELECT pass FROM rooms WHERE CAST(id AS text) = $1 OR slug = $1 LIMIT 1",
+            [roomId]
+          );
+          const dbPass = roomPassResult.rows[0]?.pass || "";
+          const providedPass = String(data?.password || "");
+          if (!dbPass || providedPass !== dbPass) {
+            callback?.({ success: false, message: "كلمة المرور غير صحيحة", needPassword: true });
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Password check error:", e);
+    }
+
+    // ── Likes required check ──
+    try {
+      const allRooms = await listRooms();
+      const roomInfo = allRooms.find((r: any) => r.id === roomId);
+      if (roomInfo && roomInfo.likesRequired > 0) {
+        let userLikes = 0;
+        try {
+          const { dbPool } = await import("../db");
+          const likesResult = await dbPool.query(
+            `SELECT COALESCE(wall_post_likes, 0) as likes FROM users WHERE CAST(id AS text) = $1 OR CAST(uid AS text) = $1 OR CAST(idreg AS varchar) = $1 OR lower(username) = lower($1) LIMIT 1`,
+            [String(user.id || "")]
+          );
+          userLikes = Number(likesResult.rows[0]?.likes || 0);
+        } catch (_) {}
+        if (userLikes < roomInfo.likesRequired) {
+          callback?.({ success: false, message: `يجب أن يكون لديك ${roomInfo.likesRequired} إعجاب على الأقل للدخول لهذه الغرفة (لديك ${userLikes})`, likesRequired: true });
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("Likes required check error:", e);
+    }
+
+    // ── Max capacity check ──
+    try {
+      const rooms = await listRooms();
+      const roomInfo = rooms.find((r: any) => r.id === roomId);
+      const currentCount = await getRoomMemberCount(roomId);
+      const maxMembers = roomInfo?.maxMembers || 50;
+      if (currentCount >= maxMembers) {
+        callback?.({ success: false, message: "الغرفة ممتلئة حالياً، لا يمكنك الدخول", full: true });
+        return;
+      }
+    } catch (e) {
+      console.error("Max capacity check error:", e);
     }
 
     const pendingLeave = pendingLeaves.get(socket.id);
@@ -279,6 +540,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         giftIconUrl: m.giftIconUrl,
         status: m.status || "online",
         nameColor: m.nameColor || "",
+statusFontColor: m.statusFontColor || "",
       })),
       memberCount: members.length,
     });
@@ -295,7 +557,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           avatarFrameUrl: user.avatarFrameUrl,
           giftIconUrl: user.giftIconUrl,
           status: user.status || "online",
-          nameColor: socket.data.user.nameColor || "",
+nameColor: socket.data.user.nameColor || "",
+          statusFontColor: socket.data.user.statusFontColor || "",
         },
         memberCount: members.length,
       }, socket.id);
@@ -357,6 +620,12 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      // فحص الإسكات - المستخدم المكتوم لا يمكنه إرسال رسائل
+      if ((socket.data.user as any).muted) {
+        callback?.({ success: false, muted: true, message: "تم منعك من الحديث في الدردشة" });
+        return;
+      }
+
       // --- تطبيق الاختصارات ثم الفلترة الذكية ---
       const rawText = text || (mediaType === "audio" ? "🎤 رسالة صوتية" : "");
       const finalText = rawText ? await applyShortcuts(rawText) : rawText;
@@ -404,6 +673,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         giftIconUrl: user.giftIconUrl,
         messageBubbleStyle: user.messageBubbleStyle,
         nameColor: socket.data.user.nameColor || "",
+        statusFontColor: socket.data.user.statusFontColor || "",
         text: filterResult.filteredText,
         replyToId: replyToId || undefined,
         replyToText: replyToText || undefined,
@@ -446,6 +716,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return callback?.({ success: false, error: "نوع تفاعل غير صالح" });
       }
 
+      // فحص الإسكات
+      if ((socket.data.user as any).muted) {
+        return callback?.({ success: false, muted: true, error: "تم منعك من الحديث في الدردشة" });
+      }
+
       const msg = getRoomMessage(roomId, messageId);
       if (!msg) {
         return callback?.({ success: false, error: "الرسالة غير موجودة" });
@@ -481,6 +756,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
   socket.on("typing", async (data: { roomId: string }) => {
     const roomId = String(data?.roomId || "").trim();
     if (!roomId) return;
+    if ((socket.data.user as any).muted) return;
     const key = `${socket.id}:${roomId}`;
     if (typingTimers.has(key)) return;
     typingTimers.set(key, setTimeout(() => typingTimers.delete(key), TYPING_THROTTLE_MS));

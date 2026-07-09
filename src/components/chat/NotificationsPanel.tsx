@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bell, Heart, MessageCircle, Gift, Reply, Loader2, CheckCheck, UserPlus, AtSign, Mail } from 'lucide-react';
+import { Bell, Heart, MessageCircle, Gift, Reply, Loader2, CheckCheck, UserPlus, UserMinus, AtSign, Mail } from 'lucide-react';
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
 
@@ -43,6 +43,7 @@ const NotificationIcon = ({ type }: { type: string }) => {
     case "reply": return <Reply size={14} className="text-green-500" />;
     case "gift": return <Gift size={14} className="text-pink-500" />;
     case "follow": return <UserPlus size={14} className="text-primary" />;
+    case "unfollow": return <UserMinus size={14} className="text-red-500" />;
     case "mention": return <AtSign size={14} className="text-amber-500" />;
     case "mail": return <Mail size={14} className="text-purple-500" />;
     default: return <Bell size={14} className="text-slate-400" />;
@@ -57,11 +58,14 @@ const getNotificationText = (n: NotificationItem) => {
   const commentSnippet = commentBody ? `: "${commentBody}${commentBody.length >= 20 ? "..." : ""}"` : "";
   const parentSnippet = parentCommentBody ? `: "${parentCommentBody}${parentCommentBody.length >= 20 ? "..." : ""}"` : "";
   switch (n.type) {
-    case "like": return n.entityType === "wall_comment" ? `أعجب بتعليقك${commentSnippet}` : `أعجب بمنشورك${postSnippet}`;
+    case "like":
+      if (n.entityType === "user") return "قام بالإعجاب بك";
+      return n.entityType === "wall_comment" ? `أعجب بتعليقك${commentSnippet}` : `أعجب بمنشورك${postSnippet}`;
     case "comment": return `علّق على منشورك${postSnippet}`;
     case "reply": return `رد على تعليقك${parentSnippet}`;
     case "gift": return `أرسل لك ${n.metadata.giftIcon || "🎁"} ${n.metadata.giftName || "هدية"}`;
     case "follow": return "بدأ بمتابعتك";
+    case "unfollow": return "تم إلغاء متابعتك";
     case "mention": return "أشار إليك في منشور";
     case "mail": {
       const preview = n.metadata?.preview;
@@ -188,6 +192,21 @@ const NotificationsList = ({ compact, onClose }: NotificationsListProps) => {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
+                      {(() => {
+                        const actorId = n.actorId || n.actor?.id;
+                        if (!actorId) return null;
+                        const u = onlineUsers.find(o => String(o.id) === String(actorId));
+                        const banner = u?.giftedBannerUrl || (n.actor as any)?.giftedBannerUrl || "";
+                        const giftIcon = u?.giftedGiftIconUrl || (n.actor as any)?.giftedGiftIconUrl || "";
+                        const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (n.actor as any)?.roleIconUrl || (n.actor as any)?.giftedPromotionIconUrl || "";
+                        return (
+                          <>
+                            {promoIcon && <img src={promoIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                            {giftIcon && <img src={giftIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                            {banner && <img src={banner} alt="" className="h-5 w-auto rounded object-contain max-w-[5rem]" />}
+                          </>
+                        );
+                      })()}
                       <span className="font-bold text-xs truncate" style={(() => {
                         const actorId = n.actorId || n.actor?.id;
                         if (!actorId) return undefined;

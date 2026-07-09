@@ -1,34 +1,58 @@
-import { ShieldAlert, Edit2, UserMinus, MicOff, Settings } from "lucide-react";
+import { ShieldAlert, Edit2, UserMinus, MicOff, Mic, Settings } from "lucide-react";
 import { Button } from "../ui/button";
 import { getSocket } from "@/lib/socket";
 import { toast } from "sonner";
+import { useEffect, useState } from "react";
 
 interface ProfileAdminPanelProps {
   profileId: string;
   currentRole: string;
+  isMuted?: boolean;
   onProfilePatch?: (patch: any) => void;
 }
 
-export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: ProfileAdminPanelProps) {
+export function ProfileAdminPanel({ profileId, currentRole, isMuted: initialMuted, onProfilePatch }: ProfileAdminPanelProps) {
   const socket = getSocket();
+  const [isMuted, setIsMuted] = useState(initialMuted || false);
+
+  useEffect(() => {
+    setIsMuted(Boolean(initialMuted));
+  }, [initialMuted, profileId]);
 
   const runAction = (action: string, value?: any, reason?: string) => {
-    socket.emit("profile:adminAction", { profileId, action, value, reason }, (res: any) => {
-      if (res?.success) {
-        toast.success(res.notice || "تم تنفيذ الإجراء");
-        if (action === "nick") onProfilePatch?.({ displayName: value });
-        if (action === "message") onProfilePatch?.({ profile: { profileMsg: value } });
-        if (action === "likes") onProfilePatch?.({ stats: { likes: Number(value) || 0 } });
-        if (action === "site_badge") onProfilePatch?.({ profile: { siteBadge: value } });
-        if (action === "delete_pic") onProfilePatch?.({ profile: { avatarUrl: "/pic.png" } });
-        if (action === "history") {
-          const history = (res.history || []).map((item: any) => item.topic || item.username).filter(Boolean).join("\n");
-          alert(history || "لا يوجد سجل أسماء لهذا العضو");
+    try {
+      socket.emit("profile:adminAction", { profileId, action, value, reason }, (res: any) => {
+        try {
+          if (res?.success) {
+            toast.success(res.notice || "تم تنفيذ الإجراء");
+            if (action === "nick") onProfilePatch?.({ displayName: value });
+            if (action === "message") onProfilePatch?.({ profile: { profileMsg: value } });
+            if (action === "likes") onProfilePatch?.({ stats: { likes: Number(value) || 0 } });
+            if (action === "site_badge") onProfilePatch?.({ profile: { siteBadge: value } });
+            if (action === "delete_pic") onProfilePatch?.({ profile: { avatarUrl: "/pic.png" } });
+            if (action === "global_mute") {
+              setIsMuted(true);
+              onProfilePatch?.({ profile: { muted: true } });
+            }
+            if (action === "room_unmute") {
+              setIsMuted(false);
+              onProfilePatch?.({ profile: { muted: false } });
+            }
+            if (action === "history") {
+              const history = (res.history || []).map((item: any) => item.topic || item.username).filter(Boolean).join("\n");
+              alert(history || "لا يوجد سجل أسماء لهذا العضو");
+            }
+          } else {
+            toast.error(res?.error || "تعذر تنفيذ الإجراء");
+          }
+        } catch (e) {
+          console.error("callback error:", e);
         }
-      } else {
-        toast.error(res?.error || "تعذر تنفيذ الإجراء");
-      }
-    });
+      });
+    } catch (e) {
+      console.error("emit error:", e);
+      toast.error("تعذر الاتصال بالخادم");
+    }
   };
 
   const askText = (label: string, current = "") => {
@@ -50,6 +74,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -62,6 +87,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           تغيير النك
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -74,15 +100,17 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           الصلاحيات
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
-          onClick={() => runAction("global_mute", 1, "إسكات عام من البروفايل")}
-          className="h-11 rounded-2xl border-red-200 bg-white text-xs font-black text-red-700 hover:bg-red-50 dark:border-red-500/20 dark:bg-slate-950/40 dark:text-red-200"
+          onClick={() => isMuted ? runAction("room_unmute", 0) : runAction("global_mute", 1, "إسكات عام من البروفايل")}
+          className={`h-11 rounded-2xl border-red-200 bg-white text-xs font-black text-red-700 hover:bg-red-50 dark:border-red-500/20 dark:bg-slate-950/40 dark:text-red-200 ${isMuted ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-200" : ""}`}
         >
-          <MicOff className="ml-2 h-4 w-4" />
-          إسكات عام
+          {isMuted ? <Mic className="ml-2 h-4 w-4" /> : <MicOff className="ml-2 h-4 w-4" />}
+          {isMuted ? "الغاء الاسكات" : "اسكات عام"}
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -97,6 +125,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
 
       <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -108,6 +137,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           تعديل الحالة
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -119,6 +149,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           تعديل اللايكات
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -130,6 +161,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           وسام الموقع
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => runAction("history")}
@@ -138,6 +170,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           كشف النكات
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {
@@ -149,14 +182,25 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           سحب لغرفة
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
-          onClick={() => runAction("room_kick", undefined, "طرد من الغرفة")}
+          onClick={() => {
+            const minutesStr = window.prompt("أدخل مدة حظر العضو من دخول الغرفة بالدقائق:");
+            if (minutesStr === null) return;
+            const minutes = parseInt(minutesStr.trim(), 10);
+            if (isNaN(minutes) || minutes <= 0) {
+              toast.error("يرجى إدخال مدة حظر صالحة بالدقائق (أكبر من 0)");
+              return;
+            }
+            runAction("room_kick", minutes, `طرد مؤقت لمدة ${minutes} دقائق`);
+          }}
           className="h-11 rounded-2xl border-red-200 bg-white text-xs font-black text-red-700 hover:bg-red-50 dark:border-red-500/20 dark:bg-slate-950/40 dark:text-red-200"
         >
           طرد من الغرفة
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => runAction("room_mute", 1)}
@@ -165,6 +209,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           كتم بالروم
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => runAction("room_unmute", 0)}
@@ -173,6 +218,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           فك الكتم
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => runAction("delete_pic")}
@@ -181,6 +227,7 @@ export function ProfileAdminPanel({ profileId, currentRole, onProfilePatch }: Pr
           مسح الصورة
         </Button>
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={() => {

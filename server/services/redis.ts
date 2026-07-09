@@ -27,6 +27,7 @@ type RedisCommandClient = {
   srem: (...args: any[]) => Promise<number>;
   smembers: (...args: any[]) => Promise<string[]>;
   scard: (...args: any[]) => Promise<number>;
+  ttl: (...args: any[]) => Promise<number>;
 };
 
 function createNoopRedis(): RedisCommandClient {
@@ -53,6 +54,7 @@ function createNoopRedis(): RedisCommandClient {
     srem: async () => 0,
     smembers: async () => [],
     scard: async () => 0,
+    ttl: async () => -2,
   };
 }
 

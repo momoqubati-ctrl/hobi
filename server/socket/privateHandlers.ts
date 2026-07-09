@@ -29,6 +29,8 @@ interface PMMessage {
   senderId: string;
   senderName: string;
   senderAvatar: string;
+  nameColor?: string;
+  statusFontColor?: string;
   receiverId: string;
   text: string;
   mediaUrl?: string;
@@ -137,6 +139,11 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
         return callback?.({ success: false, error: "لا يمكنك مراسلة نفسك" });
       }
 
+      // فحص الإسكات - المستخدم المكتوم لا يمكنه إرسال رسائل خاصة
+      if ((socket.data.user as any).muted) {
+        return callback?.({ success: false, muted: true, error: "تم منعك من الحديث في الدردشة" });
+      }
+
       // تطبيق الاختصارات ثم الفلتر على النص
       let filteredText = text;
       if (text) {
@@ -201,6 +208,8 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
         senderId: myId,
         senderName: myInfo.name,
         senderAvatar: myInfo.avatar,
+        nameColor: socket.data.user.nameColor || "",
+        statusFontColor: socket.data.user.statusFontColor || "",
         receiverId: toUserId,
         text: filteredText,
         mediaUrl: mediaUrl || undefined,
@@ -308,6 +317,7 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
   socket.on("pm:typing", (data: { toUserId: string }) => {
     const toUserId = String(data?.toUserId || "").trim();
     if (!toUserId || toUserId === myId) return;
+    if ((socket.data.user as any).muted) return;
     io.to(SOCKET_CHANNELS.social(toUserId)).emit("pm:typing", {
       fromUserId: myId,
       username: myInfo.name,

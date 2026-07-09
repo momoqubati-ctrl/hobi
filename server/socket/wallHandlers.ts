@@ -67,6 +67,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
           id: String(user.id),
           name: user.username || "زائر",
           avatar: user.avatar || "/pic.png",
+          nameColor: socket.data.user.nameColor || "",
+          statusFontColor: socket.data.user.statusFontColor || "",
+          giftedBannerUrl: (socket.data.user as any).giftedBannerUrl || "",
+          giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
         },
       };
 
@@ -204,6 +209,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
           id: String(user.id),
           name: user.username || "زائر",
           avatar: user.avatar || "/pic.png",
+          nameColor: socket.data.user.nameColor || "",
+          statusFontColor: socket.data.user.statusFontColor || "",
+          giftedBannerUrl: (socket.data.user as any).giftedBannerUrl || "",
+          giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
         },
         parentId: data.parentId || null,
         replies: [],

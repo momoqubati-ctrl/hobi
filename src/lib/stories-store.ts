@@ -92,7 +92,17 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
     set({ isLoading: true });
 
     const socket = getSocket();
+    
+    // Timeout safety: if callback never fires within 5s, allow retry
+    const timeoutId = setTimeout(() => {
+      const s = get();
+      if (s.isLoading && !s.isLoaded) {
+        set({ isLoading: false });
+      }
+    }, 5000);
+
     socket.emit("stories:get", (response: any) => {
+      clearTimeout(timeoutId);
       if (response?.success) {
         set({ stories: response.stories, isLoaded: true, isLoading: false });
       } else {

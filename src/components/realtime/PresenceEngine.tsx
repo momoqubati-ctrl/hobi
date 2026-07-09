@@ -1,10 +1,13 @@
 "use client";
 
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useRealtimeStore } from '@/lib/realtime-store';
 import { getSocket } from '@/lib/socket';
+import { toast } from 'sonner';
+import { AlertReceivedPopup } from '@/components/profile/AlertReceivedPopup';
 
 const PresenceEngine = () => {
+  const [alerts, setAlerts] = useState<Array<{ id: string; open: boolean; fromUsername: string; fromAvatar: string; fromBanner: string; fromGiftIcon: string; fromPromotionIcon: string; fromAvatarFrame: string; message: string; timestamp: number }>>([]);
   const getCurrentUserPresenceHint = useCallback(() => {
     try {
       const rawUser = localStorage.getItem("user");
@@ -144,7 +147,16 @@ const PresenceEngine = () => {
     
     setLoadingOnlineUsers(true);
     const socket = getSocket();
+    
+    // Timeout safety: if callback never fires within 5s, allow retry
+    const timeoutId = setTimeout(() => {
+      if (!isOnlineUsersLoadedRef.current) {
+        setLoadingOnlineUsers(false);
+      }
+    }, 5000);
+
     socket.emit("get_online_users", (res: any) => {
+      clearTimeout(timeoutId);
       if (res?.success) {
         const hydratedUsers = (res.users || []).map((user: any) => hydratePresenceUser(user));
         setOnlineUsers(hydratedUsers);
@@ -324,6 +336,7 @@ const PresenceEngine = () => {
       if (data.roomId !== undefined) toMerge.roomId = data.roomId;
       if (data.idreg !== undefined) toMerge.idreg = data.idreg;
       if (data.siteBadge !== undefined) toMerge.siteBadge = data.siteBadge;
+      if (data.statusFontColor !== undefined) toMerge.statusFontColor = data.statusFontColor;
 
       mergeOnlineUser(hydratePresenceUser(toMerge));
     };
@@ -354,11 +367,16 @@ const PresenceEngine = () => {
           memberCardBgUrl: data.memberCardBgUrl || "",
           nameColor: data.nameColor || "",
           messageColor: data.messageColor || "",
+          statusFontColor: data.statusFontColor || "",
           roomId: data.roomId || "",
           status: data.status || "online",
           idreg: data.idreg || "",
           siteBadge: data.siteBadge || "",
           statusMsg: data.statusMsg || data.profileMsg || "",
+          giftedBannerUrl: data.giftedBannerUrl || "",
+          giftedGiftIconUrl: data.giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: data.giftedPromotionIconUrl || "",
+          roleIconUrl: data.roleIconUrl || "",
         }));
       }
     };
@@ -380,35 +398,58 @@ const PresenceEngine = () => {
         return;
       }
 
-      console.log("[PresenceEngine] Calling mergeOnlineUser for user:", data.userId, data.username);
-      console.log("[PresenceEngine] nameColor in data:", data.nameColor, "messageColor:", data.messageColor);
+      // تحديث الجدار فقط للملفات الشخصية الخاصة بالأعضاء غير المتصلين بالإنترنت
+      const isOnline = useRealtimeStore.getState().onlineUsers.some(
+        (u) =>
+          String(u.id) === String(data.userId) ||
+          (u.username && String(u.username).toLowerCase() === String(data.username || "").toLowerCase())
+      );
 
-      // Update online user (including display name)
-      const merged = mergeOnlineUser(hydratePresenceUser({
-        id: data.userId,
-        username: data.username,
-        avatar: data.avatar || data.avatarUrl,
-        avatarUrl: data.avatar || data.avatarUrl,
-        profileCover: data.profileCover,
-        avatarFrameUrl: data.avatarFrameUrl || "",
-        memberCardBgUrl: data.memberCardBgUrl || "",
-        nameColor: data.nameColor || "",
-        messageColor: data.messageColor || "",
-        statusMsg: data.statusMsg || data.profileMsg || "",
-        siteBadge: data.siteBadge || "",
-        idreg: data.idreg || "",
-      }));
+      if (isOnline) {
+        console.log("[PresenceEngine] Calling mergeOnlineUser for user:", data.userId, data.username);
+        console.log("[PresenceEngine] nameColor in data:", data.nameColor, "messageColor:", data.messageColor);
 
-      console.log("[PresenceEngine] mergeOnlineUser result:", merged ? "success" : "not found");
-      console.log("[PresenceEngine] Updated onlineUsers list now contains", useRealtimeStore.getState().onlineUsers.length, "users");
+        // Update online user (including display name)
+        // Only include fields present in data to avoid overwriting existing values with ""
+        const update: Record<string, any> = { id: data.userId };
+        if (data.username !== undefined) update.username = data.username;
+        if (data.avatar !== undefined || data.avatarUrl !== undefined) {
+          update.avatar = data.avatar || data.avatarUrl;
+          update.avatarUrl = data.avatar || data.avatarUrl;
+        }
+        if (data.profileCover !== undefined) update.profileCover = data.profileCover;
+        if (data.avatarFrameUrl !== undefined) update.avatarFrameUrl = data.avatarFrameUrl;
+        if (data.memberCardBgUrl !== undefined) update.memberCardBgUrl = data.memberCardBgUrl;
+        if (data.nameColor !== undefined) update.nameColor = data.nameColor;
+        if (data.messageColor !== undefined) update.messageColor = data.messageColor;
+        if (data.statusFontColor !== undefined) update.statusFontColor = data.statusFontColor;
+        if (data.statusMsg !== undefined || data.profileMsg !== undefined) {
+          update.statusMsg = data.statusMsg || data.profileMsg;
+        }
+        if (data.siteBadge !== undefined) update.siteBadge = data.siteBadge;
+        if (data.idreg !== undefined) update.idreg = data.idreg;
+        if (data.giftedBannerUrl !== undefined) update.giftedBannerUrl = data.giftedBannerUrl;
+        if (data.giftedGiftIconUrl !== undefined) update.giftedGiftIconUrl = data.giftedGiftIconUrl;
+        if (data.giftedPromotionIconUrl !== undefined) update.giftedPromotionIconUrl = data.giftedPromotionIconUrl;
+        if (data.roleIconUrl !== undefined) update.roleIconUrl = data.roleIconUrl;
 
-      // Update wall post author (avatar + display name)
+        const merged = mergeOnlineUser(hydratePresenceUser(update));
+        console.log("[PresenceEngine] Updated onlineUsers list now contains", useRealtimeStore.getState().onlineUsers.length, "users");
+      } else {
+        console.log("[PresenceEngine] User is offline, skipping mergeOnlineUser");
+      }
+
+      // Update wall post author (avatar + display name + banner + icons)
       updateWallAuthorProfile(
         data.userId,
         data.username,
         data.avatar || data.avatarUrl,
         data.previousUsername,
-        data.nameColor !== undefined ? data.nameColor : undefined
+        data.nameColor !== undefined ? data.nameColor : undefined,
+        data.giftedBannerUrl,
+        data.giftedGiftIconUrl,
+        data.giftedPromotionIconUrl,
+        data.roleIconUrl
       );
     };
 
@@ -558,6 +599,117 @@ const PresenceEngine = () => {
     socket.on("internal_mail", onMailReceived);
     socket.on("private_message", onPrivateMessage);
 
+    // --- أحداث الإهداء اللحظية ---
+    const onGiftBannerReceived = (data: any) => {
+      if (!data) return;
+      // حفظ البنر في localStorage للاحتفاظ به بعد التحديث
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) {
+          const user = JSON.parse(rawUser);
+          user.giftedBannerUrl = data.iconUrl || "";
+          localStorage.setItem("user", JSON.stringify(user));
+        }
+      } catch {}
+      if (data.iconUrl) {
+        toast.success(`تم اهدائك بنر من ${data.fromUsername || "عضو"}`, {
+          description: "يمكنك رؤية البنر الجديد بجانب اسمك",
+        });
+      } else {
+        toast.info("تم إزالة البنر الخاص بك");
+      }
+    };
+
+    const onGiftIconReceived = (data: any) => {
+      if (!data) return;
+      // حفظ أيقونة الهدية في localStorage
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) {
+          const user = JSON.parse(rawUser);
+          user.giftedGiftIconUrl = data.iconUrl || "";
+          localStorage.setItem("user", JSON.stringify(user));
+        }
+      } catch {}
+      if (data.iconUrl) {
+        toast.success(`تم اهدائك أيقونة هدية من ${data.fromUsername || "عضو"}`, {
+          description: "يمكنك رؤية الأيقونة الجديدة بجانب اسمك",
+        });
+      } else {
+        toast.info("تم إزالة أيقونة الهدية الخاصة بك");
+      }
+    };
+
+    const onGiftPromotionIconReceived = (data: any) => {
+      if (!data) return;
+      // حفظ أيقونة الترقية في localStorage
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) {
+          const user = JSON.parse(rawUser);
+          user.giftedPromotionIconUrl = data.iconUrl || "";
+          localStorage.setItem("user", JSON.stringify(user));
+        }
+      } catch {}
+      if (data.iconUrl) {
+        toast.success(`تم اهدائك أيقونة ترقية من ${data.fromUsername || "عضو"}`, {
+          description: "يمكنك رؤية الأيقونة الجديدة بجانب اسمك",
+        });
+      } else {
+        toast.info("تم إزالة أيقونة الترقية الخاصة بك");
+      }
+    };
+
+    socket.on("gift_banner_received", onGiftBannerReceived);
+    socket.on("gift_icon_received", onGiftIconReceived);
+    socket.on("gift_promotion_icon_received", onGiftPromotionIconReceived);
+
+    const onAlertReceived = (data: any) => {
+      if (!data) return;
+      const newAlert = {
+        id: data.alertId || String(Date.now()),
+        open: true,
+        fromUsername: data.fromUsername || "عضو",
+        fromAvatar: data.fromAvatar || "/pic.png",
+        fromBanner: data.fromBanner || "",
+        fromGiftIcon: data.fromGiftIcon || "",
+        fromPromotionIcon: data.fromPromotionIcon || "",
+        fromAvatarFrame: data.fromAvatarFrame || "",
+        message: data.message || "",
+        timestamp: data.timestamp || Date.now(),
+      };
+      setAlerts((prev) => [...prev, newAlert]);
+    };
+
+    const onMutedState = (data: { muted: boolean }) => {
+      console.log("[PresenceEngine] muted_state received:", data);
+      useRealtimeStore.getState().setIsMuted(data.muted);
+      try {
+        const rawUser = localStorage.getItem("user");
+        if (rawUser) {
+          const user = JSON.parse(rawUser);
+          user.muted = data.muted;
+          localStorage.setItem("user", JSON.stringify(user));
+        }
+      } catch {}
+    };
+
+    const handleUserMuteUpdated = (e: any) => {
+      const isMuted = Boolean(e.detail);
+      useRealtimeStore.getState().setIsMuted(isMuted);
+    };
+
+    const handleClientAlert = (e: any) => {
+      if (e.detail) {
+        onAlertReceived(e.detail);
+      }
+    };
+
+    socket.on("alert_received", onAlertReceived);
+    socket.on("muted_state", onMutedState);
+    window.addEventListener("user-mute-updated", handleUserMuteUpdated);
+    window.addEventListener("show-client-alert", handleClientAlert);
+
     // Idle Detection
     let idleTimer: ReturnType<typeof setTimeout>;
     const resetTimer = () => {
@@ -598,6 +750,15 @@ const PresenceEngine = () => {
       socket.off("internal_mail", onMailReceived);
       socket.off("private_message", onPrivateMessage);
       
+      // إزالة listeners الإهداء
+      socket.off("gift_banner_received", onGiftBannerReceived);
+      socket.off("gift_icon_received", onGiftIconReceived);
+      socket.off("gift_promotion_icon_received", onGiftPromotionIconReceived);
+      socket.off("alert_received", onAlertReceived);
+      socket.off("muted_state", onMutedState);
+      window.removeEventListener("user-mute-updated", handleUserMuteUpdated);
+      window.removeEventListener("show-client-alert", handleClientAlert);
+      
       window.removeEventListener('mousemove', resetTimer);
       window.removeEventListener('keydown', resetTimer);
       clearTimeout(idleTimer);
@@ -623,7 +784,30 @@ const PresenceEngine = () => {
     setPmUnreadCount
   ]);
 
-  return null; // Silent background engine
+  return (
+    <>
+      {alerts.map((alert, index) => (
+        <AlertReceivedPopup
+          key={alert.id}
+          open={alert.open}
+          onOpenChange={(open) => {
+            if (!open) {
+              setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+            }
+          }}
+          fromUsername={alert.fromUsername}
+          fromAvatar={alert.fromAvatar}
+          fromBanner={alert.fromBanner}
+          fromGiftIcon={alert.fromGiftIcon}
+          fromPromotionIcon={alert.fromPromotionIcon}
+          fromAvatarFrame={alert.fromAvatarFrame}
+          message={alert.message}
+          timestamp={alert.timestamp}
+          stackIndex={index}
+        />
+      ))}
+    </>
+  ); // Silent background engine
 };
 
 export default PresenceEngine;

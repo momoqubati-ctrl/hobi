@@ -5,7 +5,8 @@ import { ProfileHeader } from "./ProfileHeader";
 import { ProfileStats } from "./ProfileStats";
 import { ProfileActions } from "./ProfileActions";
 import { ProfileAdminPanel } from "./ProfileAdminPanel";
-import { Trophy, Eye, Medal, MessageCircle, ThumbsUp, Flame, Award, Plus, Crown, Star, EyeIcon } from "lucide-react";
+import { IconPickerPopover } from "./IconPickerPopover";
+import { Trophy, Eye, Medal, MessageCircle, ThumbsUp, Flame, Award, Plus, Crown, Star, EyeIcon, Image, Gift, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -73,16 +74,19 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
     });
 
     const onProfileUpdated = (updates: any) => {
-      setProfileData((prev: any) => ({
-        ...prev,
-        profile: { ...prev?.profile, ...updates },
-      }));
+      setProfileData((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          profile: prev.profile ? { ...prev.profile, ...updates } : updates,
+        };
+      });
     };
 
     const onUserProfileUpdated = (data: any) => {
       if (data && String(data.userId) === String(profileId)) {
         setProfileData((prev: any) => {
-          if (!prev) return prev;
+          if (!prev) return null;
           return {
             ...prev,
             username: data.username || prev.username,
@@ -94,6 +98,9 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
               profileMsg: data.profileMsg !== undefined ? data.profileMsg : prev.profile.profileMsg,
               avatarUrl: data.avatar || data.avatarUrl || prev.profile.avatarUrl,
               bannerUrl: data.profileCover || data.cover || prev.profile.bannerUrl,
+              giftedBannerUrl: data.giftedBannerUrl !== undefined ? data.giftedBannerUrl : prev.profile.giftedBannerUrl,
+              giftedGiftIconUrl: data.giftedGiftIconUrl !== undefined ? data.giftedGiftIconUrl : prev.profile.giftedGiftIconUrl,
+              giftedPromotionIconUrl: data.giftedPromotionIconUrl !== undefined ? data.giftedPromotionIconUrl : prev.profile.giftedPromotionIconUrl,
             } : null,
           };
         });
@@ -103,11 +110,51 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
     socket.on("profile:updated", onProfileUpdated);
     socket.on("user_profile_updated", onUserProfileUpdated);
 
+    const onGiftBannerReceived = (data: any) => {
+      if (data && String(data.fromUserId) !== String(profileId) && String(data.userId) !== String(profileId) && String(data.toUserId) !== String(profileId)) return;
+      setProfileData((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          profile: prev.profile ? { ...prev.profile, giftedBannerUrl: data.iconUrl || "" } : { giftedBannerUrl: data.iconUrl || "" },
+        };
+      });
+    };
+
+    const onGiftIconReceived = (data: any) => {
+      if (data && String(data.fromUserId) !== String(profileId) && String(data.userId) !== String(profileId) && String(data.toUserId) !== String(profileId)) return;
+      setProfileData((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          profile: prev.profile ? { ...prev.profile, giftedGiftIconUrl: data.iconUrl || "" } : { giftedGiftIconUrl: data.iconUrl || "" },
+        };
+      });
+    };
+
+    const onGiftPromotionIconReceived = (data: any) => {
+      if (data && String(data.fromUserId) !== String(profileId) && String(data.userId) !== String(profileId) && String(data.toUserId) !== String(profileId)) return;
+      setProfileData((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          profile: prev.profile ? { ...prev.profile, giftedPromotionIconUrl: data.iconUrl || "" } : { giftedPromotionIconUrl: data.iconUrl || "" },
+        };
+      });
+    };
+
+    socket.on("gift_banner_received", onGiftBannerReceived);
+    socket.on("gift_icon_received", onGiftIconReceived);
+    socket.on("gift_promotion_icon_received", onGiftPromotionIconReceived);
+
     return () => {
       active = false;
       clearTimeout(timeoutId);
       socket.off("profile:updated", onProfileUpdated);
       socket.off("user_profile_updated", onUserProfileUpdated);
+      socket.off("gift_banner_received", onGiftBannerReceived);
+      socket.off("gift_icon_received", onGiftIconReceived);
+      socket.off("gift_promotion_icon_received", onGiftPromotionIconReceived);
     };
   }, [profileId, isAdmin, onClose, socket]);
 
@@ -121,6 +168,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
   const remainingPoints = Math.max(0, nextRankAt - evaluation);
 
   return (
+    <>
     <Dialog open={!!profileId} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         className="flex flex-col w-full max-w-[430px] h-[96dvh] max-h-[96dvh] p-0 gap-0 overflow-y-auto rounded-3xl border-border bg-background text-foreground shadow-[0_34px_90px_rgba(0,0,0,0.48)] [&>button]:hidden"
@@ -169,6 +217,84 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
               onFollowChange={(following) => setRelationship((current) => ({ ...current, isFollowing: following }))}
               onClose={onClose}
             />
+
+            {/* أزرار الإهداء للأدمن */}
+            {isAdmin && !relationship.isSelf && (
+              <div className="mx-[22px] mt-2 mb-1 rounded-2xl border border-border bg-card shadow-sm p-3">
+                <p className="text-[10px] font-black text-muted-foreground mb-2">أدوات الإهداء</p>
+                <div className="flex gap-2">
+                  <IconPickerPopover
+                    type="banner"
+                    profileId={profileData.id || profileId}
+                    currentIconUrl={profile?.giftedBannerUrl || ""}
+                    onSelect={(url) => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedBannerUrl: url },
+                      }));
+                    }}
+                    onRemove={() => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedBannerUrl: "" },
+                      }));
+                    }}
+                    trigger={
+                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-l from-pink-500 to-rose-500 text-white text-[10px] font-black shadow-sm hover:shadow-md transition">
+                        <Image className="h-3.5 w-3.5" />
+                        البنر
+                      </button>
+                    }
+                  />
+                  <IconPickerPopover
+                    type="gift_icon"
+                    profileId={profileData.id || profileId}
+                    currentIconUrl={profile?.giftedGiftIconUrl || ""}
+                    onSelect={(url) => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedGiftIconUrl: url },
+                      }));
+                    }}
+                    onRemove={() => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedGiftIconUrl: "" },
+                      }));
+                    }}
+                    trigger={
+                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-l from-blue-500 to-indigo-500 text-white text-[10px] font-black shadow-sm hover:shadow-md transition">
+                        <Gift className="h-3.5 w-3.5" />
+                        ايقونة
+                      </button>
+                    }
+                  />
+                  <IconPickerPopover
+                    type="promotion_icon"
+                    profileId={profileData.id || profileId}
+                    currentIconUrl={profile?.giftedPromotionIconUrl || ""}
+                    onSelect={(url) => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedPromotionIconUrl: url },
+                      }));
+                    }}
+                    onRemove={() => {
+                      setProfileData((prev: any) => ({
+                        ...prev,
+                        profile: { ...prev?.profile, giftedPromotionIconUrl: "" },
+                      }));
+                    }}
+                    trigger={
+                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-l from-amber-500 to-orange-500 text-white text-[10px] font-black shadow-sm hover:shadow-md transition">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        الترقية
+                      </button>
+                    }
+                  />
+                </div>
+              </div>
+            )}
 
             <ProfileStats stats={stats} />
 
@@ -324,13 +450,19 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
                 <ProfileAdminPanel
                   profileId={profileData.id || profileId}
                   currentRole={profileData.role}
+                  isMuted={profileData.profile?.muted || profileData.muted || false}
                   onProfilePatch={(patch) => {
-                    setProfileData((current: any) => ({
-                      ...current,
-                      displayName: patch.displayName ?? current.displayName,
-                      profile: { ...current.profile, ...patch.profile },
-                    }));
-                    if (patch.stats) setStats((current: any) => ({ ...current, ...patch.stats }));
+                    setProfileData((current: any) => {
+                      if (!current) return null;
+                      return {
+                        ...current,
+                        displayName: patch.displayName ?? current.displayName,
+                        profile: current.profile ? { ...current.profile, ...patch.profile } : patch.profile,
+                      };
+                    });
+                    if (patch.stats) {
+                      setStats((current: any) => current ? { ...current, ...patch.stats } : null);
+                    }
                   }}
                 />
               </div>
@@ -338,14 +470,24 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
 
             <ProfileActions
               profileId={profileData.id || profileId}
+              profileName={profileData.displayName || profileData.username || "عضو"}
+              profileAvatar={profile?.avatarUrl || profileData.avatarUrl || "/pic.png"}
               isSelf={relationship.isSelf}
               initialFollowing={relationship.isFollowing}
+              initialCooldownRemaining={relationship.cooldownRemaining || 0}
               onFollowChange={(following) => setRelationship((current) => ({ ...current, isFollowing: following }))}
+              onFollowerCountChange={(followerCount) => {
+                setStats((current: any) => ({ ...current, followersCount: followerCount }));
+              }}
+              onLikeChange={(likesCount) => {
+                setStats((current: any) => ({ ...current, likes: likesCount }));
+              }}
               onMessage={onMessage}
             />
           </>
         )}
       </DialogContent>
     </Dialog>
+  </>
   );
 }

@@ -400,7 +400,7 @@ const PrivateList = ({
                 const resolvedAvatar = onlineUser?.avatar || conv.otherUser.avatar || "/pic.png";
                 const resolvedName = onlineUser?.username || conv.otherUser.name;
                 const resolvedNameColor = onlineUser?.nameColor || conv.otherUser.nameColor || "";
-                const resolvedMessageColor = onlineUser?.messageColor || "";
+                const resolvedMessageColor = onlineUser?.statusFontColor || "";
             const statusCfg = getStatusConfig(resolvedStatus);
 
             return (

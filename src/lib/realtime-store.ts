@@ -69,7 +69,17 @@ interface RealtimeState {
   setWallPosts: (posts: any[]) => void;
   addWallPost: (post: any) => void;
   removeWallPost: (postId: string) => void;
-  updateWallAuthorProfile: (userId: string, username: string, avatar: string, previousUsername?: string, nameColor?: string) => void;
+  updateWallAuthorProfile: (
+    userId: string,
+    username: string,
+    avatar: string,
+    previousUsername?: string,
+    nameColor?: string,
+    giftedBannerUrl?: string,
+    giftedGiftIconUrl?: string,
+    giftedPromotionIconUrl?: string,
+    roleIconUrl?: string
+  ) => void;
   setLoadingWallPosts: (val: boolean) => void;
   setHasNewWallPosts: (val: boolean) => void;
   setIsWallLoaded: (val: boolean) => void;
@@ -110,6 +120,8 @@ interface RealtimeState {
   toggleCommentLike: (commentId: string, liked: boolean) => void;
   updateCommentLikeCount: (commentId: string, count: number) => void;
   setCommentLiked: (commentId: string, liked: boolean) => void;
+  isMuted: boolean;
+  setIsMuted: (val: boolean) => void;
 }
 
 const getPresenceKey = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
@@ -193,7 +205,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   updateRoomMemberCount: (roomId, count) => set((state) => ({
     rooms: state.rooms.map((room) =>
       room.id === roomId ? { ...room, members: count } : room
-    )
+    ).sort((a: any, b: any) => (b.members || 0) - (a.members || 0))
   })),
   setLoadingRooms: (val) => set({ isLoadingRooms: val }),
   setIsRoomsLoaded: (val) => set({ isRoomsLoaded: val }),
@@ -204,24 +216,45 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   mergeOnlineUser: (incoming) => set((state) => {
     const identity = getPresenceKey(incoming);
     if (!identity) return {};
-    
+
+    // الحقول التي يُسمح بمسحها بقيمة فارغة (مثل ألوان الاسم وبطاقة العضو)
+    const clearableEmpty = new Set(["nameColor", "messageColor", "statusFontColor", "avatarFrameUrl", "giftIconUrl", "memberCardBgUrl"]);
+    // الحقول المرتبطة بالهدايا لا تُمسح أبداً بقيمة فارغة - فقط تُحدَّث إن وردت قيمة حقيقية
+    const giftFields = new Set(["giftedBannerUrl", "giftedGiftIconUrl", "giftedPromotionIconUrl", "roleIconUrl"]);
+
+    const applyMerge = (existing: any, patch: any) => {
+      const updated = { ...existing } as any;
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) continue;
+        if (giftFields.has(key)) {
+          // تحديث الحقول المرتبطة بالهدايا فقط إذا كانت القيمة الواردة غير فارغة
+          if (typeof value === 'string' && value !== '') {
+            updated[key] = value;
+          }
+          // إذا كانت فارغة فلا نمسح القيمة الحالية
+        } else if (clearableEmpty.has(key)) {
+          // الحقول القابلة للمسح تُحدَّث دائماً (حتى لو فارغة)
+          updated[key] = value;
+        } else {
+          // بقية الحقول: تُحدَّث فقط إذا لم تكن string فارغة
+          const isStringEmpty = typeof value === 'string' && value === '';
+          if (!isStringEmpty) {
+            updated[key] = value;
+          }
+        }
+      }
+      return updated;
+    };
+
     let found = false;
     const next = state.onlineUsers.map((user) => {
       if (getPresenceKey(user) !== identity) return user;
       found = true;
-      const updated = { ...user } as any;
-      for (const [key, value] of Object.entries(incoming)) {
-        const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
-        const isStringEmpty = typeof value === 'string' && value === '';
-        const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
-        if (shouldUpdate) {
-          updated[key] = value;
-        }
-      }
-      return updated;
+      return applyMerge(user, incoming);
     });
+
     if (!found) {
-      // Try to find a best-effort match when identities differ (e.g. incoming has id but existing entry used username/socketId)
+      // البحث عن تطابق بديل عندما تختلف المفاتيح (مثل: الوارد يحمل id لكن الموجود مسجل بـ username/socketId)
       let merged = false;
       if (incoming && incoming.id) {
         const incomingId = String(incoming.id).trim();
@@ -232,38 +265,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           const sameUsername = u.username && incoming.username && String(u.username).trim().toLowerCase() === String(incoming.username).trim().toLowerCase();
           const sameId = existingId === incomingId;
           if (sameSocket || sameUsername || sameId) {
-            const updated = { ...u } as any;
-            for (const [key, value] of Object.entries(incoming)) {
-              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
-              const isStringEmpty = typeof value === 'string' && value === '';
-              const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
-              if (shouldUpdate) {
-                updated[key] = value;
-              }
-            }
-            next[i] = updated;
-            merged = true;
-            break;
-          }
-        }
-      }
-
-      if (!merged && incoming && incoming.id) {
-        const incomingId = String(incoming.id).trim();
-        for (let i = 0; i < next.length; i++) {
-          const u = next[i];
-          const existingId = String(u.id).trim();
-          if (existingId === incomingId) {
-            const updated = { ...u } as any;
-            for (const [key, value] of Object.entries(incoming)) {
-              const canBeEmpty = key === "avatarFrameUrl" || key === "giftIconUrl" || key === "memberCardBgUrl" || key === "nameColor" || key === "messageColor";
-              const isStringEmpty = typeof value === 'string' && value === '';
-              const shouldUpdate = value !== undefined && (canBeEmpty || (typeof value !== 'string' || value !== ''));
-              if (shouldUpdate) {
-                updated[key] = value;
-              }
-            }
-            next[i] = updated;
+            next[i] = applyMerge(u, incoming);
             merged = true;
             break;
           }
@@ -369,8 +371,8 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     }
     return { wallPosts, wallLikeCounts: likeCounts, wallCommentCounts: commentCounts, wallLikedPosts: likedSet };
   }),
-  updateWallAuthorProfile: (userId, username, avatar, previousUsername?, nameColor?) => set((state) => ({
-    wallPosts: state.wallPosts.map((post) => {
+  updateWallAuthorProfile: (userId, username, avatar, previousUsername?, nameColor?, giftedBannerUrl?, giftedGiftIconUrl?, giftedPromotionIconUrl?, roleIconUrl?) => set((state) => {
+    const wallPosts = state.wallPosts.map((post) => {
       const author = post.author || {};
       const nameMatch = author.name === username || (previousUsername && author.name === previousUsername);
       if (author.id !== userId && !nameMatch) return post;
@@ -381,10 +383,49 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           name: username || author.name,
           avatar: avatar || author.avatar,
           ...(nameColor !== undefined ? { nameColor } : {}),
+          ...(giftedBannerUrl !== undefined ? { giftedBannerUrl } : {}),
+          ...(giftedGiftIconUrl !== undefined ? { giftedGiftIconUrl } : {}),
+          ...(giftedPromotionIconUrl !== undefined ? { giftedPromotionIconUrl } : {}),
+          ...(roleIconUrl !== undefined ? { roleIconUrl } : {}),
         }
       };
-    })
-  })),
+    });
+
+    const wallComments = { ...state.wallComments };
+    for (const [postId, comments] of Object.entries(wallComments)) {
+      if (Array.isArray(comments)) {
+        const updateCommentList = (list: any[]): any[] => {
+          return list.map((comment) => {
+            const author = comment.author || {};
+            const nameMatch = author.name === username || (previousUsername && author.name === previousUsername);
+            const isMatch = author.id === userId || nameMatch;
+            
+            const updatedComment = isMatch ? {
+              ...comment,
+              author: {
+                ...author,
+                name: username || author.name,
+                avatar: avatar || author.avatar,
+                ...(nameColor !== undefined ? { nameColor } : {}),
+                ...(giftedBannerUrl !== undefined ? { giftedBannerUrl } : {}),
+                ...(giftedGiftIconUrl !== undefined ? { giftedGiftIconUrl } : {}),
+                ...(giftedPromotionIconUrl !== undefined ? { giftedPromotionIconUrl } : {}),
+                ...(roleIconUrl !== undefined ? { roleIconUrl } : {}),
+              }
+            } : comment;
+
+            if (comment.replies && comment.replies.length > 0) {
+              updatedComment.replies = updateCommentList(comment.replies);
+            }
+            return updatedComment;
+          });
+        };
+        wallComments[postId] = updateCommentList(comments);
+      }
+    }
+
+    return { wallPosts, wallComments };
+  }),
   setLoadingWallPosts: (val) => set({ isLoadingWallPosts: val }),
   setHasNewWallPosts: (val) => set({ hasNewWallPosts: val }),
   setIsWallLoaded: (val) => set({ isWallLoaded: val }),
@@ -566,11 +607,22 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   updateCommentLikeCount: (commentId, count) => set((state) => ({
     wallCommentLikeCounts: { ...state.wallCommentLikeCounts, [String(commentId)]: count }
   })),
-  setCommentLiked: (commentId, liked) => set((state) => {
+  setCommentLiked: (commentId: string, liked: boolean) => set((state) => {
     const nextSet = new Set(state.wallCommentLiked);
     const strId = String(commentId);
     if (liked) { nextSet.add(strId); }
     else { nextSet.delete(strId); }
     return { wallCommentLiked: nextSet };
   }),
+  isMuted: (() => {
+    try {
+      const stored = typeof window !== "undefined" ? localStorage.getItem("user") : null;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return Boolean(parsed.muted);
+      }
+    } catch {}
+    return false;
+  })(),
+  setIsMuted: (val) => set({ isMuted: val }),
 }));

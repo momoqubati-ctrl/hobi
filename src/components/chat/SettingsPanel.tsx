@@ -54,6 +54,7 @@ const SettingsPanel = () => {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newNameColor, setNewNameColor] = useState("#000000");
   const [newMessageColor, setNewMessageColor] = useState("#000000");
+  const [newStatusFontColor, setNewStatusFontColor] = useState("#000000");
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +95,7 @@ const SettingsPanel = () => {
         evaluation: Number(user.evaluation) || 0,
         nameColor: typeof user.nameColor === "string" && user.nameColor.trim() ? user.nameColor : "#000000",
         messageColor: typeof user.messageColor === "string" && user.messageColor.trim() ? user.messageColor : "#000000",
+        statusFontColor: typeof user.statusFontColor === "string" && user.statusFontColor.trim() ? user.statusFontColor : "#000000",
       };
     } catch {
       return null;
@@ -108,6 +110,7 @@ const SettingsPanel = () => {
     setNewDisplayName(currentUser?.name || "");
     setNewNameColor(currentUser?.nameColor || "#000000");
     setNewMessageColor(currentUser?.messageColor || "#000000");
+    setNewStatusFontColor(currentUser?.statusFontColor || "#000000");
     setShowEditProfile(true);
   };
 
@@ -171,6 +174,7 @@ const SettingsPanel = () => {
           displayName: newDisplayName.trim() || undefined,
           nameColor: newNameColor,
           messageColor: newMessageColor,
+          statusFontColor: newStatusFontColor,
         })
       });
 
@@ -224,6 +228,9 @@ const SettingsPanel = () => {
           if (data.messageColor) {
             user.messageColor = data.messageColor;
           }
+          if (data.statusFontColor) {
+            user.statusFontColor = data.statusFontColor;
+          }
           localStorage.setItem("user", JSON.stringify(user));
           console.log("[SettingsPanel] Updated localStorage user:", user);
         }
@@ -239,6 +246,7 @@ const SettingsPanel = () => {
             ...(data.updates?.profileMsg !== undefined ? { profileMsg: data.updates.profileMsg } : {}),
             ...(data.nameColor ? { nameColor: data.nameColor } : {}),
             ...(data.messageColor ? { messageColor: data.messageColor } : {}),
+            ...(data.statusFontColor ? { statusFontColor: data.statusFontColor } : {}),
           });
           
           // Also emit user_profile_updated directly to ensure all users see the change immediately
@@ -260,6 +268,7 @@ const SettingsPanel = () => {
               siteBadge: data.updates?.siteBadge || "",
               nameColor: data.nameColor || currentUser.nameColor || "",
               messageColor: data.messageColor || currentUser.messageColor || "",
+              statusFontColor: data.statusFontColor || currentUser.statusFontColor || "",
             });
           }
         }
@@ -384,7 +393,9 @@ const SettingsPanel = () => {
               {newDisplayName || currentUser?.name || "الاسم"}
             </p>
             <p className="text-sm mt-1" style={{ color: newMessageColor === "#000000" ? undefined : newMessageColor }}>
-              {newStatusMsg || currentUser?.statusMsg || "الحالة الشخصية"}
+              <span style={{ color: newStatusFontColor === "#000000" ? undefined : newStatusFontColor }}>
+                {newStatusMsg || currentUser?.statusMsg || "الحالة الشخصية"}
+              </span>
             </p>
           </div>
 
@@ -451,6 +462,27 @@ const SettingsPanel = () => {
                 type="text"
                 value={newMessageColor}
                 onChange={(e) => setNewMessageColor(e.target.value)}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold font-mono"
+                maxLength={7}
+                placeholder="#000000"
+              />
+            </div>
+          </div>
+
+          {/* Status Font Color */}
+          <div className="space-y-2">
+            <Label className="text-xs font-bold text-muted-foreground">لون خط الكتابة</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={newStatusFontColor}
+                onChange={(e) => setNewStatusFontColor(e.target.value)}
+                className="w-10 h-10 rounded-xl border border-border bg-muted/50 cursor-pointer shrink-0"
+              />
+              <Input
+                type="text"
+                value={newStatusFontColor}
+                onChange={(e) => setNewStatusFontColor(e.target.value)}
                 className="rounded-xl border-border bg-muted/50 text-xs font-bold font-mono"
                 maxLength={7}
                 placeholder="#000000"
@@ -524,7 +556,7 @@ const SettingsPanel = () => {
             </div>
             <div className="flex-1">
               <h3 className="text-xl font-bold" style={currentUser?.nameColor && currentUser.nameColor !== "#000000" ? { color: currentUser.nameColor } : undefined}>{currentUser?.name || "زائر"}</h3>
-              <p className="text-white/80 text-sm" style={currentUser?.messageColor && currentUser.messageColor !== "#000000" ? { color: currentUser.messageColor } : undefined}>{currentUser?.statusMsg || currentUser?.profileMsg || "(عضو جديد)"} • {currentUser?.evaluation || 0} نقطة</p>
+              <p className="text-white/80 text-sm" style={currentUser?.statusFontColor && currentUser.statusFontColor !== "#000000" ? { color: currentUser.statusFontColor } : undefined}>{currentUser?.statusMsg || currentUser?.profileMsg || "(عضو جديد)"} • {currentUser?.evaluation || 0} نقطة</p>
               <div className="flex items-center gap-2 mt-2">
                 <div className="bg-card/20 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1">
                   <Coins size={12} />

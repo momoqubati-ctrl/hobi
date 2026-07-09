@@ -169,6 +169,7 @@ export const userProfiles = pgTable("user_profiles", {
   backgroundColor: varchar("background_color", { length: 20 }),
   messageColor: varchar("message_color", { length: 20 }),
   nameColor: varchar("name_color", { length: 20 }),
+  statusFontColor: varchar("status_font_color", { length: 20 }),
   gradientColor: varchar("gradient_color", { length: 20 }),
   evaluation: integer("evaluation").default(0),
   rep: integer("rep").default(0),
@@ -187,6 +188,9 @@ export const userProfiles = pgTable("user_profiles", {
   roomId: varchar("room_id", { length: 128 }),
   siteBadgeId: varchar("site_badge_id", { length: 80 }),
   siteBadge: text("site_badge"),
+  giftedBannerUrl: text("gifted_banner_url"),
+  giftedGiftIconUrl: text("gifted_gift_icon_url"),
+  giftedPromotionIconUrl: text("gifted_promotion_icon_url"),
   joinuser: bigint("joinuser", { mode: "number" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -659,5 +663,13 @@ export const animatedFaces = pgTable("animated_faces", {
   isActive: boolean("is_active").default(true),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const roomKicks = pgTable("room_kicks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  roomId: varchar("room_id", { length: 128 }).notNull(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  bannedUntil: timestamp("banned_until", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

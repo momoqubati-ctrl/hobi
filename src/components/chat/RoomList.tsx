@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Users, Lock, Mic2, Heart, Search, Plus, Loader2, X, Check, ShieldCheck, Layout, ImagePlus, Palette, Key, DoorOpen, MessageCircle, UserCheck, Volume2, Video, Hash } from "lucide-react";
+import { Users, Lock, Mic2, Heart, Search, Plus, Loader2, X, Check, ShieldCheck, Layout, ImagePlus, Palette, Key, DoorOpen, MessageCircle, UserCheck, Volume2, Video, Hash, Pencil } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,8 @@ type Room = {
   name: string;
   description: string;
   members: number;
+  maxMembers: number;
+  likesRequired: number;
   mics: number;
   likes: number;
   locked: boolean;
@@ -23,6 +25,9 @@ type Room = {
   welcome?: string;
   verified?: boolean;
   roomLayout?: string;
+  broadcast?: boolean;
+  stageLocks?: Record<string, boolean>;
+  stageCount?: number;
 };
 
 const ROOM_LAYOUTS = [
@@ -31,7 +36,7 @@ const ROOM_LAYOUTS = [
   { value: "live_broadcast", label: "غرفة بث مباشر", icon: Video, desc: "غرفة بث مباشر مع stage" },
 ];
 
-const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
+const RoomList = ({ onSelectRoom, onLockedRoom, activeRoomId }: { onSelectRoom: (room: Room, password?: string) => void; onLockedRoom: (room: Room) => void; activeRoomId?: string }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const {
     rooms,
@@ -42,15 +47,18 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
     updateRoomMemberCount
   } = useRealtimeStore();
   const [error, setError] = useState("");
-  const [view, setView] = useState<"list" | "create">("list");
+  const [view, setView] = useState<"list" | "create" | "edit">("list");
   const [canCreateRoom, setCanCreateRoom] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [editingRoom, setEditingRoom] = useState<Room | null>(null);
 
-  // التحقق من صلاحية إنشاء الغرف
+  // التحقق من صلاحية إنشاء الغرف وجلب بيانات المستخدم
   useEffect(() => {
     const user = (() => { try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; } })();
     if (user?.role === "admin" || user?.role === "owner") {
       setCanCreateRoom(true);
     }
+    setCurrentUser(user);
   }, []);
 
   useEffect(() => {
@@ -80,7 +88,10 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
     };
 
     loadRooms();
+    return () => { ignore = true; };
+  }, [isRoomsLoaded, setRooms, setLoadingRooms]);
 
+  useEffect(() => {
     const socket = getSocket();
     const handleRoomsUpdated = (payload: any) => {
       if (payload?.rooms) {
@@ -93,11 +104,10 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
     socket.on("msg", handleRoomsUpdated);
 
     return () => {
-      ignore = true;
       socket.off("rooms_updated", handleRoomsUpdated);
       socket.off("msg", handleRoomsUpdated);
     };
-  }, [isRoomsLoaded, setRooms, setLoadingRooms]);
+  }, [setRooms]);
 
   const filteredRooms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -112,7 +122,9 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
           <div className="flex items-center gap-1.5 bg-[#2c3e50] p-1.5">
             <div className="relative flex-1">
               <Input
+                name="room-search"
                 placeholder="ابحث عن غرفة"
+                autoComplete="off"
                 className="h-7 rounded-md border-none bg-card/10 pl-7 text-[10px] text-white placeholder:text-white/60"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -153,8 +165,14 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
             {filteredRooms.map((room) => (
               <button
                 key={room.id}
-                onClick={() => onSelectRoom(room)}
-                className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border-b border-border/50 p-2 text-left transition-all hover:bg-slate-100 [direction:ltr]"
+                onClick={() => {
+                  if (room.locked) {
+                    onLockedRoom(room);
+                  } else {
+                    onSelectRoom(room);
+                  }
+                }}
+                className={`group flex w-full cursor-pointer items-center gap-3 rounded-lg border-b border-border/50 p-2 text-left transition-all hover:bg-slate-100 [direction:ltr] ${activeRoomId === room.id ? "bg-primary/10 border-r-2 border-r-primary" : ""}`}
                 type="button"
               >
                 <div className="relative shrink-0">
@@ -172,66 +190,93 @@ const RoomList = ({ onSelectRoom }: { onSelectRoom: (room: Room) => void }) => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="mb-0.5 flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                      {room.roomLayout && room.roomLayout !== "normal" && (
-                        <span className="text-[8px] text-muted-foreground" title={ROOM_LAYOUTS.find(l => l.value === room.roomLayout)?.label}>
-                          {room.roomLayout === "modern_voice" ? "🎤" : "📺"}
-                        </span>
+                    <h4 className="truncate text-xs font-black text-foreground" dir="rtl">
+                      {room.name}
+                    </h4>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-0.5 text-pink-500">
+                        <Heart size={10} fill="currentColor" />
+                        <span className="text-[9px] font-bold">{room.likes}</span>
+                      </div>
+                      {room.likesRequired > 0 && (
+                        <div className="flex items-center gap-0.5 text-amber-500" title={`يجب توفر ${room.likesRequired} إعجاب للدخول`}>
+                          <Heart size={10} />
+                          <span className="text-[9px] font-bold">{room.likesRequired}+</span>
+                        </div>
                       )}
-                      <h4 className="truncate text-xs font-black text-foreground" dir="rtl">
-                        {room.name}
-                      </h4>
-                    </div>
-                    <div className="flex items-center gap-1 text-pink-500">
-                      <Heart size={10} fill="currentColor" />
-                      <span className="text-[9px] font-bold">{room.likes}</span>
+                      <div className="flex items-center gap-0.5 text-muted-foreground">
+                        <Users size={10} />
+                        <span className="text-[9px] font-bold">{room.members}/{room.maxMembers || 50}</span>
+                      </div>
+                      {room.mics > 0 && (
+                        <div className="flex items-center gap-0.5 text-muted-foreground">
+                          <Mic2 size={10} />
+                          <span className="text-[9px] font-bold">{room.mics}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-0.5 text-muted-foreground">
-                        <Users size={10} />
-                        <span className="text-[9px] font-bold">{room.members}</span>
-                      </div>
-                      <div className="flex items-center gap-0.5 text-muted-foreground">
-                        <Mic2 size={10} />
-                        <span className="text-[9px] font-bold">{room.mics}</span>
-                      </div>
+                    <p className="min-w-0 flex-1 truncate text-[9px] text-muted-foreground" dir="rtl">
+                      {room.description || ""}
+                    </p>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {(currentUser?.role === "admin" || currentUser?.role === "owner" || currentUser?.username === room.owner) && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setEditingRoom(room); setView("edit"); }}
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                          title="تعديل الغرفة"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
+                      <span className="rounded-sm bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary" dir="rtl">
+                        {room.owner}
+                      </span>
                     </div>
-                    <span className="rounded-sm bg-primary/5 px-1.5 py-0.5 text-[9px] font-bold text-primary" dir="rtl">
-                      {room.owner}
-                    </span>
                   </div>
                 </div>
               </button>
             ))}
           </div>
         </>
-      ) : (
+      ) : view === "create" ? (
         <CreateRoomInline onBack={() => setView("list")} onCreated={() => setView("list")} />
-      )}
+      ) : view === "edit" && editingRoom ? (
+        <CreateRoomInline onBack={() => { setView("list"); setEditingRoom(null); }} onCreated={() => { setView("list"); setEditingRoom(null); }} editRoom={editingRoom} />
+      ) : null}
     </div>
   );
 };
 
 // ─── مكوّن إنشاء غرفة جديدة (داخل النافذة الجانبية) ──────────────────────────
 
-const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated: () => void }) => {
-  const [topic, setTopic] = useState("");
-  const [about, setAbout] = useState("");
-  const [welcome, setWelcome] = useState("");
+const CreateRoomInline = ({ onBack, onCreated, editRoom }: { onBack: () => void; onCreated: () => void; editRoom?: Room | null }) => {
+  const isEditMode = Boolean(editRoom);
+  const [topic, setTopic] = useState(editRoom?.name || "");
+  const [slug, setSlug] = useState(editRoom?.id || "");
+  const [about, setAbout] = useState(editRoom?.description || "");
+  const [welcome, setWelcome] = useState(editRoom?.welcome || "");
   const [pass, setPass] = useState("");
-  const [max, setMax] = useState("10");
-  const [like, setLike] = useState("0");
-  const [mic, setMic] = useState("0");
-  const [broadcast, setBroadcast] = useState(false);
+  const [max, setMax] = useState(String(editRoom?.maxMembers || 10));
+  const [like, setLike] = useState(String(editRoom?.likesRequired || 0));
+  const [mic, setMic] = useState(String(editRoom?.mics || 0));
+  const [broadcast, setBroadcast] = useState(editRoom?.broadcast || false);
   const [pinned, setPinned] = useState(false);
-  const [color, setColor] = useState("#2563EB");
-  const [pic, setPic] = useState("");
-  const [verified, setVerified] = useState(false);
-  const [roomLayout, setRoomLayout] = useState("normal");
-  const [stageLocks, setStageLocks] = useState<Record<string, boolean>>({});
+  const [color, setColor] = useState(editRoom?.color || "#2563EB");
+  const [pic, setPic] = useState(editRoom?.image || "");
+  const [verified, setVerified] = useState(editRoom?.verified || false);
+  const [roomLayout, setRoomLayout] = useState(editRoom?.roomLayout || "normal");
+  const [stageLocks, setStageLocks] = useState<Record<string, boolean>>(editRoom?.stageLocks || {});
   const [isCreating, setIsCreating] = useState(false);
+  const [ownerSearch, setOwnerSearch] = useState("");
+  const [ownerResults, setOwnerResults] = useState<{ id: string; username: string; displayName: string; avatar: string }[]>([]);
+  const [ownerUsername, setOwnerUsername] = useState(editRoom?.owner || "");
+  const [searchingOwners, setSearchingOwners] = useState(false);
+  const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
+  const ownerSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownerContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // مزامنة stageLocks عند تغيير عدد المايكات مع تفعيل البث
@@ -250,14 +295,45 @@ const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated
     });
   }, [mic, broadcast]);
 
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ownerContainerRef.current && !ownerContainerRef.current.contains(e.target as Node)) {
+        setShowOwnerDropdown(false);
+      }
+    };
+    if (showOwnerDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showOwnerDropdown]);
+
   const toggleStageLock = (key: string) => {
     setStageLocks((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const searchOwners = (q: string) => {
+    setOwnerSearch(q);
+    setShowOwnerDropdown(true);
+    if (ownerSearchTimer.current) clearTimeout(ownerSearchTimer.current);
+    if (!q.trim()) { setOwnerResults([]); return; }
+    setSearchingOwners(true);
+    ownerSearchTimer.current = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("authToken");
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(q.trim())}`, {
+          headers: { Authorization: `Bearer ${token || ""}` },
+        });
+        const data = await res.json();
+        if (data.success) setOwnerResults(data.users);
+      } catch { setOwnerResults([]); }
+      setSearchingOwners(false);
+    }, 300);
   };
 
   const handleCreate = async () => {
     if (!topic.trim()) { showError("اسم الغرفة مطلوب"); return; }
     if (!about.trim()) { showError("وصف الغرفة مطلوب"); return; }
-    if (!welcome.trim()) { showError("رسالة الترحيب مطلوبة"); return; }
+    if (!isEditMode && !welcome.trim()) { showError("رسالة الترحيب مطلوبة"); return; }
 
     setIsCreating(true);
     const socket = getSocket();
@@ -272,31 +348,63 @@ const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated
       showError("انتهت مهلة الطلب، تحقق من اتصالك");
     }, 15000);
 
-    socket.emit("create_room", {
-      topic: topic.trim(),
-      about: about.trim(),
-      welcome: welcome.trim(),
-      pass: pass || "",
-      max: parseInt(max, 10) || 10,
-      like: parseInt(like, 10) || 0,
-      pinned,
-      broadcast,
-      mic: parseInt(mic, 10) || 0,
-      pic: pic || "room.png",
-      color,
-      verified,
-      roomLayout,
-      stageLocks: broadcast ? stageLocks : {},
-    }, (res: any) => {
-      clearTimeout(timeout);
-      setIsCreating(false);
-      if (res?.success) {
-        showSuccess("تم إنشاء الغرفة بنجاح");
-        onCreated();
-      } else {
-        showError(res?.message || "فشل إنشاء الغرفة");
-      }
-    });
+    if (isEditMode && editRoom) {
+      socket.emit("edit_room", {
+        roomId: editRoom.id,
+        topic: topic.trim(),
+        slug: slug.trim(),
+        about: about.trim(),
+        welcome: welcome.trim(),
+        pass: pass || undefined,
+        max: parseInt(max, 10) || 10,
+        like: parseInt(like, 10) || 0,
+        pinned,
+        broadcast,
+        mic: parseInt(mic, 10) || 0,
+        pic: pic || "room.png",
+        color,
+        verified,
+        roomLayout,
+        stageLocks: broadcast ? stageLocks : {},
+      }, (res: any) => {
+        clearTimeout(timeout);
+        setIsCreating(false);
+        if (res?.success) {
+          showSuccess("تم تعديل الغرفة بنجاح");
+          onCreated();
+        } else {
+          showError(res?.message || "فشل تعديل الغرفة");
+        }
+      });
+    } else {
+      socket.emit("create_room", {
+        topic: topic.trim(),
+        slug: slug.trim(),
+        about: about.trim(),
+        welcome: welcome.trim(),
+        pass: pass || "",
+        max: parseInt(max, 10) || 10,
+        like: parseInt(like, 10) || 0,
+        pinned,
+        broadcast,
+        mic: parseInt(mic, 10) || 0,
+        pic: pic || "room.png",
+        color,
+        verified,
+        roomLayout,
+        ownerUsername: ownerUsername || "",
+        stageLocks: broadcast ? stageLocks : {},
+      }, (res: any) => {
+        clearTimeout(timeout);
+        setIsCreating(false);
+        if (res?.success) {
+          showSuccess("تم إنشاء الغرفة بنجاح");
+          onCreated();
+        } else {
+          showError(res?.message || "فشل إنشاء الغرفة");
+        }
+      });
+    }
   };
 
   const handleImageUpload = () => {
@@ -319,7 +427,7 @@ const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated
         <button onClick={onBack} className="rounded-md p-1 text-white transition-colors hover:bg-white/10" type="button" title="عودة">
           <X size={14} />
         </button>
-        <h3 className="text-xs font-black text-white">إنشاء غرفة جديدة</h3>
+        <h3 className="text-xs font-black text-white">{isEditMode ? "تعديل الغرفة" : "إنشاء غرفة جديدة"}</h3>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {/* اسم الغرفة */}
@@ -334,6 +442,79 @@ const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated
             className="rounded-xl text-xs font-bold"
             maxLength={80}
           />
+        </div>
+
+        {/* رابط الغرفة (slug) */}
+        <div className="space-y-1">
+          <Label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+            <Hash size={14} /> رابط الغرفة (Slug)
+          </Label>
+          <Input
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+            placeholder="room-slug"
+            className="rounded-xl text-xs font-bold font-mono"
+            maxLength={30}
+            dir="ltr"
+          />
+        </div>
+
+        {/* مالك الغرفة */}
+        <div className="space-y-1 relative" ref={ownerContainerRef}>
+          <Label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+            <UserCheck size={14} /> مالك الغرفة
+          </Label>
+          <div className="relative">
+            <Input
+              value={ownerUsername || ownerSearch}
+              onChange={(e) => {
+                setOwnerUsername("");
+                searchOwners(e.target.value);
+              }}
+              onFocus={() => setShowOwnerDropdown(true)}
+              placeholder="ابحث عن عضو..."
+              className="rounded-xl text-xs font-bold"
+            />
+            {ownerUsername && (
+              <button
+                type="button"
+                onClick={() => { setOwnerUsername(""); setOwnerSearch(""); }}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          {showOwnerDropdown && ownerSearch && (
+            <div className="absolute z-50 mt-1 max-h-40 w-full overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
+              {searchingOwners ? (
+                <div className="flex items-center justify-center p-3">
+                  <Loader2 className="animate-spin" size={14} />
+                </div>
+              ) : ownerResults.length === 0 ? (
+                <div className="p-3 text-center text-xs text-muted-foreground">لا توجد نتائج</div>
+              ) : (
+                ownerResults.map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => {
+                      setOwnerUsername(u.username);
+                      setOwnerSearch("");
+                      setShowOwnerDropdown(false);
+                    }}
+                    className="flex w-full items-center gap-2 p-2 text-right transition-colors hover:bg-muted"
+                  >
+                    <img src={u.avatar} className="h-6 w-6 rounded-full object-cover" alt="" />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold">{u.displayName}</span>
+                      <span className="text-[9px] text-muted-foreground">@{u.username}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         {/* وصف الغرفة */}
@@ -585,13 +766,14 @@ const CreateRoomInline = ({ onBack, onCreated }: { onBack: () => void; onCreated
             disabled={isCreating}
           >
             {isCreating ? (
-              <><Loader2 className="animate-spin" size={14} /> إنشاء...</>
+              <><Loader2 className="animate-spin" size={14} /> {isEditMode ? "جاري الحفظ..." : "إنشاء..."}</>
             ) : (
-              <><Plus size={14} /> إنشاء الغرفة</>
+              <><Plus size={14} /> {isEditMode ? "حفظ التعديلات" : "إنشاء الغرفة"}</>
             )}
           </Button>
         </div>
       </div>
+
     </div>
   );
 };

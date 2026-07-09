@@ -125,7 +125,7 @@ const ProfileModal = ({ user, isOpen, onClose, isAdmin = true }: ProfileModalPro
             </div>
           </div>
 
-          <p className="text-sm mb-6 leading-relaxed" dir="rtl" style={user.messageColor && user.messageColor !== "#000000" ? { color: user.messageColor } : { color: "var(--muted-foreground)" }}>
+          <p className="text-sm mb-6 leading-relaxed" dir="rtl" style={user.statusFontColor && user.statusFontColor !== "#000000" ? { color: user.statusFontColor } : { color: "var(--muted-foreground)" }}>
             {statusMsg}
           </p>
 

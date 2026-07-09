@@ -10,6 +10,34 @@ import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { optimisticAddComment, optimisticToggleCommentLike } from "@/lib/optimistic-actions";
 import { getSocket } from "@/lib/socket";
+const showMuteAlert = (message: string) => {
+  let detail: any = {
+    alertId: String(Date.now()),
+    fromUsername: "النظام",
+    fromAvatar: "/pic.png",
+    message,
+    timestamp: Date.now()
+  };
+  try {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      const user = JSON.parse(raw);
+      detail = {
+        alertId: String(Date.now()),
+        fromUsername: user.name || user.username || "النظام",
+        fromAvatar: user.avatar || "/pic.png",
+        fromBanner: user.giftedBannerUrl || "",
+        fromGiftIcon: user.giftedGiftIconUrl || "",
+        fromPromotionIcon: user.roleIconUrl || user.giftedPromotionIconUrl || "",
+        fromAvatarFrame: user.avatarFrameUrl || "",
+        message,
+        timestamp: Date.now()
+      };
+    }
+  } catch {}
+  window.dispatchEvent(new CustomEvent("show-client-alert", { detail }));
+};
+
 
 interface Author {
   id: string;
@@ -61,6 +89,10 @@ const CommentThread = ({
   const replyCount = comment.replies?.length || 0;
 
   const handleSubmitReply = async () => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     if (!replyText.trim() || !currentUser) return;
     setIsReplying(true);
     try {
@@ -94,6 +126,20 @@ const CommentThread = ({
         </Avatar>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
+            {(() => {
+              if (!comment.author?.id) return null;
+              const u = onlineUsers.find(o => String(o.id) === String(comment.author.id));
+              const banner = u?.giftedBannerUrl || (comment.author as any)?.giftedBannerUrl || "";
+              const giftIcon = u?.giftedGiftIconUrl || (comment.author as any)?.giftedGiftIconUrl || "";
+              const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (comment.author as any)?.roleIconUrl || (comment.author as any)?.giftedPromotionIconUrl || "";
+              return (
+                <>
+                  {promoIcon && <img src={promoIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                  {giftIcon && <img src={giftIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                  {banner && <img src={banner} alt="" className="h-5 w-auto rounded object-contain max-w-[5rem]" />}
+                </>
+              );
+            })()}
             <span
               className="text-[10px] font-black text-foreground cursor-pointer hover:underline"
               onClick={() => onOpenProfile?.(comment.author.id || comment.author.name)}
@@ -110,7 +156,13 @@ const CommentThread = ({
               {new Date(comment.createdAt).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
-          <p className="text-xs text-foreground leading-relaxed mt-0.5" dir="rtl">
+          <p className="text-xs text-foreground leading-relaxed mt-0.5" dir="rtl"
+            style={(() => {
+              const u = onlineUsers.find(o => String(o.id) === String(comment.author?.id));
+              const resolvedColor = u?.statusFontColor || (comment.author as any)?.statusFontColor || "";
+              return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+            })()}
+          >
             {comment.body}
           </p>
           <div className="flex items-center gap-2 mt-1">
@@ -214,7 +266,7 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
       const updateAuthor = (c: any): any => ({
         ...c,
         author: String(c.author?.id) === String(data.userId)
-          ? { ...c.author, name: data.username || c.author.name, avatar: data.avatar || c.author.avatar }
+          ? { ...c.author, name: data.username || c.author.name, avatar: data.avatar || c.author.avatar, nameColor: data.nameColor !== undefined ? data.nameColor : c.author.nameColor, statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : c.author.statusFontColor }
           : c.author,
         replies: c.replies?.map(updateAuthor) || [],
       });
@@ -271,6 +323,10 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
   };
 
   const handlePostComment = async () => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     if (!newComment.trim() || !currentUser) return;
     setIsPosting(true);
     const content = newComment;
@@ -288,6 +344,10 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
   };
 
   const handleReply = async (parentId: string, text: string) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     if (!currentUser) return;
     try {
       await optimisticAddComment(postId, text, currentUser, parentId);

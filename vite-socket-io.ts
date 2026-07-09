@@ -79,6 +79,10 @@ export function viteSocketIO(): Plugin {
         idreg?: string;
         siteBadge?: string;
         statusMsg?: string;
+        giftedBannerUrl?: string;
+        giftedGiftIconUrl?: string;
+        giftedPromotionIconUrl?: string;
+        roleIconUrl?: string;
       };
 
       const connectedUsers = new Map<string, OnlineUser>();
@@ -87,7 +91,7 @@ export function viteSocketIO(): Plugin {
       const pendingDisconnects = new Map<string, { roomId: string; timeout: NodeJS.Timeout; socketId: string }>();
 
       function addUser(socketId: string, data: Omit<OnlineUser, "socketId">) {
-        connectedUsers.set(socketId, { ...data, socketId });
+        connectedUsers.set(socketId, { ...data, socketId } as OnlineUser);
       }
 
       function broadcastUserConnected(user: OnlineUser) {
@@ -108,6 +112,10 @@ export function viteSocketIO(): Plugin {
           idreg: user.idreg,
           siteBadge: user.siteBadge,
           statusMsg: user.statusMsg || "",
+          giftedBannerUrl: user.giftedBannerUrl || "",
+          giftedGiftIconUrl: user.giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: user.giftedPromotionIconUrl || "",
+          roleIconUrl: user.roleIconUrl || "",
           count: connectedUsers.size,
         });
       }
@@ -221,24 +229,22 @@ export function viteSocketIO(): Plugin {
           idreg: auth.idreg || "",
           siteBadge: auth.siteBadge || "",
           statusMsg: handshakeProfileMsg,
+          giftedBannerUrl: auth.giftedBannerUrl || "",
+          giftedGiftIconUrl: auth.giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: auth.giftedPromotionIconUrl || "",
+          roleIconUrl: auth.roleIconUrl || "",
         };
 
+        socket.data.user = userData;
         addUser(socket.id, userData);
-        socket.data.user = {
-          id: userId,
-          username,
-          role,
-          avatar: userData.avatar,
-          statusMsg: handshakeProfileMsg,
-          profileMsg: handshakeProfileMsg,
-        };
 
         // Enrich from DB at connection time
         (async () => {
           try {
             const mod = await import("./server/db");
             const result = await mod.dbPool.query(
-              `SELECT "member_card_bg_url", "name_color", "message_color", "idreg", "avatar_frame_url", "profile_msg"
+              `SELECT "member_card_bg_url", "name_color", "message_color", "idreg", "avatar_frame_url", "profile_msg",
+                      "gifted_banner_url", "gifted_gift_icon_url", "gifted_promotion_icon_url"
                FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
               [userId]
             );
@@ -251,12 +257,29 @@ export function viteSocketIO(): Plugin {
                 if (row.message_color) u.messageColor = String(row.message_color).trim();
                 if (row.idreg) u.idreg = String(row.idreg).trim();
                 if (row.avatar_frame_url) u.avatarFrameUrl = String(row.avatar_frame_url).trim();
+                if (row.gifted_banner_url) u.giftedBannerUrl = String(row.gifted_banner_url).trim();
+                if (row.gifted_gift_icon_url) u.giftedGiftIconUrl = String(row.gifted_gift_icon_url).trim();
+                if (row.gifted_promotion_icon_url) u.giftedPromotionIconUrl = String(row.gifted_promotion_icon_url).trim();
                 if (row.profile_msg) {
                   const msg = String(row.profile_msg).trim();
                   u.statusMsg = msg;
-                  socket.data.user.statusMsg = msg;
-                  socket.data.user.profileMsg = msg;
                 }
+              }
+            }
+            // Fetch role icon
+            const roleResult = await mod.dbPool.query(
+              `SELECT r.icon_url AS role_icon_url
+               FROM user_role_assignments ura
+               JOIN roles r ON r.id = ura.role_id AND r.is_active = true
+               WHERE ura.user_id = $1
+               ORDER BY r.rank DESC
+               LIMIT 1`,
+              [userId]
+            );
+            if (roleResult.rows[0]?.role_icon_url) {
+              const u = connectedUsers.get(socket.id);
+              if (u) {
+                u.roleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
               }
             }
             // Fallback to legacy ucol/mcol
@@ -318,6 +341,56 @@ export function viteSocketIO(): Plugin {
         socket.on("join_room", async (data: any, callback?: any) => {
           const roomId = String(data?.roomId || "").trim();
           if (!roomId) { callback?.({ success: false, message: "معرف الغرفة مطلوب" }); return; }
+
+          // ── فحص الطرد المؤقت ──
+          try {
+            const mod = await import("./server/db");
+            const uid = String(userData.id || "");
+            const uname = String(userData.username || "").toLowerCase();
+            const uidreg = String(userData.idreg || "");
+
+            const kickRes = await mod.dbPool.query(
+              `WITH user_identifiers AS (
+                 SELECT 
+                   CAST(id AS text) as id_val,
+                   CAST(uid AS text) as uid_val,
+                   CAST(idreg AS varchar) as idreg_val
+                 FROM users 
+                 WHERE lower(username) = lower($4)
+                    OR CAST(id AS text) = $2
+                    OR CAST(uid AS text) = $2
+                    OR CAST(idreg AS varchar) = $3
+                 LIMIT 1
+               )
+               SELECT k.banned_until, k.user_id, k.room_id 
+               FROM room_kicks k, user_identifiers u
+               WHERE k.room_id = $1 
+                 AND (
+                   k.user_id = u.id_val
+                   OR k.user_id = u.uid_val
+                   OR k.user_id = u.idreg_val
+                   OR k.user_id = $2
+                   OR k.user_id = $3
+                   OR lower(k.user_id) = lower($4)
+                 )
+               ORDER BY k.banned_until DESC
+               LIMIT 1`,
+              [roomId, uid, uidreg, uname]
+            );
+            if (kickRes.rows.length > 0) {
+              const bannedUntil = new Date(kickRes.rows[0].banned_until);
+              const remaining = bannedUntil.getTime() - Date.now();
+              if (remaining > 0) {
+                const diffMins = Math.floor(remaining / 60000);
+                const diffSecs = Math.floor((remaining % 60000) / 1000);
+                const timeStr = diffMins > 0 ? `${diffMins} دقيقة و ${diffSecs} ثانية` : `${diffSecs} ثانية`;
+                callback?.({ success: false, message: `لا يمكنك الدخول للغرفة، تم طردك مؤقتاً ومتبقي لديك ${timeStr}` });
+                return;
+              }
+            }
+          } catch (e) {
+            console.error("Room kick check error (dev):", e);
+          }
 
           const pendingLeave = pendingLeaves.get(socket.id);
           let prev = connectedUsers.get(socket.id)?.roomId;
@@ -684,6 +757,19 @@ export function viteSocketIO(): Plugin {
               from: username
             });
           } else if (action === "kick" || action === "ban") {
+             // حفظ الطرد في قاعدة البيانات
+             try {
+               const mod = await import("./server/db");
+               const minutes = Number(data?.value) || 15;
+               const bannedUntil = new Date(Date.now() + minutes * 60 * 1000);
+               await mod.dbPool.query(
+                 `INSERT INTO room_kicks (room_id, user_id, banned_until) VALUES ($1, $2, $3)`,
+                 [roomId, targetUser.id, bannedUntil]
+               );
+             } catch (e) {
+               console.error("Failed to save room kick:", e);
+             }
+
              io!.to(targetSocketId).emit("system_alert", {
                title: action === "ban" ? "حظر" : "طرد",
                message: action === "ban" ? "لقد تم حظرك من الموقع" : "لقد تم طردك من الغرفة",
@@ -743,7 +829,7 @@ export function viteSocketIO(): Plugin {
             const uniqueKey = getPresenceKey(u);
             const existing = uniqueUsers.get(uniqueKey);
             
-            if (!existing) {
+             if (!existing) {
               uniqueUsers.set(uniqueKey, {
                 id: u.id, socketId: u.socketId, username: u.username, role: u.role, avatar: u.avatar,
                 countryCode: u.countryCode, avatarFrameUrl: u.avatarFrameUrl,
@@ -753,6 +839,10 @@ export function viteSocketIO(): Plugin {
                 status: u.status || "online",
                 idreg: u.idreg, siteBadge: u.siteBadge,
                 statusMsg: u.statusMsg || "",
+                giftedBannerUrl: u.giftedBannerUrl || "",
+                giftedGiftIconUrl: u.giftedGiftIconUrl || "",
+                giftedPromotionIconUrl: u.giftedPromotionIconUrl || "",
+                roleIconUrl: u.roleIconUrl || "",
               });
             } else {
               const priorities: Record<string, number> = { "busy": 4, "away": 3, "idle": 2, "online": 1 };

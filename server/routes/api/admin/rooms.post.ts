@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
       return { success: false, message: "رابط الغرفة غير صالح" };
     }
 
-    const existingRoom = await dbPool.query("SELECT idroom FROM rooms WHERE id = $1 LIMIT 1", [safeSlug]);
+    const existingRoom = await dbPool.query("SELECT idroom FROM rooms WHERE slug = $1 LIMIT 1", [safeSlug]);
     if ((existingRoom.rowCount || 0) > 0) {
       return { success: false, message: "رابط الغرفة مستخدم بالفعل، اختر رابطاً آخر" };
     }
@@ -71,9 +71,9 @@ export default defineEventHandler(async (event) => {
 
     const created = await dbPool.query(
       `INSERT INTO rooms
-        (about, "user", pass, id, owner, topic, pic, rmli, mic, welcome, broadcast, deleted, needpass, color, max, stage_count, stage_state, room_owner_meta, message_mode, verified, room_layout)
+        (about, "user", pass, slug, owner, topic, name, pic, rmli, mic, welcome, broadcast, deleted, needpass, color, max, stage_count, stage_state, room_owner_meta, message_mode, verified, room_layout, is_public)
        VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        RETURNING *`,
       [
         description || "",
@@ -96,6 +96,7 @@ export default defineEventHandler(async (event) => {
         localSendMode || "real",
         verified ? 1 : 0,
         roomLayout || "normal",
+        isPublic === false ? false : true,
       ],
     );
 

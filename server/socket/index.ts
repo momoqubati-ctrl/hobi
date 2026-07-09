@@ -111,6 +111,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       memberCardBgUrl: socket.handshake.auth?.memberCardBgUrl || "",
       nameColor: socket.handshake.auth?.nameColor || "",
       messageColor: socket.handshake.auth?.messageColor || "",
+      statusFontColor: socket.handshake.auth?.statusFontColor || "",
       messageBubbleStyle: socket.handshake.auth?.messageBubbleStyle || "default",
       status: socket.handshake.auth?.status || "online",
       connectedAt: new Date().toISOString(),
@@ -118,6 +119,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       siteBadge: socket.handshake.auth?.siteBadge || "",
       profileMsg: handshakeProfileMsg,
       statusMsg: handshakeProfileMsg,
+      muted: false,
     };
 
     // Load profile status, colors and other details from canonical DB sources at connection time
@@ -125,8 +127,9 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       const { dbPool } = await import("../db");
       const result = await dbPool.query(
         `SELECT 
-           u.idreg, u.uid, u.msg, u.pic, u.pich, u.ucol, u.mcol,
-           up.profile_msg, up.avatar_url, up.banner_url, up.avatar_frame_url, up.member_card_bg_url, up.name_color, up.message_color
+           u.idreg, u.uid, u.msg, u.pic, u.pich, u.ucol, u.mcol, u.scol, u.muted,
+           up.profile_msg, up.avatar_url, up.banner_url, up.avatar_frame_url, up.member_card_bg_url, up.name_color, up.message_color, up.status_font_color,
+           up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url, up.muted as profile_muted
          FROM users u
          LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
          WHERE CAST(u.id AS text) = $1 LIMIT 1`,
@@ -150,11 +153,38 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
         const cover = row.banner_url || row.pich;
         if (cover) socket.data.user.cover = normalizeMinioUrl(cover);
         
-        if (row.avatar_frame_url) socket.data.user.avatarFrameUrl = String(row.avatar_frame_url);
-        if (row.member_card_bg_url) socket.data.user.memberCardBgUrl = String(row.member_card_bg_url);
+        socket.data.user.avatarFrameUrl = String(row.avatar_frame_url || "").trim();
+        socket.data.user.memberCardBgUrl = String(row.member_card_bg_url || "").trim();
         
         socket.data.user.nameColor = String(row.name_color || row.ucol || "").trim();
         socket.data.user.messageColor = String(row.message_color || row.mcol || "").trim();
+        socket.data.user.statusFontColor = String(row.status_font_color || row.scol || "").trim();
+        
+        (socket.data.user as any).giftedBannerUrl = String(row.gifted_banner_url || "").trim();
+        (socket.data.user as any).giftedGiftIconUrl = String(row.gifted_gift_icon_url || "").trim();
+        (socket.data.user as any).giftedPromotionIconUrl = String(row.gifted_promotion_icon_url || "").trim();
+
+        const mutedValue = row.profile_muted !== undefined ? row.profile_muted : row.muted;
+        (socket.data.user as any).muted = Boolean(mutedValue && mutedValue !== 0 && mutedValue !== "0");
+
+        try {
+          const roleResult = await dbPool.query(
+            `SELECT r.icon_url AS role_icon_url
+             FROM user_role_assignments ura
+             JOIN roles r ON r.id = ura.role_id AND r.is_active = true
+             WHERE ura.user_id = $1
+             ORDER BY r.rank DESC
+             LIMIT 1`,
+            [userId]
+          );
+          if (roleResult.rows[0]?.role_icon_url) {
+            (socket.data.user as any).roleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
+          } else {
+            (socket.data.user as any).roleIconUrl = "";
+          }
+        } catch (_) {
+          (socket.data.user as any).roleIconUrl = "";
+        }
       }
     } catch (e) {
       console.error("Error fetching user identity on socket connection:", e);
@@ -193,6 +223,11 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       user: socket.data.user,
       serverTime: new Date().toISOString(),
     });
+
+    // إرسال حالة الإسكات للمستخدم
+    if ((socket.data.user as any).muted) {
+      socket.emit("muted_state", { muted: true });
+    }
 
     socket.emit("country_resolved", {
       countryCode: detectedCountry,

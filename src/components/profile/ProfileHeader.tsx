@@ -133,10 +133,10 @@ export function ProfileHeader({ profile, user, isFollowing, onFollowChange, onCl
             </span>
           </div>
 
-          {profile?.profileMsg && (
+{profile?.profileMsg && (
             <p 
               className="mt-2.5 text-sm font-bold text-muted-foreground/80 leading-relaxed"
-              style={{ color: profile?.messageColor && profile.messageColor !== "#000000" ? profile.messageColor : undefined }}
+              style={{ color: profile?.statusFontColor && profile.statusFontColor !== "#000000" ? profile.statusFontColor : undefined }}
             >
               {profile.profileMsg}
             </p>

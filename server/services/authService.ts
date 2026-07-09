@@ -283,16 +283,35 @@ export const loginMember = async (input: { username: string; password: string; c
     if (input.countryCode) {
       user.countryCode = normalizeCountryCode(input.countryCode);
     }
-    // تحميل avatar_frame_url و member_card_bg_url من user_profiles
+    // تحميل avatar_frame_url و member_card_bg_url والبنرات والأيقونات المهداة من user_profiles
     try {
       const profileResult = await dbPool.query(
-        `SELECT "avatar_frame_url", "member_card_bg_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        `SELECT "avatar_frame_url", "member_card_bg_url", "gifted_banner_url", "gifted_gift_icon_url", "gifted_promotion_icon_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
         [user.id]
       );
       if (profileResult.rows[0]) {
         const row = profileResult.rows[0];
         if (row.avatar_frame_url) user.profile.avatarFrameUrl = String(row.avatar_frame_url);
         if (row.member_card_bg_url) user.profile.memberCardBgUrl = String(row.member_card_bg_url);
+        (user.profile as any).giftedBannerUrl = String(row.gifted_banner_url || "");
+        (user.profile as any).giftedGiftIconUrl = String(row.gifted_gift_icon_url || "");
+        (user.profile as any).giftedPromotionIconUrl = String(row.gifted_promotion_icon_url || "");
+      }
+    } catch (_) {}
+
+    // تحميل أيقونة الصلاحية من user_role_assignments + roles
+    try {
+      const roleResult = await dbPool.query(
+        `SELECT r.icon_url AS role_icon_url
+         FROM user_role_assignments ura
+         JOIN roles r ON r.id = ura.role_id AND r.is_active = true
+         WHERE ura.user_id = $1
+         ORDER BY r.rank DESC
+         LIMIT 1`,
+        [user.id]
+      );
+      if (roleResult.rows[0]?.role_icon_url) {
+        (user.profile as any).roleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
       }
     } catch (_) {}
     storeDeviceInfo(user.id, input.clientIp, input.deviceFingerprint, input.deviceSignature);
@@ -325,7 +344,7 @@ export const loginMember = async (input: { username: string; password: string; c
   };
 };
 
-export const updateInMemoryUserProfile = (username: string, updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string }) => {
+export const updateInMemoryUserProfile = (username: string, updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string }) => {
   const norm = normalizeUsername(username);
   const user = usersByUsername.get(norm);
   if (user) {
@@ -337,8 +356,10 @@ export const updateInMemoryUserProfile = (username: string, updates: { avatar?: 
     if (updates.profileMsg !== undefined) user.profile.profileMsg = updates.profileMsg;
     if (updates.displayName !== undefined) {
       user.displayName = updates.displayName;
-      // تحديث خاصية name أيضاً إذا كانت public user
     }
+    if (updates.nameColor !== undefined) user.profile.nameColor = updates.nameColor;
+    if (updates.messageColor !== undefined) user.profile.messageColor = updates.messageColor;
+    if (updates.statusFontColor !== undefined) user.profile.statusFontColor = updates.statusFontColor;
     usersByUsername.set(norm, user);
     return user;
   }

@@ -383,14 +383,8 @@ const YouTubeSearch: React.FC = () => {
 
     if (query.trim()) {
       doSearch(query, "", tab === "reels");
-    } else {
-      const defaultQuery = tab === "reels" ? "شيلات ريلز مضحك" : "";
-      if (defaultQuery) {
-        doSearch(defaultQuery, "", true);
-      }
     }
   };
-
   const handleNextPage = () => {
     if (!result?.nextPageToken) return;
     const newStack = [...pageStack.slice(0, currentPage + 1), result.nextPageToken];

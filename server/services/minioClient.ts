@@ -17,84 +17,67 @@ let enabled = false;
 export const isMinioEnabled = () => enabled;
 
 export const getMinioClient = (): Client | null => {
-  if (!enabled) return null;
+  if (!client) {
+    try {
+      client = new Client({
+        endPoint: MINIO_ENDPOINT,
+        port: MINIO_PORT,
+        useSSL: MINIO_USE_SSL,
+        accessKey: MINIO_ACCESS_KEY,
+        secretKey: MINIO_SECRET_KEY,
+      });
+      enabled = true;
+    } catch (err) {
+      console.warn("[MinIO] init failed:", err);
+      client = null;
+      enabled = false;
+    }
+  }
   return client;
 };
 
+export const getMinioBucket = () => MINIO_BUCKET;
+
+export const getMinioPublicUrl = (key: string) => `${MINIO_PUBLIC_URL}/${key}`;
+
 export const initMinio = async () => {
-  if (process.env.MINIO_ENABLED !== "true") {
-    enabled = false;
-    return;
-  }
-
+  const c = getMinioClient();
+  if (!c) return;
   try {
-    client = new Client({
-      endPoint: MINIO_ENDPOINT,
-      port: MINIO_PORT,
-      useSSL: MINIO_USE_SSL,
-      accessKey: MINIO_ACCESS_KEY,
-      secretKey: MINIO_SECRET_KEY,
-    });
-
-    const exists = await client.bucketExists(MINIO_BUCKET);
+    const exists = await c.bucketExists(MINIO_BUCKET);
     if (!exists) {
-      await client.makeBucket(MINIO_BUCKET);
-      console.log(`[MinIO] ✅ Created bucket "${MINIO_BUCKET}"`);
-    }
-
-    const policy = {
-      Version: "2012-10-17",
-      Statement: [
-        {
+      await c.makeBucket(MINIO_BUCKET, "us-east-1");
+      const policy = JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
           Effect: "Allow",
           Principal: { AWS: ["*"] },
           Action: ["s3:GetObject"],
           Resource: [`arn:aws:s3:::${MINIO_BUCKET}/*`],
-        },
-      ],
-    };
-    await client.setBucketPolicy(MINIO_BUCKET, JSON.stringify(policy));
-
-    enabled = true;
-    console.log(`[MinIO] ✅ Connected to ${MINIO_ENDPOINT}:${MINIO_PORT} bucket="${MINIO_BUCKET}"`);
+        }],
+      });
+      await c.setBucketPolicy(MINIO_BUCKET, policy);
+      console.log(`[MinIO] bucket "${MINIO_BUCKET}" created & made public`);
+    } else {
+      console.log(`[MinIO] bucket "${MINIO_BUCKET}" exists`);
+    }
   } catch (err) {
-    console.error("[MinIO] ❌ Connection failed:", err instanceof Error ? err.message : err);
-    enabled = false;
-    client = null;
+    console.error("[MinIO] init error:", err);
   }
 };
 
-export const uploadToMinio = async (
-  key: string,
-  buffer: Buffer,
-  contentType: string,
-): Promise<string | null> => {
-  if (!enabled || !client) return null;
-
-  try {
-    await client.putObject(MINIO_BUCKET, key, buffer, buffer.length, {
-      "Content-Type": contentType,
-    });
-    return `${MINIO_PUBLIC_URL}/${key}`;
-  } catch (err) {
-    console.error("[MinIO] Upload failed:", err instanceof Error ? err.message : err);
-    return null;
-  }
+export const uploadToMinio = async (key: string, buffer: Buffer, contentType: string): Promise<string> => {
+  const c = getMinioClient();
+  if (!c) throw new Error("MinIO not configured");
+  await c.putObject(MINIO_BUCKET, key, buffer, buffer.length, { "Content-Type": contentType });
+  return getMinioPublicUrl(key);
 };
 
-export const deleteFromMinio = async (key: string): Promise<boolean> => {
-  if (!enabled || !client) return false;
-
-  try {
-    await client.removeObject(MINIO_BUCKET, key);
-    return true;
-  } catch (err) {
-    console.error("[MinIO] Delete failed:", err instanceof Error ? err.message : err);
-    return false;
-  }
+export const deleteFromMinio = async (key: string): Promise<void> => {
+  const c = getMinioClient();
+  if (!c) return;
+  await c.removeObject(MINIO_BUCKET, key);
 };
-
-export const getMinioPublicUrl = (key: string) => `${MINIO_PUBLIC_URL}/${key}`;
 
 /**
  * تحويل أي رابط صورة (MinIO، مسار نسبي، رابط كامل) إلى رابط يعمل من أي جهاز.

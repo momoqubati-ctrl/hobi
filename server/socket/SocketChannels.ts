@@ -18,6 +18,7 @@ export function joinUserChannels(socket: Socket): void {
     console.log("[SocketChannels] Joining notification room:", notifRoom);
     socket.join(SOCKET_CHANNELS.social(userId));
     socket.join(notifRoom);
+    socket.join(`user:${userId}`);
   } else {
     console.error("[SocketChannels] userId is empty! Socket will NOT join notification room");
   }

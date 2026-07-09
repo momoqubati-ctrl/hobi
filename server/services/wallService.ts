@@ -51,6 +51,10 @@ const mapWallPost = (row: any) => {
       name: row.authorName || row.fallbackAuthorName || row.authorId || "زائر",
       avatar: normalizeAssetPath(row.authorAvatar, "/pic.png"),
       nameColor: row.authorNameColor || "",
+      giftedBannerUrl: row.authorGiftedBannerUrl || "",
+      giftedGiftIconUrl: row.authorGiftedGiftIconUrl || "",
+      giftedPromotionIconUrl: row.authorGiftedPromotionIconUrl || "",
+      roleIconUrl: row.authorRoleIconUrl || "",
     },
   };
 };
@@ -82,7 +86,11 @@ export const listWallPosts = async () => {
              b.uid as "authorId", b.topic as "fallbackAuthorName",
              COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as "authorName",
              NULLIF(u.pic, '') as "authorAvatar",
-             COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor"
+             COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor",
+             up.gifted_banner_url as "authorGiftedBannerUrl",
+             up.gifted_gift_icon_url as "authorGiftedGiftIconUrl",
+             up.gifted_promotion_icon_url as "authorGiftedPromotionIconUrl",
+             (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as "authorRoleIconUrl"
       FROM bars b
       LEFT JOIN users u ON b.uid = u.uid OR b.uid = u.id OR b.uid = u.idreg::text OR lower(b.topic) = lower(u.username)
       LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -114,13 +122,26 @@ export const createWallPost = async (
   const userRes = isGuestAuthor
     ? { rows: [] as any[] }
     : await dbPool.query(
-        `SELECT uid, id, idreg, username, topic, pic
-         FROM users
-         WHERE CAST(uid AS text) = $1 OR CAST(id AS text) = $1 OR CAST(idreg AS text) = $1 OR lower(username) = lower($1)
+        `SELECT u.uid, u.id, u.idreg, u.username, u.topic, u.pic,
+                up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url
+         FROM users u
+         LEFT JOIN user_profiles up ON up.user_id = u.id
+         WHERE CAST(u.uid AS text) = $1 OR CAST(u.id AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($1)
          LIMIT 1`,
         [authorId],
       );
   const user = userRes.rows[0];
+
+  // Fetch role icon
+  let authorRoleIconUrl = "";
+  try {
+    const roleRes = await dbPool.query(
+      `SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = $1 ORDER BY r.rank DESC LIMIT 1`,
+      [user?.id || authorId]
+    );
+    if (roleRes.rows[0]?.icon_url) authorRoleIconUrl = String(roleRes.rows[0].icon_url).trim();
+  } catch (_) {}
+
   const legacyUserId = String(user?.uid || user?.id || user?.idreg || authorId);
   const authorName = normalizeAuthorName(isGuestAuthor ? authorDisplayName : user?.topic || user?.username || authorDisplayName) || authorId;
 
@@ -137,6 +158,10 @@ export const createWallPost = async (
     authorName,
     authorAvatar: user?.pic,
     authorNameColor: user?.ucol || "",
+    authorGiftedBannerUrl: user?.gifted_banner_url || "",
+    authorGiftedGiftIconUrl: user?.gifted_gift_icon_url || "",
+    authorGiftedPromotionIconUrl: user?.gifted_promotion_icon_url || "",
+    authorRoleIconUrl,
     createdAt: new Date().toISOString(),
   });
 
@@ -177,12 +202,26 @@ export const createWallComment = async (
   parentId?: string,
 ) => {
   const userRes = await dbPool.query(
-    `SELECT id, username, topic, pic FROM users WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 LIMIT 1`,
+    `SELECT u.id, u.username, u.topic, u.pic,
+            up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url
+     FROM users u
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE u.id::text = $1 OR u.idreg::text = $1 OR u.uid::text = $1 LIMIT 1`,
     [authorId],
   );
   const user = userRes.rows[0];
   const resolvedId = String(user?.id || authorId);
   const resolvedName = user?.topic || user?.username || authorName || "زائر";
+
+  // Fetch role icon
+  let authorRoleIconUrl = "";
+  try {
+    const roleRes = await dbPool.query(
+      `SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = $1 ORDER BY r.rank DESC LIMIT 1`,
+      [user?.id || authorId]
+    );
+    if (roleRes.rows[0]?.icon_url) authorRoleIconUrl = String(roleRes.rows[0].icon_url).trim();
+  } catch (_) {}
 
   const result = await dbPool.query(
     `INSERT INTO bar_comments (bar_id, author_id, author_topic, author_pic, body, parent_id)
@@ -201,6 +240,10 @@ export const createWallComment = async (
       name: resolvedName,
       avatar: user?.pic ? normalizeAssetPath(user.pic, "/pic.png") : "/pic.png",
       nameColor: user?.ucol || "",
+      giftedBannerUrl: user?.gifted_banner_url || "",
+      giftedGiftIconUrl: user?.gifted_gift_icon_url || "",
+      giftedPromotionIconUrl: user?.gifted_promotion_icon_url || "",
+      roleIconUrl: authorRoleIconUrl,
     },
     parentId: parentId || null,
     replies: [],
@@ -212,7 +255,11 @@ export const listPostComments = async (postId: string) => {
     `SELECT bc.id, bc.body, COALESCE(bc.created_at, NOW()) as "createdAt",
             bc.author_topic as "authorName", bc.author_pic as "authorAvatar",
             bc.author_id as "authorId", bc.parent_id as "parentId",
-            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor"
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor",
+            up.gifted_banner_url as "authorGiftedBannerUrl",
+            up.gifted_gift_icon_url as "authorGiftedGiftIconUrl",
+            up.gifted_promotion_icon_url as "authorGiftedPromotionIconUrl",
+            (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as "authorRoleIconUrl"
      FROM bar_comments bc
      LEFT JOIN users u ON u.id::text = bc.author_id::text
      LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -230,6 +277,10 @@ export const listPostComments = async (postId: string) => {
       name: row.authorName || "زائر",
       avatar: row.authorAvatar ? normalizeAssetPath(row.authorAvatar, "/pic.png") : "/pic.png",
       nameColor: row.authorNameColor || "",
+      giftedBannerUrl: row.authorGiftedBannerUrl || "",
+      giftedGiftIconUrl: row.authorGiftedGiftIconUrl || "",
+      giftedPromotionIconUrl: row.authorGiftedPromotionIconUrl || "",
+      roleIconUrl: row.authorRoleIconUrl || "",
     },
     parentId: row.parentId ? String(row.parentId) : null,
     replies: [] as any[],

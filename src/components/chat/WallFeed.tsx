@@ -16,6 +16,34 @@ import { Plus } from "lucide-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { useShallow } from "zustand/shallow";
+const showMuteAlert = (message: string) => {
+  let detail: any = {
+    alertId: String(Date.now()),
+    fromUsername: "النظام",
+    fromAvatar: "/pic.png",
+    message,
+    timestamp: Date.now()
+  };
+  try {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      const user = JSON.parse(raw);
+      detail = {
+        alertId: String(Date.now()),
+        fromUsername: user.name || user.username || "النظام",
+        fromAvatar: user.avatar || "/pic.png",
+        fromBanner: user.giftedBannerUrl || "",
+        fromGiftIcon: user.giftedGiftIconUrl || "",
+        fromPromotionIcon: user.roleIconUrl || user.giftedPromotionIconUrl || "",
+        fromAvatarFrame: user.avatarFrameUrl || "",
+        message,
+        timestamp: Date.now()
+      };
+    }
+  } catch {}
+  window.dispatchEvent(new CustomEvent("show-client-alert", { detail }));
+};
+
 import { optimisticCreatePost, optimisticToggleLike } from "@/lib/optimistic-actions";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
@@ -496,6 +524,10 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
   };
 
   const handleSubmit = async () => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     if ((!text.trim() && mediaItems.length === 0 && !recorder.audioBlob && !selectedVideo) || isPosting) return;
     setIsPosting(true);
     let content = text;
@@ -563,6 +595,10 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
   };
 
   const handleSendSticker = async (stickerUrl: string) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     closeAllPanels();
     const allUrls: string[] = [stickerUrl];
     let content = text.trim();
@@ -1015,19 +1051,36 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                       <AvatarFallback>{post.author?.name?.[0]}</AvatarFallback>
                     </Avatar>
                     <div dir="rtl">
-                      <h4
-                        className="font-black text-xs text-foreground cursor-pointer hover:underline"
-                        onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
-                        style={(() => {
+                      <div className="flex items-center gap-1">
+                        {(() => {
                           const authorId = post.author?.id;
-                          if (!authorId) return undefined;
+                          if (!authorId) return null;
                           const u = onlineUsers.find(o => String(o.id) === String(authorId));
-                          const resolvedColor = u?.nameColor || (post.author as any)?.nameColor || "";
-                          return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                          const banner = u?.giftedBannerUrl || (post.author as any)?.giftedBannerUrl || "";
+                          const giftIcon = u?.giftedGiftIconUrl || (post.author as any)?.giftedGiftIconUrl || "";
+                          const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (post.author as any)?.roleIconUrl || (post.author as any)?.giftedPromotionIconUrl || "";
+                          return (
+                            <>
+                              {promoIcon && <img src={promoIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+                              {giftIcon && <img src={giftIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+                              {banner && <img src={banner} alt="" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" />}
+                            </>
+                          );
                         })()}
-                      >
-                        {post.author?.name}
-                      </h4>
+                        <h4
+                          className="font-black text-xs text-foreground cursor-pointer hover:underline"
+                          onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
+                          style={(() => {
+                            const authorId = post.author?.id;
+                            if (!authorId) return undefined;
+                            const u = onlineUsers.find(o => String(o.id) === String(authorId));
+                            const resolvedColor = u?.nameColor || (post.author as any)?.nameColor || "";
+                            return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                          })()}
+                        >
+                          {post.author?.name}
+                        </h4>
+                      </div>
                       <p className="text-[9px] text-muted-foreground font-bold">
                         {new Date(post.createdAt).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
                       </p>
@@ -1038,9 +1091,17 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
                   </Button>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="px-3 pb-2 text-xs text-foreground leading-relaxed font-medium break-words" dir="rtl">
-                    {renderTextWithFaces(post.body || "", post.animatedFaces)}
-                  </div>
+                  <div className="px-3 pb-2 text-xs text-foreground leading-relaxed font-medium break-words" dir="rtl"
+  style={(() => {
+    const authorId = post.author?.id;
+    if (!authorId) return undefined;
+    const u = onlineUsers.find(o => String(o.id) === String(authorId));
+    const resolvedColor = u?.statusFontColor || (post.author as any)?.statusFontColor || "";
+    return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+  })()}
+>
+  {renderTextWithFaces(post.body || "", post.animatedFaces)}
+</div>
                   {post.body && findYouTubeLinks(post.body).map((link) => (
                     <div className="px-3 pb-2" key={link}>
                       <YouTubePreviewCard

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useRealtimeStore } from "@/lib/realtime-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +18,33 @@ import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { fetchAnimatedFaces, AnimatedFace, findAnimatedFace } from "@/lib/animatedFaceData";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import { NotificationsBell } from "./NotificationsPanel";
-import { useRealtimeStore } from "@/lib/realtime-store";
+const showMuteAlert = (message: string) => {
+  let detail: any = {
+    alertId: String(Date.now()),
+    fromUsername: "النظام",
+    fromAvatar: "/pic.png",
+    message,
+    timestamp: Date.now()
+  };
+  try {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      const user = JSON.parse(raw);
+      detail = {
+        alertId: String(Date.now()),
+        fromUsername: user.name || user.username || "النظام",
+        fromAvatar: user.avatar || "/pic.png",
+        fromBanner: user.giftedBannerUrl || "",
+        fromGiftIcon: user.giftedGiftIconUrl || "",
+        fromPromotionIcon: user.roleIconUrl || user.giftedPromotionIconUrl || "",
+        fromAvatarFrame: user.avatarFrameUrl || "",
+        message,
+        timestamp: Date.now()
+      };
+    }
+  } catch {}
+  window.dispatchEvent(new CustomEvent("show-client-alert", { detail }));
+};
 
 type ReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
 
@@ -43,6 +70,7 @@ type ChatMessage = {
   giftIconUrl?: string;
   messageBubbleStyle?: string;
   nameColor?: string;
+  statusFontColor?: string;
   color: string;
   isOwner?: boolean;
   isSystem?: boolean;
@@ -74,6 +102,7 @@ type RoomMember = {
   countryCode: string;
   avatarFrameUrl?: string;
   giftIconUrl?: string;
+  statusFontColor?: string;
 };
 
 const getStoredUser = () => {
@@ -721,6 +750,7 @@ const RoomPage = ({
   onOpenSidebar,
   onOpenNotifications,
   onLogout,
+  roomPassword,
 }: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [members, setMembers] = useState<RoomMember[]>([]);
@@ -730,7 +760,7 @@ const RoomPage = ({
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState("");
   const [isMuted, setIsMuted] = useState(false);
-  const [showMics, setShowMics] = useState(true);
+  const [showMics, setShowMics] = useState((room?.mics ?? 0) > 0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [replyToMsg, setReplyToMsg] = useState<ChatMessage | null>(null);
@@ -814,7 +844,8 @@ const RoomPage = ({
     const onConnect = () => {
       setIsConnected(true);
       // الانضمام للغرفة
-      socket.emit("join_room", { roomId, isReconnect: hasJoinedOnceRef.current }, (res: any) => {
+      socket.emit("join_room", { roomId, isReconnect: hasJoinedOnceRef.current, password: roomPassword || "" }, (res: any) => {
+        console.log("[JOIN_ROOM_DEBUG] roomId:", roomId, "response:", JSON.stringify(res));
         if (res?.success) {
           hasJoinedOnceRef.current = true;
           if (res.messages) {
@@ -826,7 +857,18 @@ const RoomPage = ({
           setMemberCount(res.memberCount || 0);
           setError("");
         } else {
+          console.log("[JOIN_ROOM_DEBUG] FAILED to join. message:", res?.message);
           setError(res?.message || "تعذر الانضمام للغرفة");
+          window.dispatchEvent(new CustomEvent("show-client-alert", {
+            detail: {
+              alertId: String(Date.now()),
+              fromUsername: "النظام",
+              fromAvatar: "/pic.png",
+              message: res?.message || "تعذر الانضمام للغرفة",
+              timestamp: Date.now()
+            }
+          }));
+          onBack();
         }
         setIsLoading(false);
       });
@@ -929,6 +971,7 @@ const RoomPage = ({
               username: data.username || m.username,
               avatar: data.avatar || m.avatar,
               nameColor: data.nameColor !== undefined ? data.nameColor : m.nameColor,
+              statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : m.statusFontColor,
             };
           }
           return m;
@@ -944,6 +987,7 @@ const RoomPage = ({
               user: data.username || msg.user,
               avatar: data.avatar || msg.avatar,
               nameColor: data.nameColor !== undefined ? data.nameColor : msg.nameColor,
+              statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : msg.statusFontColor,
             };
           }
           return msg;
@@ -969,6 +1013,15 @@ const RoomPage = ({
     };
     socket.on("room_reaction", onRoomReaction);
 
+    // استماع لتحديثات الغرفة اللحظية (broadcast, mics, stageLocks, etc.)
+    const onRoomUpdated = (data: { roomId: string; room: any }) => {
+      if (data.roomId !== roomId) return;
+      if (data.room.mics !== undefined) {
+        setShowMics((data.room.mics ?? 0) > 0);
+      }
+    };
+    socket.on("room_updated", onRoomUpdated);
+
     // إذا كان متصل بالفعل، انضم للغرفة مباشرة
     if (socket.connected) {
       onConnect();
@@ -987,6 +1040,7 @@ const RoomPage = ({
       socket.off("system_message", onSystemMessage);
       socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("room_reaction", onRoomReaction);
+      socket.off("room_updated", onRoomUpdated);
       socket.emit("leave_room", { roomId });
     };
   }, [roomId, mergeMessages]);
@@ -999,6 +1053,10 @@ const RoomPage = ({
   }, [messages]);
 
   const handleSendMessage = useCallback(async (text: string, animatedFaceUrls?: string[]) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const currentReplyTo = replyToMsg;
@@ -1078,6 +1136,10 @@ const RoomPage = ({
   }, [roomId, mergeMessages, replyToMsg]);
 
   const handleSendMedia = useCallback(async (mediaUrl: string, mediaType: "image" | "video" | "audio", text?: string, mediaUrls?: string[]) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const currentReplyTo = replyToMsg;
@@ -1160,6 +1222,10 @@ const RoomPage = ({
   }, [roomId, mergeMessages, replyToMsg]);
 
   const handleSendAnimatedFace = useCallback(async (faceUrl: string) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const currentReplyTo = replyToMsg;
@@ -1228,6 +1294,10 @@ const RoomPage = ({
   }, [roomId, mergeMessages, replyToMsg]);
 
   const handleSendSticker = useCallback(async (stickerUrl: string) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const user = getStoredUser();
     const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const currentReplyTo = replyToMsg;
@@ -1330,9 +1400,11 @@ const RoomPage = ({
           <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)} className={`h-9 w-9 rounded-xl ${isMuted ? "bg-red-50 text-red-500" : "text-muted-foreground"}`}>
             {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setShowMics(!showMics)} className={`h-9 w-9 rounded-xl ${showMics ? "bg-primary/5 text-primary" : "text-muted-foreground"}`}>
-            <Mic2 size={18} />
-          </Button>
+          {(room?.mics ?? 0) > 0 && (
+            <Button variant="ghost" size="icon" onClick={() => setShowMics(!showMics)} className={`h-9 w-9 rounded-xl ${showMics ? "bg-primary/5 text-primary" : "text-muted-foreground"}`}>
+              <Mic2 size={18} />
+            </Button>
+          )}
 
           <Button variant="ghost" size="icon" onClick={onBack} className="h-9 w-9 rounded-xl text-red-500 hover:bg-red-50">
             <X size={18} />
@@ -1340,9 +1412,9 @@ const RoomPage = ({
         </div>
       </header>
 
-      {showMics && (
-        <div className="absolute top-[56px] inset-x-0 z-10 grid grid-cols-5 gap-2 overflow-x-auto border-b border-border bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-md p-2 no-scrollbar">
-          {[1, 2, 3, 4, 5].map((i) => (
+      {showMics && (room?.mics ?? 0) > 0 && (
+        <div className="absolute top-[56px] inset-x-0 z-10 grid gap-2 overflow-x-auto border-b border-border bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-md p-2 no-scrollbar" style={{ gridTemplateColumns: `repeat(${Math.min(room?.mics ?? 5, 5)}, minmax(0, 1fr))` }}>
+          {Array.from({ length: Math.min(room?.mics ?? 5, 5) }, (_, idx) => idx + 1).map((i) => (
             <div key={i} className="flex flex-col items-center gap-1">
               <div className="relative">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${i === 1 ? "border-primary bg-card shadow-sm" : "border-border bg-slate-100"}`}>
@@ -1423,12 +1495,25 @@ const RoomPage = ({
             </div>
             <div className="min-w-0 flex-1" dir="ltr">
               <div className="mb-1 flex flex-wrap items-center gap-2">
+                {(() => {
+                  const u = onlineUsers?.find(o => o && (String(o.id || "") === String(msg.userId || "") || o.username === msg.user));
+                  const banner = u?.giftedBannerUrl || (msg as any).giftedBannerUrl || "";
+                  const giftIcon = u?.giftedGiftIconUrl || (msg as any).giftedGiftIconUrl || "";
+                  const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (msg as any).roleIconUrl || (msg as any).giftedPromotionIconUrl || "";
+                  return (
+                    <>
+                      {promoIcon && <img src={promoIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+                      {giftIcon && <img src={giftIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+                      {banner && <img src={banner} alt="" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" />}
+                    </>
+                  );
+                })()}
                 <h4 
                   className={`text-xs font-black cursor-pointer hover:underline ${msg.color}`}
                   onClick={() => onOpenProfile?.(msg.user)}
                   style={(() => {
-                    const u = onlineUsers.find(o => String(o.id) === String(msg.userId) || o.username === msg.user);
-                    const member = members.find(m => String(m.id) === String(msg.userId) || m.username === msg.user);
+                    const u = onlineUsers?.find(o => o && (String(o.id || "") === String(msg.userId || "") || o.username === msg.user));
+                    const member = members?.find(m => m && (String(m.id || "") === String(msg.userId || "") || m.username === msg.user));
                     const resolvedColor = u?.nameColor || member?.nameColor || msg.nameColor || "";
                     return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
                   })()}
@@ -1534,7 +1619,12 @@ const RoomPage = ({
                     </div>
                   )}
 
-                  {msg.text && <p className="break-words text-[14px] font-bold leading-relaxed inline">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
+                  {msg.text && <p className="break-words text-[14px] font-bold leading-relaxed inline" style={(() => {
+                    const u = onlineUsers?.find(o => o && (String(o.id || "") === String(msg.userId || "") || o.username === msg.user));
+                    const member = members?.find(m => m && (String(m.id || "") === String(msg.userId || "") || m.username === msg.user));
+                    const resolvedColor = u?.statusFontColor || member?.statusFontColor || msg.statusFontColor || "";
+                    return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                  })()}>{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
                   {!isSystem && findYouTubeLinks(msg.text).map((link) => (
                     <YouTubePreviewCard
                       key={link}

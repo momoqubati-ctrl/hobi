@@ -31,11 +31,16 @@ function readSocketAuth(): Record<string, string> {
       memberCardBgUrl: user.memberCardBgUrl || "",
       nameColor: user.nameColor || "",
       messageColor: user.messageColor || "",
+      statusFontColor: user.statusFontColor || "",
       messageBubbleStyle: user.messageBubbleStyle || "default",
       idreg: typeof user.idreg === "string" ? user.idreg : user.idreg ? `#${user.idreg}` : "",
       siteBadge: typeof user.siteBadge === "string" ? user.siteBadge : "",
       profileMsg,
       statusMsg,
+      giftedBannerUrl: typeof user.giftedBannerUrl === "string" ? user.giftedBannerUrl : "",
+      giftedGiftIconUrl: typeof user.giftedGiftIconUrl === "string" ? user.giftedGiftIconUrl : "",
+      giftedPromotionIconUrl: typeof user.giftedPromotionIconUrl === "string" ? user.giftedPromotionIconUrl : "",
+      roleIconUrl: typeof user.roleIconUrl === "string" ? user.roleIconUrl : "",
       deviceFingerprint: cachedDeviceId,
       deviceSignature: cachedDeviceSignature,
     };
@@ -81,6 +86,31 @@ export function getSocket(): Socket {
         if (serverUser.messageColor !== undefined && serverUser.messageColor !== user.messageColor) {
           user.messageColor = serverUser.messageColor;
           changed = true;
+        }
+        if (serverUser.statusFontColor !== undefined && serverUser.statusFontColor !== user.statusFontColor) {
+          user.statusFontColor = serverUser.statusFontColor;
+          changed = true;
+        }
+        if (serverUser.giftedBannerUrl !== undefined && serverUser.giftedBannerUrl !== user.giftedBannerUrl) {
+          user.giftedBannerUrl = serverUser.giftedBannerUrl;
+          changed = true;
+        }
+        if (serverUser.giftedGiftIconUrl !== undefined && serverUser.giftedGiftIconUrl !== user.giftedGiftIconUrl) {
+          user.giftedGiftIconUrl = serverUser.giftedGiftIconUrl;
+          changed = true;
+        }
+         if (serverUser.giftedPromotionIconUrl !== undefined && serverUser.giftedPromotionIconUrl !== user.giftedPromotionIconUrl) {
+          user.giftedPromotionIconUrl = serverUser.giftedPromotionIconUrl;
+          changed = true;
+        }
+        if (serverUser.roleIconUrl !== undefined && serverUser.roleIconUrl !== user.roleIconUrl) {
+          user.roleIconUrl = serverUser.roleIconUrl;
+          changed = true;
+        }
+        if (serverUser.muted !== undefined && serverUser.muted !== user.muted) {
+          user.muted = serverUser.muted;
+          changed = true;
+          window.dispatchEvent(new CustomEvent("user-mute-updated", { detail: serverUser.muted }));
         }
         if (changed) {
           localStorage.setItem("user", JSON.stringify(user));

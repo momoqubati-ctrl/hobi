@@ -1,7 +1,7 @@
 import { dbPool } from "../db";
 import { publishSocketEvent } from "../socket/SocketBroker";
 
-export type NotificationType = "like" | "comment" | "reply" | "gift" | "wall_post" | "follow" | "mention" | "mail";
+export type NotificationType = "like" | "comment" | "reply" | "gift" | "wall_post" | "follow" | "unfollow" | "mention" | "mail";
 
 export const createNotification = async (
   userId: string,
@@ -82,7 +82,11 @@ export const getNotifications = async (userId: string, limit = 30, offset = 0) =
   const result = await dbPool.query(
     `SELECT n.id, n.user_id, n.actor_id, n.type, n.entity_type, n.entity_id, n.metadata, n.read_at, n.created_at,
             u.username as actor_name, u.topic as actor_display, u.pic as actor_avatar,
-            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color,
+            up.gifted_banner_url as actor_gifted_banner_url,
+            up.gifted_gift_icon_url as actor_gifted_gift_icon_url,
+            up.gifted_promotion_icon_url as actor_gifted_promotion_icon_url,
+            (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as actor_role_icon_url
      FROM notifications n
      LEFT JOIN users u ON CAST(u.id AS TEXT) = n.actor_id OR CAST(u.uid AS TEXT) = n.actor_id OR CAST(u.idreg AS TEXT) = n.actor_id
      LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -106,6 +110,10 @@ export const getNotifications = async (userId: string, limit = 30, offset = 0) =
       name: row.actor_display || row.actor_name || "مستخدم",
       avatar: row.actor_avatar || "/pic.png",
       nameColor: row.actor_name_color || "",
+      giftedBannerUrl: row.actor_gifted_banner_url || "",
+      giftedGiftIconUrl: row.actor_gifted_gift_icon_url || "",
+      giftedPromotionIconUrl: row.actor_gifted_promotion_icon_url || "",
+      roleIconUrl: row.actor_role_icon_url || "",
     },
   }));
 };

@@ -8,7 +8,7 @@ import { initStoriesListeners } from "@/lib/stories-store";
 import { logoutSocket, getSocket } from "@/lib/socket";
 import {
   Users, MessageSquare, Home, LayoutGrid, Settings, Bell, Bot, Gift, Mail, FolderOpen,
-  Image as LucideImage, X, ShieldCheck, Menu, Search, Activity, Zap, LogOut, MessageCircle, Youtube
+  Image as LucideImage, X, ShieldCheck, Menu, Search, Activity, Zap, LogOut, MessageCircle, Youtube, Lock, Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,8 @@ import NotificationsPanel, { NotificationsBell } from "@/components/chat/Notific
 import PresenceEngine from "@/components/realtime/PresenceEngine";
 import ActivityFeed from "@/components/realtime/ActivityFeed";
 import RoomPage from "@/components/chat/RoomPage";
+import DashboardRooms from "@/components/chat/DashboardRooms";
+import DashboardMembers from "@/components/chat/DashboardMembers";
 import AdminCP from "@/components/admin/AdminCP";
 import AdminDashboard from "@/components/admin/AdminDashboard";
 import GlobalVideoPlayer from "@/components/GlobalVideoPlayer";
@@ -45,6 +47,52 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("members");
   const [activeRoom, setActiveRoom] = useState<any>(null);
+  const [activeRoomPassword, setActiveRoomPassword] = useState<string>("");
+  const [lockedRoom, setLockedRoom] = useState<any>(null);
+  const [lockedRoomPassword, setLockedRoomPassword] = useState("");
+  const [lockedRoomError, setLockedRoomError] = useState("");
+  const [lockedRoomAttempts, setLockedRoomAttempts] = useState(0);
+  const [lockedRoomLoading, setLockedRoomLoading] = useState(false);
+  const lockedAttemptsRef = useRef(0);
+  const MAX_ATTEMPTS = 3;
+  const [fullRoomAlert, setFullRoomAlert] = useState<any>(null);
+
+  const tryJoinLocked = (room: any, password: string) => {
+    const socket = getSocket();
+    if (!socket?.connected) return;
+    setLockedRoomLoading(true);
+    setLockedRoomError("");
+    socket.emit("join_room", { roomId: room.id, password }, (res: any) => {
+      setLockedRoomLoading(false);
+      if (res?.success) {
+        setLockedRoom(null);
+        lockedAttemptsRef.current = 0;
+        setLockedRoomAttempts(0);
+        setActiveRoom(room);
+        setActiveRoomPassword(password);
+        setSidebarOpen(false);
+      } else if (res?.needPassword) {
+        const next = lockedAttemptsRef.current + 1;
+        lockedAttemptsRef.current = next;
+        setLockedRoomAttempts(next);
+        if (next >= MAX_ATTEMPTS) {
+          setLockedRoomError("تم تجاوز الحد الأقصى للمحاولات");
+          setTimeout(() => { setLockedRoom(null); lockedAttemptsRef.current = 0; setLockedRoomAttempts(0); }, 1500);
+        } else {
+          setLockedRoomError(`كلمة المرور غير صحيحة - متبقي ${MAX_ATTEMPTS - next} محاولات`);
+          setLockedRoomPassword("");
+        }
+      } else if (res?.full) {
+        setLockedRoomError(res?.message || "الغرفة ممتلئة حالياً");
+        setTimeout(() => { setLockedRoom(null); lockedAttemptsRef.current = 0; setLockedRoomAttempts(0); }, 2000);
+      } else if (res?.likesRequired) {
+        setLockedRoomError(res?.message || "ليس لديك عدد الإعجابات الكافي");
+        setTimeout(() => { setLockedRoom(null); }, 2500);
+      } else {
+        setLockedRoomError(res?.message || "حدث خطأ");
+      }
+    });
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminSection, setAdminSection] = useState("overview");
   const [openChatUserId, setOpenChatUserId] = useState<string | null>(null);
@@ -118,6 +166,44 @@ const Dashboard = () => {
       socket.off("pm:message", onNewMessage);
     };
   }, [setPmUnreadCount]);
+
+  // ─── استماع لتحديثات الغرفة اللحظية ──────────────────────
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const onRoomUpdated = (data: { roomId: string; room: any }) => {
+      setActiveRoom((prev: any) => {
+        if (prev && String(prev.id) === String(data.roomId)) {
+          return { ...prev, ...data.room };
+        }
+        return prev;
+      });
+    };
+
+    const onRoomKicked = (payload: { roomId: string; duration: number; message: string }) => {
+      // السيرفر لا يُرسل هذا الحدث إلا للسوكيت المطرود بالفعل
+      // لذا نُطبِّق الطرد مباشرة بدون شرط إضافي
+      setActiveRoomPassword("");
+      window.dispatchEvent(new CustomEvent("show-client-alert", {
+        detail: {
+          alertId: String(Date.now()),
+          fromUsername: "النظام",
+          fromAvatar: "/pic.png",
+          message: payload.message,
+          timestamp: Date.now()
+        }
+      }));
+      setActiveRoom(null);
+    };
+
+    socket.on("room_updated", onRoomUpdated);
+    socket.on("room_kicked", onRoomKicked);
+    return () => {
+      socket.off("room_updated", onRoomUpdated);
+      socket.off("room_kicked", onRoomKicked);
+    };
+  }, []);
 
   useEffect(() => {
     const fetchPermissions = async () => {
@@ -237,7 +323,13 @@ const Dashboard = () => {
               pointerEvents: activeTab === "rooms" ? "auto" : "none",
             }}
           >
-            <RoomList onSelectRoom={(room: any) => { setActiveRoom(room); setSidebarOpen(false); }} />
+            <RoomList onSelectRoom={(room: any, password?: string) => {
+              if (room.members >= (room.maxMembers || 50)) {
+                setFullRoomAlert(room);
+                return;
+              }
+              setActiveRoom(room); setActiveRoomPassword(password || ""); setSidebarOpen(false);
+            }} onLockedRoom={(room: any) => { setLockedRoom(room); setLockedRoomPassword(""); setLockedRoomError(""); lockedAttemptsRef.current = 0; setLockedRoomAttempts(0); }} activeRoomId={activeRoom?.id} />
           </div>
 
           {/* wall (WallFeed) - always mounted, hidden when not active */}
@@ -288,6 +380,91 @@ const Dashboard = () => {
         </div>
       </aside>
 
+      {/* Password Dialog for Locked Rooms - rendered at root level */}
+      {lockedRoom && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-80 rounded-2xl bg-card p-5 shadow-xl">
+            <div className="mb-4 flex items-center gap-2">
+              <Lock size={18} className="text-orange-500" />
+              <h3 className="text-sm font-black">غرفة محمية بكلمة مرور</h3>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              أدخل كلمة مرور الغرفة "{lockedRoom.name}" للدخول
+            </p>
+            {lockedRoomError && (
+              <div className={`mb-3 rounded-lg p-2 text-center text-xs font-bold ${lockedRoomError.includes("صحيحة") ? "bg-red-50 text-red-600" : lockedRoomError.includes("تجاوز") ? "bg-orange-50 text-orange-600" : "bg-red-50 text-red-600"}`}>{lockedRoomError}</div>
+            )}
+            <input
+              type="password"
+              name="room-password"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              value={lockedRoomPassword}
+              onChange={(e) => setLockedRoomPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && lockedRoomPassword.trim() && !lockedRoomLoading) {
+                  tryJoinLocked(lockedRoom, lockedRoomPassword.trim());
+                }
+              }}
+              placeholder="كلمة المرور"
+              className="mb-3 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary/30"
+              autoFocus
+              disabled={lockedRoomLoading}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => { setLockedRoom(null); lockedAttemptsRef.current = 0; setLockedRoomAttempts(0); setLockedRoomError(""); }}
+                className="flex-1 rounded-xl text-xs font-bold"
+              >
+                إلغاء
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!lockedRoomPassword.trim() || lockedRoomLoading) return;
+                  tryJoinLocked(lockedRoom, lockedRoomPassword.trim());
+                }}
+                disabled={!lockedRoomPassword.trim() || lockedRoomLoading}
+                className="flex-1 rounded-xl bg-green-600 text-xs font-bold text-white hover:bg-green-700"
+              >
+                {lockedRoomLoading ? <Loader2 className="animate-spin" size={14} /> : "دخول"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Room Alert Modal */}
+      {fullRoomAlert && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-80 overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+            <div className="flex items-center justify-center bg-gradient-to-br from-red-500 to-orange-500 px-6 py-8">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+                <svg className="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+              </div>
+            </div>
+            <div className="px-6 pt-5 pb-6 text-center">
+              <h3 className="mb-2 text-base font-black text-slate-800 dark:text-white">الغرفة ممتلئة</h3>
+              <p className="mb-1 text-sm font-bold text-slate-500 dark:text-slate-400">
+                "{fullRoomAlert.name}"
+              </p>
+              <p className="mb-5 text-xs text-slate-400 dark:text-slate-500">
+                العدد الأقصى للأعضاء ({fullRoomAlert.maxMembers || 50}) تم الوصول إليه. حاول مرة أخرى لاحقاً.
+              </p>
+              <Button
+                onClick={() => setFullRoomAlert(null)}
+                className="w-full rounded-xl bg-gradient-to-r from-red-500 to-orange-500 py-2.5 text-sm font-black text-white shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all"
+              >
+                حسناً
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Left Container - containing header, main content, and laptop button footer */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
@@ -328,6 +505,7 @@ const Dashboard = () => {
           ) : activeRoom ? (
             <RoomPage 
               room={activeRoom} 
+              roomPassword={activeRoomPassword}
               onBack={() => setActiveRoom(null)} 
               onSelectRoom={setActiveRoom} 
               isEmbedded 
@@ -337,36 +515,34 @@ const Dashboard = () => {
               onLogout={handleLogout}
             />
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center p-8 text-center bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:32px_32px]">
-              <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-6 text-right">
-                  <h2 className="text-4xl font-black text-slate-800 dark:text-white leading-tight">
-                    مرحباً بك في <span className="text-primary">مستقبل</span> التواصل الاجتماعي
-                  </h2>
-                  <p className="text-lg text-slate-500 font-medium">
-                    منصة ذكية تفهم تفاعلاتك، تبني هويتك، وتصلك بالمجتمعات التي تهمك لحظة بلحظة.
-                  </p>
-                  <div className="flex gap-4 justify-end">
-                    <Button onClick={() => handleTabChange('rooms')} size="lg" className="rounded-2xl px-8 font-black shadow-xl shadow-primary/20 h-14 text-lg">
-                      استكشف الغرف
-                    </Button>
-                    <Button variant="outline" size="lg" className="rounded-2xl px-8 font-black h-14 text-lg border-2">
-                      هويتي الرقمية
-                    </Button>
-                  </div>
-                </div>
-                <div className="bg-white dark:bg-slate-900 rounded-[40px] p-6 shadow-2xl border border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="font-black text-slate-800 dark:text-white flex items-center gap-2">
-                      <Activity size={18} className="text-primary" />
-                      آخر النشاطات العالمية
-                    </h3>
-                    <div className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
-                  </div>
-                  <div className="h-[400px] overflow-hidden">
-                    <ActivityFeed />
-                  </div>
-                </div>
+            <div className="flex flex-1 flex-col overflow-hidden bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:32px_32px]">
+              <div className="flex-1 overflow-y-auto">
+                <DashboardRooms
+                  onSelectRoom={(room: any, password?: string) => {
+                    if (room.members >= (room.maxMembers || 50)) {
+                      setFullRoomAlert(room);
+                      return;
+                    }
+                    setActiveRoom(room);
+                    setActiveRoomPassword(password || "");
+                  }}
+                  onLockedRoom={(room: any) => {
+                    setLockedRoom(room);
+                    setLockedRoomPassword("");
+                    setLockedRoomError("");
+                    lockedAttemptsRef.current = 0;
+                    setLockedRoomAttempts(0);
+                  }}
+                  activeRoomId={activeRoom?.id}
+                />
+                <DashboardMembers
+                  onOpenChat={(userId: string) => {
+                    handleOpenChat(userId);
+                  }}
+                  onOpenProfile={(userId: string) => {
+                    setViewProfileId(userId);
+                  }}
+                />
               </div>
             </div>
           )}

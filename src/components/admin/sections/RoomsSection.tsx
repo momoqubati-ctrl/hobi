@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import {
 import AdminDataTable from '../shared/AdminDataTable';
 import { getAdminHeaders } from '../utils';
 import { showSuccess, showError } from '@/utils/toast';
-import { Plus, Pencil, Trash2, Search, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Loader2, ImagePlus, X } from 'lucide-react';
 
 interface RoomForm {
   name: string;
@@ -80,6 +80,13 @@ const RoomDialog = ({
 }) => {
   const [form, setForm] = useState<RoomForm>(emptyForm);
   const [loading, setLoading] = useState(false);
+  const [ownerSearch, setOwnerSearch] = useState("");
+  const [ownerResults, setOwnerResults] = useState<{ id: string; username: string; displayName: string; avatar: string }[]>([]);
+  const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
+  const [searchingOwners, setSearchingOwners] = useState(false);
+  const ownerSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownerContainerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editRoom) {
@@ -104,8 +111,52 @@ const RoomDialog = ({
     }
   }, [editRoom, isOpen]);
 
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ownerContainerRef.current && !ownerContainerRef.current.contains(e.target as Node)) {
+        setShowOwnerDropdown(false);
+      }
+    };
+    if (showOwnerDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showOwnerDropdown]);
+
   const handleChange = (key: keyof RoomForm, value: any) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const searchOwners = (q: string) => {
+    setOwnerSearch(q);
+    setShowOwnerDropdown(true);
+    if (ownerSearchTimer.current) clearTimeout(ownerSearchTimer.current);
+    if (!q.trim()) { setOwnerResults([]); return; }
+    setSearchingOwners(true);
+    ownerSearchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/users-search?q=${encodeURIComponent(q.trim())}`, {
+          headers: getAdminHeaders(),
+        });
+        const data = await res.json();
+        if (data.success) setOwnerResults(data.users);
+      } catch { setOwnerResults([]); }
+      setSearchingOwners(false);
+    }, 300);
+  };
+
+  const handleImageUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      handleChange('avatarUrl', event.target?.result as string || "");
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -221,14 +272,28 @@ const RoomDialog = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className="font-bold text-slate-500 mr-1">صورة الغرفة (رابط)</Label>
-              <Input
-                placeholder="https://..."
-                className="h-11 rounded-2xl bg-slate-50 border-none font-bold"
-                value={form.avatarUrl}
-                onChange={(e) => handleChange('avatarUrl', e.target.value)}
-                dir="ltr"
-              />
+              <Label className="font-bold text-slate-500 mr-1">صورة الغرفة</Label>
+              <div className="flex items-center gap-3">
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                  {form.avatarUrl ? (
+                    <img src={form.avatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-slate-400">
+                      <ImagePlus size={20} />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleImageUpload}
+                  className="rounded-xl text-xs font-bold"
+                >
+                  <ImagePlus size={14} className="ml-1" /> اختيار صورة
+                </Button>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+              </div>
             </div>
             <div className="space-y-2">
               <Label className="font-bold text-slate-500 mr-1">لون الغرفة</Label>
@@ -249,14 +314,59 @@ const RoomDialog = ({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label className="font-bold text-slate-500 mr-1">اسم مالك الغرفة</Label>
-            <Input
-              placeholder="system"
-              className="h-11 rounded-2xl bg-slate-50 border-none font-bold"
-              value={form.ownerUsername}
-              onChange={(e) => handleChange('ownerUsername', e.target.value)}
-            />
+          <div className="space-y-2 relative" ref={ownerContainerRef}>
+            <Label className="font-bold text-slate-500 mr-1">مالك الغرفة</Label>
+            <div className="relative">
+              <Input
+                placeholder="ابحث عن عضو..."
+                className="h-11 rounded-2xl bg-slate-50 border-none font-bold"
+                value={form.ownerUsername || ownerSearch}
+                onChange={(e) => {
+                  setForm((prev) => ({ ...prev, ownerUsername: "" }));
+                  searchOwners(e.target.value);
+                }}
+                onFocus={() => setShowOwnerDropdown(true)}
+              />
+              {form.ownerUsername && (
+                <button
+                  type="button"
+                  onClick={() => { setForm((prev) => ({ ...prev, ownerUsername: "" })); setOwnerSearch(""); }}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {showOwnerDropdown && ownerSearch && (
+              <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-xl">
+                {searchingOwners ? (
+                  <div className="flex items-center justify-center p-3">
+                    <Loader2 className="animate-spin h-4 w-4 text-slate-400" />
+                  </div>
+                ) : ownerResults.length === 0 ? (
+                  <div className="p-3 text-center text-xs font-bold text-slate-400">لا توجد نتائج</div>
+                ) : (
+                  ownerResults.map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => {
+                        setForm((prev) => ({ ...prev, ownerUsername: u.username }));
+                        setOwnerSearch("");
+                        setShowOwnerDropdown(false);
+                      }}
+                      className="flex w-full items-center gap-3 p-3 text-right transition-colors hover:bg-slate-50"
+                    >
+                      <img src={u.avatar} className="h-8 w-8 rounded-full object-cover" alt="" />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-bold text-slate-800">{u.displayName}</span>
+                        <span className="text-[10px] font-bold text-slate-400">@{u.username}</span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -38,6 +38,10 @@ type OnlineMember = {
   avatarUrl?: string;
   profileCover?: string;
   statusMsg?: string;
+  giftedBannerUrl?: string;
+  giftedGiftIconUrl?: string;
+  giftedPromotionIconUrl?: string;
+  roleIconUrl?: string;
 };
 
 const getPresenceKey = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
@@ -137,6 +141,10 @@ const getCurrentMember = () => {
       messageColor: typeof user.messageColor === "string" ? user.messageColor : "",
       statusMsg: resolvedStatusMsg,
       isLogin: typeof user.isLogin === "string" ? user.isLogin : role === "guest" ? "زائر" : "عضو",
+      giftedBannerUrl: typeof user.giftedBannerUrl === "string" ? user.giftedBannerUrl : "",
+      giftedGiftIconUrl: typeof user.giftedGiftIconUrl === "string" ? user.giftedGiftIconUrl : "",
+      giftedPromotionIconUrl: typeof user.giftedPromotionIconUrl === "string" ? user.giftedPromotionIconUrl : "",
+      roleIconUrl: typeof user.roleIconUrl === "string" ? user.roleIconUrl : "",
     };
   } catch {
     return null;
@@ -283,7 +291,17 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
     // المستخدم الحالي أولاً
     if (currentMember) {
       const resolvedCountry = userCountries.get(`id:${currentMember.id}`) || userCountries.get(getMemberIdentity(currentMember)) || currentMember.country;
-      membersList.push({ ...currentMember, status: myStatus, country: resolvedCountry });
+      // دمج بيانات المستخدم من المتصلين لتحديث البنر والأيقونات
+      const onlineMatch = onlineUsers.find(o => String(o.id) === String(currentMember.id) || String(o.username || "").toLowerCase() === String(currentMember.name || "").toLowerCase());
+      membersList.push({
+        ...currentMember,
+        status: myStatus,
+        country: resolvedCountry,
+        giftedBannerUrl: onlineMatch?.giftedBannerUrl || currentMember.giftedBannerUrl || "",
+        giftedGiftIconUrl: onlineMatch?.giftedGiftIconUrl || currentMember.giftedGiftIconUrl || "",
+        giftedPromotionIconUrl: onlineMatch?.giftedPromotionIconUrl || currentMember.giftedPromotionIconUrl || "",
+        roleIconUrl: onlineMatch?.roleIconUrl || currentMember.roleIconUrl || "",
+      });
       if (currentMember.id && currentMember.id !== "0") seenIds.add(String(currentMember.id));
       if (currentMember.name) seenNames.add(String(currentMember.name).trim().toLowerCase());
     }
@@ -341,6 +359,10 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         idreg: idregVal,
         siteBadge: user.siteBadge || "",
         statusMsg: statusMsgVal,
+        giftedBannerUrl: (user as any).giftedBannerUrl || "",
+        giftedGiftIconUrl: (user as any).giftedGiftIconUrl || "",
+        giftedPromotionIconUrl: (user as any).giftedPromotionIconUrl || "",
+        roleIconUrl: (user as any).roleIconUrl || "",
       });
     }
 
@@ -393,7 +415,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
 
       {/* Members List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {members.filter(m => m.name.includes(searchQuery)).map((member, index) => {
+        {members.filter(m => m.name && m.name.includes(searchQuery)).map((member, index) => {
           const statusCfg = getStatusConfig(member.status);
           return (
           <div 
@@ -413,7 +435,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
               >
                 <Avatar className="w-[3.7rem] h-[3.7rem] rounded-full border-2 border-background shadow-sm">
                   <AvatarImage src={member.avatar} />
-                  <AvatarFallback>{member.name[0]}</AvatarFallback>
+                  <AvatarFallback>{member.name ? member.name[0] : ""}</AvatarFallback>
                 </Avatar>
                 {/* Status Dot with pulse animation */}
                 <span
@@ -432,6 +454,18 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
             <div className="flex-1 min-w-0 text-left">
               <div className="flex items-center justify-between mb-0.5">
                 <div className="flex items-center gap-1.5">
+                  {/* أيقونة الصلاحية */}
+                  {(member.roleIconUrl || member.giftedPromotionIconUrl) && (
+                    <img src={member.roleIconUrl || member.giftedPromotionIconUrl} alt="role" className="h-4 w-4 rounded object-contain" title="أيقونة صلاحية" />
+                  )}
+                  {/* أيقونة الهدية */}
+                  {member.giftedGiftIconUrl && (
+                    <img src={member.giftedGiftIconUrl} alt="gift" className="h-4 w-4 rounded object-contain" title="أيقونة هدية" />
+                  )}
+                  {/* أيقونة البنر (تظهر قبل الاسم) */}
+                  {member.giftedBannerUrl && (
+                    <img src={member.giftedBannerUrl} alt="banner" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" title="بنر مُهدى" />
+                  )}
                   <span className={`font-bold text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl', ...(member.nameColor && member.nameColor !== "#000000" ? { color: member.nameColor } : {}) }}>{member.name}</span>
                   {member.siteBadge && (
                     <Badge className="h-3.5 text-[8px] px-1 bg-blue-600 text-white border-none rounded-sm font-black">
@@ -459,7 +493,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                   {member.statusMsg || '(عضو جديد)'}
                 </p>
                 <div className="flex items-center gap-1 text-[9px] text-muted-foreground font-bold">
-                  <span>@{member.name.replace(' ', '')}</span>
+                  <span>@{member.name ? member.name.replace(' ', '') : ""}</span>
                 </div>
               </div>
             </div>

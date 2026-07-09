@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
         return { success: false, message: "رابط الغرفة غير صالح" };
       }
       const existing = await dbPool.query(
-        "SELECT idroom FROM rooms WHERE id = $1 AND idroom != $2 LIMIT 1",
+        "SELECT idroom FROM rooms WHERE slug = $1 AND idroom != $2 LIMIT 1",
         [safeSlug, id],
       );
       if ((existing.rowCount || 0) > 0) {
@@ -81,21 +81,22 @@ export default defineEventHandler(async (event) => {
       `UPDATE rooms SET
         topic = COALESCE($1, topic),
         about = COALESCE($2, about),
-        id = COALESCE($3, id),
+        slug = COALESCE($3, slug),
         pic = COALESCE($4, pic),
         max = COALESCE($5, max),
         mic = COALESCE($6, mic),
-        needpass = COALESCE($7, needpass),
-        color = COALESCE($8, color),
-        welcome = COALESCE($9, welcome),
-        broadcast = COALESCE($10, broadcast),
-        rmli = COALESCE($11, rmli),
-        "user" = COALESCE($12, "user"),
-        owner = COALESCE($13, owner),
-        message_mode = COALESCE($14, message_mode),
-        stage_count = GREATEST(COALESCE($15, stage_count), 1)
-        ${stageState ? ", stage_state = $16" : ""}
-      WHERE idroom = $17
+        pass = COALESCE($7, pass),
+        needpass = COALESCE($8, needpass),
+        color = COALESCE($9, color),
+        welcome = COALESCE($10, welcome),
+        broadcast = COALESCE($11, broadcast),
+        rmli = COALESCE($12, rmli),
+        "user" = COALESCE($13, "user"),
+        owner = COALESCE($14, owner),
+        message_mode = COALESCE($15, message_mode),
+        stage_count = GREATEST(COALESCE($16, stage_count), 1)
+        ${stageState ? ", stage_state = $17" : ""}
+      WHERE idroom = ${stageState ? "$18" : "$17"}
       RETURNING *`,
       [
         name || null,
@@ -104,7 +105,8 @@ export default defineEventHandler(async (event) => {
         avatarUrl || null,
         maxMembers ? parseInt(maxMembers, 10) : null,
         micSlots ? parseInt(micSlots, 10) : null,
-        isPublic === false || password ? 1 : 0,
+        password || "",
+        password ? 1 : (isPublic === false ? 1 : 0),
         roomColor || null,
         welcomeMessage ?? null,
         isPinned ? 1 : 0,

@@ -140,6 +140,17 @@ export async function runAutoMigrations() {
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "deleted" integer DEFAULT 0;
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "verified" boolean DEFAULT false;
       ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "room_layout" varchar(50) DEFAULT 'normal';
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "user" varchar(255);
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "pass" varchar(255) DEFAULT '';
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "rmli" integer DEFAULT 0;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "welcome" varchar(255) DEFAULT '';
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "broadcast" smallint DEFAULT 0;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "color" varchar(255) DEFAULT '#000000';
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "max" integer DEFAULT 50;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "stage_count" integer DEFAULT 5;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "stage_state" text;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "room_owner_meta" text;
+      ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "message_mode" varchar(16) DEFAULT 'real';
     `);
 
     // 7. التأكد من وجود قيد فريد على حقل id في جدول users لتمكين الجداول الأخرى من الإشارة إليه كمفتاح خارجي
@@ -528,6 +539,28 @@ export async function runAutoMigrations() {
         "created_at" timestamptz DEFAULT now() NOT NULL,
         PRIMARY KEY ("post_id", "user_id")
       );
+    `);
+
+    // ----- جدول إعجابات الغرف -----
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "room_likes" (
+        "room_id" varchar(255) NOT NULL,
+        "user_id" varchar(255) NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("room_id", "user_id")
+      );
+      CREATE INDEX IF NOT EXISTS "room_likes_room_idx" ON "room_likes" ("room_id");
+    `);
+
+    // ----- جدول المتابعين -----
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "user_follows" (
+        "follower_id" varchar(255) NOT NULL,
+        "following_id" varchar(255) NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("follower_id", "following_id")
+      );
+      CREATE INDEX IF NOT EXISTS "user_follows_following_idx" ON "user_follows" ("following_id");
     `);
 
     // ----- جدول الإعجابات للـ wall posts (legacy bars) -----
@@ -955,6 +988,18 @@ export async function runAutoMigrations() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "room_kicks" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "room_id" varchar(128) NOT NULL,
+        "user_id" varchar(255) NOT NULL,
+        "banned_until" timestamptz NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "room_kicks_room_user_idx" ON "room_kicks" ("room_id", "user_id");
+      CREATE INDEX IF NOT EXISTS "room_kicks_banned_until_idx" ON "room_kicks" ("banned_until");
+    `);
+
     // ========== فهارس الأداء الحرجة ==========
     if (process.env.MIGRATION_LOGS === "1") {
       console.log("[Migration] جاري إنشاء فهارس الأداء...");
@@ -1086,6 +1131,7 @@ export async function verifyDatabaseSchema() {
     "bars_likes",
     "bar_comment_likes",
     "logs",
+    "room_kicks",
   ];
 
   const client = await dbPool.connect();
@@ -1137,6 +1183,10 @@ export async function ensureUserProfilesColumns() {
     await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "avatar_frame_url" text;`);
     await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "name_color" varchar(20);`);
     await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "message_color" varchar(20);`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "status_font_color" varchar(20);`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "gifted_banner_url" text;`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "gifted_gift_icon_url" text;`);
+    await client.query(`ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "gifted_promotion_icon_url" text;`);
     // Populate name_color and message_color from legacy users table for existing rows
     await client.query(`UPDATE "user_profiles" SET "name_color" = "users"."ucol" FROM "users" WHERE CAST("users"."id" AS text) = "user_profiles"."user_id" AND ("user_profiles"."name_color" IS NULL OR "user_profiles"."name_color" = '')`);
     await client.query(`UPDATE "user_profiles" SET "message_color" = "users"."mcol" FROM "users" WHERE CAST("users"."id" AS text) = "user_profiles"."user_id" AND ("user_profiles"."message_color" IS NULL OR "user_profiles"."message_color" = '')`);

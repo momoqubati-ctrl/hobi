@@ -76,6 +76,7 @@ const createLegacyProfileResult = (row: any) => {
       backgroundColor: String(row.bg || "#FFFFFF"),
       messageColor: String(row.mcol || "#000000"),
       nameColor: String(row.ucol || "#000000"),
+      statusFontColor: String(row.scol || "#000000"),
       gradientColor: String(row.gcol || "#FFFFFF"),
       evaluation: Number(row.evaluation || 0),
       rep: Number(row.rep || 0),
@@ -94,6 +95,9 @@ const createLegacyProfileResult = (row: any) => {
       roomId: "",
       siteBadgeId: String(row.site_badge_id || ""),
       siteBadge: String(row.site_badge || ""),
+      giftedBannerUrl: String(row.gifted_banner_url || ""),
+      giftedGiftIconUrl: String(row.gifted_gift_icon_url || ""),
+      giftedPromotionIconUrl: String(row.gifted_promotion_icon_url || ""),
       joinuser: Number(row.joinuser || Date.now()),
       updatedAt: toIsoDate(row.lastssen),
     },
@@ -104,23 +108,27 @@ const findLegacyUserProfile = async (profileId: string) => {
   const normalized = String(profileId || "").trim();
   if (!normalized) return null;
 
-  const result = await dbPool.query(
-    `SELECT u.*, 
-            COALESCE(up.name_color, u.ucol) as ucol,
-            COALESCE(up.message_color, u.mcol) as mcol,
-            COALESCE(up.avatar_url, u.pic) as pic,
-            COALESCE(up.banner_url, u.pich) as pich,
-            COALESCE(up.profile_msg, u.msg) as msg
-     FROM users u
-     LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
-     WHERE CAST(u.uid AS text) = $1
-        OR CAST(u.id AS text) = $1
-        OR CAST(u.idreg AS varchar) = $1
-        OR CONCAT('#', CAST(u.idreg AS varchar)) = $1
-        OR lower(u.username) = lower($1)
-     LIMIT 1`,
-    [normalized],
-  );
+const result = await dbPool.query(
+      `SELECT u.*, 
+              COALESCE(up.name_color, u.ucol) as ucol,
+              COALESCE(up.message_color, u.mcol) as mcol,
+              COALESCE(up.status_font_color, u.scol) as scol,
+              COALESCE(up.avatar_url, u.pic) as pic,
+              COALESCE(up.banner_url, u.pich) as pich,
+              COALESCE(up.profile_msg, u.msg) as msg,
+              up.gifted_banner_url,
+              up.gifted_gift_icon_url,
+              up.gifted_promotion_icon_url
+       FROM users u
+       LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+       WHERE CAST(u.uid AS text) = $1
+          OR CAST(u.id AS text) = $1
+          OR CAST(u.idreg AS varchar) = $1
+          OR CONCAT('#', CAST(u.idreg AS varchar)) = $1
+          OR lower(u.username) = lower($1)
+       LIMIT 1`,
+      [normalized],
+    );
 
   return result.rows[0] ? createLegacyProfileResult(result.rows[0]) : null;
 };
@@ -214,37 +222,150 @@ export class ProfileService {
    */
   static async getProfileStats(profileId: string) {
     const cachedStats = await redis.client?.hgetall(`profile:stats:${profileId}`);
-    
+
+    let baseStats: any;
     if (!cachedStats || Object.keys(cachedStats).length === 0) {
       try {
         const legacyStats = await getLegacyProfileStats(profileId);
-        if (legacyStats) return legacyStats;
+        if (legacyStats) baseStats = legacyStats;
       } catch (error: any) {
         if (error?.code !== "42703" && error?.code !== "42P01") {
           console.error("[ProfileService] legacy stats lookup error", error);
         }
       }
 
-      // Fallback: sync from DB (simplified version)
-      const profileInfo = await db.query.userProfiles.findFirst({
-        where: eq(userProfiles.userId, profileId),
-      });
-      return {
-        views: profileInfo?.rep || 0,
-        likes: profileInfo?.wallPostLikes || 0,
-        coins: profileInfo?.coins || 0,
-        evaluation: profileInfo?.evaluation || 0,
-        giftsReceivedCount: profileInfo?.giftsReceivedCount || 0,
+      if (!baseStats) {
+        const profileInfo = await db.query.userProfiles.findFirst({
+          where: eq(userProfiles.userId, profileId),
+        });
+        baseStats = {
+          views: profileInfo?.rep || 0,
+          likes: profileInfo?.wallPostLikes || 0,
+          coins: profileInfo?.coins || 0,
+          evaluation: profileInfo?.evaluation || 0,
+          giftsReceivedCount: profileInfo?.giftsReceivedCount || 0,
+        };
+      }
+    } else {
+      baseStats = {
+        views: parseInt(cachedStats.views || "0", 10),
+        likes: parseInt(cachedStats.likes || "0", 10),
+        coins: parseInt(cachedStats.coins || "0", 10),
+        evaluation: parseInt(cachedStats.evaluation || "0", 10),
+        giftsReceivedCount: parseInt(cachedStats.giftsReceivedCount || "0", 10),
       };
     }
-    
-    return {
-      views: parseInt(cachedStats.views || "0", 10),
-      likes: parseInt(cachedStats.likes || "0", 10),
-      coins: parseInt(cachedStats.coins || "0", 10),
-      evaluation: parseInt(cachedStats.evaluation || "0", 10),
-      giftsReceivedCount: parseInt(cachedStats.giftsReceivedCount || "0", 10),
-    };
+
+    let followersCount = 0;
+    let followingCount = 0;
+    let wallLikesCount = 0;
+    try {
+      const { dbPool } = await import("../db");
+      const [fcRes, fgRes, wlRes] = await Promise.all([
+        dbPool.query(`SELECT COUNT(*) as cnt FROM user_follows WHERE following_id = $1`, [String(profileId)]),
+        dbPool.query(`SELECT COUNT(*) as cnt FROM user_follows WHERE follower_id = $1`, [String(profileId)]),
+        dbPool.query(`SELECT COUNT(*) as cnt FROM bars_likes bl JOIN bars b ON bl.bar_id = b.id WHERE b.uid = $1`, [String(profileId)]),
+      ]);
+      followersCount = Number(fcRes.rows[0]?.cnt) || 0;
+      followingCount = Number(fgRes.rows[0]?.cnt) || 0;
+      wallLikesCount = Number(wlRes.rows[0]?.cnt) || 0;
+    } catch {}
+
+    return { ...baseStats, followersCount, followingCount, wallLikesCount };
+  }
+
+  static async addLike(viewerId: string, profileId: string) {
+    const { dbPool } = await import("../db");
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS "profile_like_cooldowns" (
+        "liker_id" varchar(255) NOT NULL,
+        "profile_id" varchar(255) NOT NULL,
+        "last_liked_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("liker_id", "profile_id")
+      );
+    `);
+
+    const cooldownKey = `profile:like_cooldown:${viewerId}:${profileId}`;
+    const redisCooldown = await redis.client?.get(cooldownKey);
+    if (redisCooldown) {
+      return { success: false, error: "يمكنك الإعجاب مرة كل دقيقة فقط" };
+    }
+
+    const dbCheck = await dbPool.query(
+      `SELECT last_liked_at FROM profile_like_cooldowns WHERE liker_id = $1 AND profile_id = $2 LIMIT 1`,
+      [String(viewerId), String(profileId)]
+    );
+    if (dbCheck.rows.length > 0) {
+      const lastLikedAt = new Date(dbCheck.rows[0].last_liked_at).getTime();
+      const now = Date.now();
+      const diffSeconds = (now - lastLikedAt) / 1000;
+      if (diffSeconds < 60) {
+        return { success: false, error: "يمكنك الإعجاب مرة كل دقيقة فقط" };
+      }
+    }
+
+    await dbPool.query(
+      `UPDATE users SET wall_post_likes = COALESCE(wall_post_likes, 0) + 1
+       WHERE CAST(id AS text) = $1 OR CAST(uid AS text) = $1`,
+      [String(profileId)]
+    );
+    await redis.client?.hincrby(`profile:stats:${profileId}`, "likes", 1);
+
+    await dbPool.query(
+      `INSERT INTO profile_like_cooldowns (liker_id, profile_id, last_liked_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (liker_id, profile_id)
+       DO UPDATE SET last_liked_at = NOW()`,
+      [String(viewerId), String(profileId)]
+    );
+    await redis.client?.set(cooldownKey, "1", "EX", 60);
+
+    let likesCount = 0;
+    try {
+      const cnt = await dbPool.query(
+        `SELECT wall_post_likes FROM users WHERE CAST(id AS text) = $1 OR CAST(uid AS text) = $1 LIMIT 1`,
+        [String(profileId)]
+      );
+      likesCount = Number(cnt.rows[0]?.wall_post_likes) || 0;
+    } catch {}
+
+    return { success: true, likesCount };
+  }
+
+  static async getLikeCooldown(viewerId: string, profileId: string) {
+    const cooldownKey = `profile:like_cooldown:${viewerId}:${profileId}`;
+    const redisTtl = await redis.client?.ttl(cooldownKey);
+    if (redisTtl && redisTtl > 0) {
+      return { cooldownRemaining: redisTtl };
+    }
+
+    try {
+      const { dbPool } = await import("../db");
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS "profile_like_cooldowns" (
+          "liker_id" varchar(255) NOT NULL,
+          "profile_id" varchar(255) NOT NULL,
+          "last_liked_at" timestamptz DEFAULT now() NOT NULL,
+          PRIMARY KEY ("liker_id", "profile_id")
+        );
+      `);
+      const result = await dbPool.query(
+        `SELECT last_liked_at FROM profile_like_cooldowns WHERE liker_id = $1 AND profile_id = $2 LIMIT 1`,
+        [String(viewerId), String(profileId)]
+      );
+      if (result.rows.length > 0) {
+        const lastLikedAt = new Date(result.rows[0].last_liked_at).getTime();
+        const now = Date.now();
+        const diffSeconds = Math.ceil((60000 - (now - lastLikedAt)) / 1000);
+        if (diffSeconds > 0) {
+          await redis.client?.set(cooldownKey, "1", "EX", diffSeconds);
+          return { cooldownRemaining: diffSeconds };
+        }
+      }
+    } catch {}
+
+    return { cooldownRemaining: 0 };
   }
 
   static async toggleFollow(viewerId: string, profileId: string) {
@@ -253,20 +374,73 @@ export class ProfileService {
     }
 
     const key = getFollowKey(viewerId, profileId);
-    if (localFollowEdges.has(key)) {
+    const { dbPool } = await import("../db");
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS "user_follows" (
+        "follower_id" varchar(255) NOT NULL,
+        "following_id" varchar(255) NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("follower_id", "following_id")
+      );
+    `);
+
+    const existing = await dbPool.query(
+      `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,
+      [String(viewerId), String(profileId)]
+    );
+
+    if (existing.rows.length > 0) {
+      await dbPool.query(
+        `DELETE FROM user_follows WHERE follower_id = $1 AND following_id = $2`,
+        [String(viewerId), String(profileId)]
+      );
       localFollowEdges.delete(key);
-      return { following: false };
+    } else {
+      await dbPool.query(
+        `INSERT INTO user_follows (follower_id, following_id, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+        [String(viewerId), String(profileId)]
+      );
+      localFollowEdges.add(key);
     }
 
-    localFollowEdges.add(key);
-    return { following: true };
+    const isFollowing = localFollowEdges.has(key);
+
+    let followerCount = 0;
+    try {
+      const cnt = await dbPool.query(
+        `SELECT COUNT(*) as cnt FROM user_follows WHERE following_id = $1`,
+        [String(profileId)]
+      );
+      followerCount = Number(cnt.rows[0]?.cnt) || 0;
+    } catch {}
+
+    return { following: isFollowing, followerCount };
   }
 
-  static getRelationship(viewerId: string, profileId: string) {
-    return {
-      isSelf: viewerId === profileId,
-      isFollowing: localFollowEdges.has(getFollowKey(viewerId, profileId)),
-    };
+  static async getRelationship(viewerId: string, profileId: string) {
+    const likeCooldown = await this.getLikeCooldown(viewerId, profileId);
+
+    if (viewerId === profileId) {
+      return { isSelf: true, isFollowing: false, cooldownRemaining: likeCooldown.cooldownRemaining };
+    }
+
+    if (localFollowEdges.has(getFollowKey(viewerId, profileId))) {
+      return { isSelf: false, isFollowing: true, cooldownRemaining: likeCooldown.cooldownRemaining };
+    }
+
+    try {
+      const { dbPool } = await import("../db");
+      const result = await dbPool.query(
+        `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,
+        [String(viewerId), String(profileId)]
+      );
+      const isFollowing = result.rows.length > 0;
+      if (isFollowing) localFollowEdges.add(getFollowKey(viewerId, profileId));
+      return { isSelf: false, isFollowing, cooldownRemaining: likeCooldown.cooldownRemaining };
+    } catch {
+      return { isSelf: false, isFollowing: false, cooldownRemaining: likeCooldown.cooldownRemaining };
+    }
   }
 
   static getVisitors(profileId: string) {

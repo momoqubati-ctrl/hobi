@@ -121,6 +121,7 @@ const syncProfileToCanonicalStore = async (
     displayName?: string;
     nameColor?: string;
     messageColor?: string;
+    statusFontColor?: string;
   },
 ) => {
   const actualUserId = await resolveUserId(userId);
@@ -165,6 +166,10 @@ const syncProfileToCanonicalStore = async (
   if (updates.messageColor !== undefined) {
     addProfileField("message_color", updates.messageColor);
     addLegacyField("mcol", String(updates.messageColor).slice(0, 20));
+  }
+  if (updates.statusFontColor !== undefined) {
+    addProfileField("status_font_color", updates.statusFontColor);
+    addLegacyField("scol", String(updates.statusFontColor).slice(0, 20));
   }
 
   if (profileFields.length > 0) {
@@ -256,6 +261,7 @@ export const updatePersistedUserProfile = async (
     displayName?: string;
     nameColor?: string;
     messageColor?: string;
+    statusFontColor?: string;
   }
 ): Promise<boolean> => {
   if (databaseAvailable === false) return false;
@@ -289,6 +295,10 @@ export const updatePersistedUserProfile = async (
       fields.push(`mcol = $${paramIndex++}`);
       values.push(String(profileUpdates.messageColor).slice(0, 20));
     }
+    if (profileUpdates.statusFontColor !== undefined) {
+      fields.push(`scol = $${paramIndex++}`);
+      values.push(String(profileUpdates.statusFontColor).slice(0, 20));
+    }
 
     if (fields.length === 0) return true;
 
@@ -299,6 +309,7 @@ export const updatePersistedUserProfile = async (
       displayName: profileUpdates.displayName,
       nameColor: profileUpdates.nameColor,
       messageColor: profileUpdates.messageColor,
+      statusFontColor: profileUpdates.statusFontColor,
     });
 
     databaseAvailable = true;

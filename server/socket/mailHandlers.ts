@@ -26,6 +26,7 @@ export function registerMailHandlers(io: Server, socket: Socket): void {
         senderName: user.topic || user.username || user.id,
         senderAvatar: user.avatar || "/pic.png",
         senderNameColor: mail.senderNameColor || user.nameColor || "",
+        senderStatusFontColor: user.statusFontColor || "",
       };
 
       publishGlobalEvent("internal_mail", enrichedMail).catch(err => 

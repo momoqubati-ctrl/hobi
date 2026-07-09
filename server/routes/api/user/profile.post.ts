@@ -44,11 +44,11 @@ export default defineEventHandler(async (event) => {
 
   try {
 const body = await readBody(event);
-      const { avatar, cover, profileMsg, displayName, nameColor, messageColor } = body;
+      const { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor } = body;
 
-      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor });
+      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor });
 
-      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
+      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string } = {};
 
     if (avatar && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
@@ -86,6 +86,9 @@ const body = await readBody(event);
     if (messageColor !== undefined && typeof messageColor === "string") {
       updates.messageColor = messageColor.trim().slice(0, 20);
     }
+    if (statusFontColor !== undefined && typeof statusFontColor === "string") {
+      updates.statusFontColor = statusFontColor.trim().slice(0, 20);
+    }
 
     // 2. Update Database
     const dbSuccess = await updatePersistedUserProfile(userId, updates);
@@ -121,6 +124,7 @@ const body = await readBody(event);
       siteBadge: updates.siteBadge || "",
       nameColor: updates.nameColor,
       messageColor: updates.messageColor,
+      statusFontColor: updates.statusFontColor,
     };
 
     console.log("[API] Profile update eventPayload:", eventPayload);
@@ -130,7 +134,7 @@ const body = await readBody(event);
     // Always read the latest canonical profile data from DB after update to ensure correct broadcast
     try {
       const latestRow = await dbPool.query(
-        `SELECT "profile_msg", "avatar_url", "banner_url", "idreg", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+        `SELECT "profile_msg", "avatar_url", "banner_url", "idreg", "name_color", "message_color", "status_font_color" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
         [userId],
       );
       if (latestRow.rows[0]) {
@@ -152,6 +156,7 @@ const body = await readBody(event);
         if (row.idreg) eventPayload.idreg = String(row.idreg).trim();
         if (row.name_color) eventPayload.nameColor = String(row.name_color).trim();
         if (row.message_color) eventPayload.messageColor = String(row.message_color).trim();
+        if (row.status_font_color) eventPayload.statusFontColor = String(row.status_font_color).trim();
       }
     } catch {}
 
@@ -172,6 +177,7 @@ const body = await readBody(event);
       displayName: updates.displayName || username,
       nameColor: updates.nameColor,
       messageColor: updates.messageColor,
+      statusFontColor: updates.statusFontColor,
       dbSuccess
     };
   } catch (error: any) {

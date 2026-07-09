@@ -16,6 +16,7 @@ export type OnlineUser = {
   memberCardBgUrl: string;
   nameColor: string;
   messageColor: string;
+  statusFontColor: string;
   messageBubbleStyle: string;
   roomId: string;
   connectedAt: string;
@@ -23,6 +24,10 @@ export type OnlineUser = {
   idreg: string;
   siteBadge: string;
   statusMsg: string;
+  giftedBannerUrl: string;
+  giftedGiftIconUrl: string;
+  giftedPromotionIconUrl: string;
+  roleIconUrl: string;
 };
 
 // الذاكرة المحلية كبديل عند تعطيل Redis أو حدوث خطأ في الاتصال
@@ -121,6 +126,7 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
       memberCardBgUrl: String(user.memberCardBgUrl),
       nameColor: String(user.nameColor),
       messageColor: String(user.messageColor),
+      statusFontColor: String(user.statusFontColor || ""),
       messageBubbleStyle: String(user.messageBubbleStyle),
       roomId: String(user.roomId),
       connectedAt: String(user.connectedAt),
@@ -128,6 +134,10 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
       idreg: String(user.idreg || ""),
       siteBadge: String(user.siteBadge || ""),
       statusMsg: String(user.statusMsg || ""),
+      giftedBannerUrl: String(user.giftedBannerUrl || ""),
+      giftedGiftIconUrl: String(user.giftedGiftIconUrl || ""),
+      giftedPromotionIconUrl: String(user.giftedPromotionIconUrl || ""),
+      roleIconUrl: String(user.roleIconUrl || ""),
     };
 
     await redis.hset(key, data);
@@ -326,6 +336,7 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
       memberCardBgUrl: data.memberCardBgUrl || "",
       nameColor: data.nameColor || "",
       messageColor: data.messageColor || "",
+      statusFontColor: data.statusFontColor || "",
       messageBubbleStyle: data.messageBubbleStyle,
       roomId: data.roomId,
       connectedAt: data.connectedAt,
@@ -333,6 +344,10 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
       idreg: data.idreg || "",
       siteBadge: data.siteBadge || "",
       statusMsg: data.statusMsg || "",
+      giftedBannerUrl: data.giftedBannerUrl || "",
+      giftedGiftIconUrl: data.giftedGiftIconUrl || "",
+      giftedPromotionIconUrl: data.giftedPromotionIconUrl || "",
+      roleIconUrl: data.roleIconUrl || "",
     };
   } catch (err) {
     console.warn("[presence] Redis hgetall failed, using local memory fallback:", err);

@@ -37,6 +37,10 @@ export type ChatMessage = {
   giftIconUrl?: string;
   messageBubbleStyle?: string;
   nameColor?: string;
+  statusFontColor?: string;
+  giftedBannerUrl?: string;
+  giftedGiftIconUrl?: string;
+  giftedPromotionIconUrl?: string;
   color: string;
   isOwner?: boolean;
   isSystem?: boolean;
@@ -147,7 +151,12 @@ const loadRoomsFromDatabase = async () => {
         color,
         welcome,
         COALESCE(verified, false) as "verified",
-        COALESCE(room_layout, 'normal') as "roomLayout"
+        COALESCE(room_layout, 'normal') as "roomLayout",
+        COALESCE(max, 50) as "max",
+        COALESCE(rmli, 0) as "likesRequired",
+        COALESCE(broadcast, 0) != 0 as "broadcast",
+        stage_state as "stage_state",
+        COALESCE(stage_count, 5) as "stage_count"
       FROM rooms 
       WHERE COALESCE(deleted, 0) = 0
       ORDER BY idroom ASC
@@ -159,21 +168,37 @@ const loadRoomsFromDatabase = async () => {
       return DEFAULT_ROOMS;
     }
 
-    const rooms = result.rows.map(r => ({
-      id: String(r.slug || r.id),
-      name: r.name || "غرفة بدون اسم",
-      description: r.description || "",
-      owner: r.owner || "إدارة الموقع",
-      image: r.image || "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&h=400&fit=crop",
-      members: 0,
-      mics: Number(r.mics) || 0,
-      likes: 0,
-      locked: Boolean(r.locked),
-      color: r.color || "#000000",
-      welcome: r.welcome || "",
-      verified: Boolean(r.verified),
-      roomLayout: r.roomLayout || "normal",
-    }));
+    const rooms = result.rows.map(r => {
+      let stageLocks: Record<string, boolean> = {};
+      try {
+        if (r.stage_state) {
+          const parsed = typeof r.stage_state === 'string' ? JSON.parse(r.stage_state) : r.stage_state;
+          stageLocks = Object.fromEntries(
+            Object.entries(parsed).map(([k, v]) => [k, Boolean(v)])
+          );
+        }
+      } catch (_) {}
+      return {
+        id: String(r.slug || r.id),
+        name: r.name || "غرفة بدون اسم",
+        description: r.description || "",
+        owner: r.owner || "إدارة الموقع",
+        image: r.image || "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&h=400&fit=crop",
+        members: 0,
+        mics: Number(r.mics) || 0,
+        likes: 0,
+        locked: Boolean(r.locked),
+        color: r.color || "#000000",
+        welcome: r.welcome || "",
+        verified: Boolean(r.verified),
+        roomLayout: r.roomLayout || "normal",
+        maxMembers: Number(r.max) || 50,
+        likesRequired: Number(r.likesRequired) || 0,
+        broadcast: Boolean(r.broadcast),
+        stageLocks,
+        stageCount: Number(r.stage_count) || 5,
+      };
+    });
     setRoomCache(rooms);
     return rooms;
   } catch (err) {
@@ -242,18 +267,38 @@ export const createRoomInDatabase = async (data: {
     assignments: [],
   });
 
+  // Use the slug (data.id) for the slug column; generate UUID for id column automatically
+  const slug = data.id;
+
   try {
     await dbPool.query(
       `INSERT INTO rooms
-        (id, topic, about, welcome, pass, max, rmli, deleted, broadcast, mic, stage_count, stage_state, pic, color, "user", owner, needpass, room_owner_meta, message_mode, verified, room_layout)
+        (slug, topic, about, welcome, pass, max, rmli, deleted, broadcast, mic, stage_count, stage_state, pic, color, "user", owner, needpass, room_owner_meta, message_mode, verified, room_layout, is_public, name)
        VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, true, $22)`,
       [
-        data.id, data.topic, data.about, data.welcome, data.pass || "",
-        data.max, data.like || 0, data.deleted ? 1 : 0,
-        data.broadcast ? 1 : 0, data.mic, stageCountSafe, initialStageState,
-        data.pic || "room.png", data.color || "#000000", data.user, data.owner,
-        needpass, roomOwnerMeta, "real", data.verified ? 1 : 0, data.roomLayout || "normal",
+        slug,
+        data.topic,
+        data.about,
+        data.welcome,
+        data.pass || "",
+        data.max,
+        data.like || 0,
+        data.deleted ? 1 : 0,
+        data.broadcast ? 1 : 0,
+        data.mic,
+        stageCountSafe,
+        initialStageState,
+        data.pic || "room.png",
+        data.color || "#000000",
+        data.user,
+        data.owner,
+        needpass,
+        roomOwnerMeta,
+        "real",
+        data.verified ? 1 : 0,
+        data.roomLayout || "normal",
+        data.topic,
       ],
     );
     invalidateRoomCache();
@@ -266,7 +311,7 @@ export const createRoomInDatabase = async (data: {
 
 export const updateUserMessageIdentity = (
   username: string,
-  updates: { avatar?: string; avatarFrameUrl?: string; giftIconUrl?: string; messageBubbleStyle?: string; nameColor?: string },
+  updates: { avatar?: string; avatarFrameUrl?: string; giftIconUrl?: string; messageBubbleStyle?: string; nameColor?: string; statusFontColor?: string },
 ) => {
   if (!username) return;
   const normalized = username.trim().toLowerCase();
@@ -278,6 +323,7 @@ export const updateUserMessageIdentity = (
       if (updates.giftIconUrl !== undefined) msg.giftIconUrl = updates.giftIconUrl;
       if (updates.messageBubbleStyle !== undefined) msg.messageBubbleStyle = updates.messageBubbleStyle;
       if (updates.nameColor !== undefined) msg.nameColor = updates.nameColor;
+      if (updates.statusFontColor !== undefined) msg.statusFontColor = updates.statusFontColor;
     }
   }
 };
@@ -294,6 +340,10 @@ export const addMessage = (input: {
   giftIconUrl?: string;
   messageBubbleStyle?: string;
   nameColor?: string;
+  statusFontColor?: string;
+  giftedBannerUrl?: string;
+  giftedGiftIconUrl?: string;
+  giftedPromotionIconUrl?: string;
   text: string;
   isSystem?: boolean;
   replyToId?: string;
@@ -319,6 +369,10 @@ export const addMessage = (input: {
     giftIconUrl: input.giftIconUrl?.trim().slice(0, 255) || "",
     messageBubbleStyle: input.messageBubbleStyle?.trim().slice(0, 64) || "default",
     nameColor: input.nameColor?.trim().slice(0, 20) || "",
+    statusFontColor: input.statusFontColor?.trim().slice(0, 20) || "",
+    giftedBannerUrl: input.giftedBannerUrl?.trim().slice(0, 500) || "",
+    giftedGiftIconUrl: input.giftedGiftIconUrl?.trim().slice(0, 500) || "",
+    giftedPromotionIconUrl: input.giftedPromotionIconUrl?.trim().slice(0, 500) || "",
     text: input.text.trim().slice(0, 1000) || (input.mediaType === "audio" ? "🎤 رسالة صوتية" : ""),
     color: input.role === "admin" ? "text-red-600" : "text-slate-700",
     isOwner: input.role === "admin",

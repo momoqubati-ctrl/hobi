@@ -20,10 +20,19 @@ export default defineEventHandler(async (event) => {
     const userRes = isGuest
       ? { rows: [] as any[] }
       : await dbPool.query(
-          "SELECT username, topic, pic FROM users WHERE CAST(uid AS text) = $1 OR CAST(id AS text) = $1 OR CAST(idreg AS text) = $1 OR lower(username) = lower($1) LIMIT 1",
+          `SELECT u.username, u.topic, u.pic, u.muted as legacy_muted, up.muted as profile_muted 
+           FROM users u
+           LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+           WHERE CAST(u.uid AS text) = $1 OR CAST(u.id AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($1) 
+           LIMIT 1`,
           [authorId],
         );
     const user = userRes.rows[0];
+    const isMuted = user ? (Boolean(user.profile_muted) || Boolean(user.legacy_muted && user.legacy_muted !== 0 && user.legacy_muted !== "0")) : false;
+    if (isMuted) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "تم منعك من الحديث في الدردشة" };
+    }
     const fallbackName = authorName || authorId;
 
     const expanded = await applyShortcuts(text);

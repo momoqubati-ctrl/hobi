@@ -33,10 +33,15 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   let dbAvatarFrameUrl = "";
   let dbNameColor = "";
   let dbMessageColor = "";
+  let dbStatusFontColor = "";
+  let dbGiftedBannerUrl = "";
+  let dbGiftedGiftIconUrl = "";
+  let dbGiftedPromotionIconUrl = "";
+  let dbRoleIconUrl = "";
   let legacyColors: any = null;
   try {
     const profileResult = await dbPool.query(
-      `SELECT "profile_msg", "idreg", "avatar_frame_url", "member_card_bg_url", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
+      `SELECT "profile_msg", "idreg", "avatar_frame_url", "member_card_bg_url", "name_color", "message_color", "status_font_color", "gifted_banner_url", "gifted_gift_icon_url", "gifted_promotion_icon_url" FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
       [user.id]
     );
     const profileRow = profileResult.rows[0];
@@ -46,18 +51,38 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       legacyRow = legacyResult.rows[0];
     }
 
-    if (profileRow && String(profileRow.profile_msg || "").trim()) {
+    if (profileRow) {
       dbIdreg = (profileRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (profileRow.profile_msg || "").toString().trim() || dbStatusMsg;
       dbMemberCardBg = (profileRow.member_card_bg_url || "").toString().trim();
       dbAvatarFrameUrl = (profileRow.avatar_frame_url || "").toString().trim();
       dbNameColor = (profileRow.name_color || "").toString().trim();
       dbMessageColor = (profileRow.message_color || "").toString().trim();
+      dbStatusFontColor = (profileRow.status_font_color || "").toString().trim();
+      dbGiftedBannerUrl = (profileRow.gifted_banner_url || "").toString().trim();
+      dbGiftedGiftIconUrl = (profileRow.gifted_gift_icon_url || "").toString().trim();
+      dbGiftedPromotionIconUrl = (profileRow.gifted_promotion_icon_url || "").toString().trim();
     } else if (legacyRow) {
       dbIdreg = (legacyRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (legacyRow.msg || "").toString().trim() || dbStatusMsg;
       dbNameColor = (legacyRow.ucol || "").toString().trim();
       dbMessageColor = (legacyRow.mcol || "").toString().trim();
+    }
+  } catch (_) {}
+
+  // Fetch role icon from user_role_assignments + roles
+  try {
+    const roleResult = await dbPool.query(
+      `SELECT r.icon_url AS role_icon_url
+       FROM user_role_assignments ura
+       JOIN roles r ON r.id = ura.role_id AND r.is_active = true
+       WHERE ura.user_id = $1
+       ORDER BY r.rank DESC
+       LIMIT 1`,
+      [user.id]
+    );
+    if (roleResult.rows[0]?.role_icon_url) {
+      dbRoleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
     }
   } catch (_) {}
 
@@ -73,7 +98,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     } catch (_) {}
   }
 
-  addConnectedUser(socket.id, {
+  await addConnectedUser(socket.id, {
     id: user.id,
     username: user.username,
     role: user.role,
@@ -84,6 +109,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     memberCardBgUrl: dbMemberCardBg || user.memberCardBgUrl || "",
     nameColor: dbNameColor || user.nameColor || "",
     messageColor: dbMessageColor || user.messageColor || "",
+    statusFontColor: dbStatusFontColor || user.statusFontColor || "",
     messageBubbleStyle: user.messageBubbleStyle || "default",
     roomId: "",
     connectedAt: user.connectedAt,
@@ -91,12 +117,21 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     idreg: dbIdreg,
     siteBadge: user.siteBadge || "",
     statusMsg: dbStatusMsg,
-  }).then(async () => {
+    giftedBannerUrl: dbGiftedBannerUrl || "",
+    giftedGiftIconUrl: dbGiftedGiftIconUrl || "",
+    giftedPromotionIconUrl: dbGiftedPromotionIconUrl || "",
+    roleIconUrl: dbRoleIconUrl || "",
+  }).catch(err => {
+    console.error("Failed to add connected user to presence:", err);
+  });
+
+  // Emit user_connected directly (not inside .then) to ensure it always fires
+  try {
     const count = await getTotalOnlineCount();
     io.emit("online_count", { count });
     const frameUrl = dbAvatarFrameUrl || user.avatarFrameUrl || "";
     const bgUrl = dbMemberCardBg || user.memberCardBgUrl || "";
-    console.debug("[presence] emit user_connected", { socketId: socket.id, userId: user.id, idreg: dbIdreg, count, avatarFrameUrl: frameUrl, memberCardBgUrl: bgUrl });
+    console.debug("[presence] emit user_connected", { socketId: socket.id, userId: user.id, idreg: dbIdreg, count, giftedBannerUrl: dbGiftedBannerUrl });
     io.emit("user_connected", {
       socketId: socket.id,
       userId: user.id,
@@ -109,16 +144,21 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       memberCardBgUrl: bgUrl,
       nameColor: dbNameColor || user.nameColor || "",
       messageColor: dbMessageColor || user.messageColor || "",
+      statusFontColor: dbStatusFontColor || user.statusFontColor || "",
       roomId: socket.data.user.roomId || "",
       status: user.status || "online",
       idreg: dbIdreg,
       siteBadge: user.siteBadge || "",
       statusMsg: dbStatusMsg,
+      giftedBannerUrl: dbGiftedBannerUrl || "",
+      giftedGiftIconUrl: dbGiftedGiftIconUrl || "",
+      giftedPromotionIconUrl: dbGiftedPromotionIconUrl || "",
+      roleIconUrl: dbRoleIconUrl || "",
       count,
     });
-  }).catch(err => {
-    console.error("Failed to add connected user to presence:", err);
-  });
+  } catch (err) {
+    console.error("Failed to emit user_connected:", err);
+  }
 
   /**
    * طلب قائمة المتصلين
@@ -130,30 +170,60 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
 
       // Batch-query modern and legacy profile tables for statusMsg + idreg
       const allIds = onlineUsers.map((u) => u.id).filter(Boolean);
-      let profileMap = new Map<string, { msg: string | null; idreg: string | null; nameColor: string | null; messageColor: string | null }>();
+      let profileMap = new Map<string, { msg: string | null; idreg: string | null; nameColor: string | null; messageColor: string | null; statusFontColor: string | null; giftedBannerUrl: string; giftedGiftIconUrl: string; giftedPromotionIconUrl: string; roleIconUrl: string }>();
       if (allIds.length > 0) {
         const placeholders = allIds.map((_, i) => `$${i + 1}`).join(", ");
         const result = await dbPool.query(
-          `SELECT "user_id" AS id, "profile_msg" AS msg, "idreg", "name_color", "message_color" FROM "user_profiles" WHERE "user_id" IN (${placeholders})`,
+          `SELECT "user_id" AS id, "profile_msg" AS msg, "idreg", "name_color", "message_color", "status_font_color", "gifted_banner_url", "gifted_gift_icon_url", "gifted_promotion_icon_url" FROM "user_profiles" WHERE "user_id" IN (${placeholders})`,
           allIds
         );
         for (const r of result.rows) {
-          profileMap.set(r.id, { msg: r.msg, idreg: r.idreg, nameColor: r.name_color, messageColor: r.message_color });
+          profileMap.set(r.id, { msg: r.msg, idreg: r.idreg, nameColor: r.name_color, messageColor: r.message_color, statusFontColor: r.status_font_color, giftedBannerUrl: r.gifted_banner_url || "", giftedGiftIconUrl: r.gifted_gift_icon_url || "", giftedPromotionIconUrl: r.gifted_promotion_icon_url || "", roleIconUrl: "" });
         }
 
-        if (profileMap.size < allIds.length) {
-          const legacyResult = await dbPool.query(
-            `SELECT "id", "msg", "idreg", "ucol", "mcol" FROM "users" WHERE "id" IN (${placeholders})`,
+        // Fetch role icons for all users in batch
+        try {
+          const roleResult = await dbPool.query(
+            `SELECT ura.user_id, r.icon_url AS role_icon_url
+             FROM user_role_assignments ura
+             JOIN roles r ON r.id = ura.role_id AND r.is_active = true
+             WHERE ura.user_id IN (${placeholders})
+             ORDER BY r.rank DESC`,
             allIds
           );
+          // Keep highest rank role icon per user
+          for (const r of roleResult.rows) {
+            const existing = profileMap.get(r.user_id);
+            if (existing && !existing.roleIconUrl && r.role_icon_url) {
+              existing.roleIconUrl = String(r.role_icon_url).trim();
+            }
+          }
+        } catch (_) {}
+
+        // Fallback للأعضاء الذين ليس لهم سجل في user_profiles
+        // نستعلم فقط عن المفقودين، ولا نُعيد كتابة من عنده بيانات
+        const missingIds = allIds.filter((id) => !profileMap.has(id));
+        if (missingIds.length > 0) {
+          const legacyPlaceholders = missingIds.map((_, i) => `$${i + 1}`).join(", ");
+          const legacyResult = await dbPool.query(
+            `SELECT "id", "msg", "idreg", "ucol", "mcol" FROM "users" WHERE "id" IN (${legacyPlaceholders})`,
+            missingIds
+          );
           for (const r of legacyResult.rows) {
-            const existing = profileMap.get(r.id);
-            profileMap.set(r.id, {
-              msg: existing?.msg || r.msg || null,
-              idreg: existing?.idreg || r.idreg || null,
-              nameColor: existing?.nameColor || r.ucol || null,
-              messageColor: existing?.messageColor || r.mcol || null,
-            });
+            // فقط نضيف من ليس في الخريطة — لا نُعيد كتابة من فيها
+            if (!profileMap.has(r.id)) {
+              profileMap.set(r.id, {
+                msg: r.msg || null,
+                idreg: r.idreg || null,
+                nameColor: r.ucol || null,
+                messageColor: r.mcol || null,
+                statusFontColor: null,
+                giftedBannerUrl: "",
+                giftedGiftIconUrl: "",
+                giftedPromotionIconUrl: "",
+                roleIconUrl: "",
+              });
+            }
           }
         }
       }
@@ -173,11 +243,16 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
           memberCardBgUrl: u.memberCardBgUrl || "",
           nameColor: dbProfile?.nameColor || u.nameColor || "",
           messageColor: dbProfile?.messageColor || u.messageColor || "",
+          statusFontColor: dbProfile?.statusFontColor || u.statusFontColor || "",
           roomId: u.roomId,
           status: u.status || "online",
           idreg,
           siteBadge: u.siteBadge || "",
           statusMsg,
+          giftedBannerUrl: dbProfile?.giftedBannerUrl || (u as any).giftedBannerUrl || "",
+          giftedGiftIconUrl: dbProfile?.giftedGiftIconUrl || (u as any).giftedGiftIconUrl || "",
+          giftedPromotionIconUrl: dbProfile?.giftedPromotionIconUrl || (u as any).giftedPromotionIconUrl || "",
+          roleIconUrl: dbProfile?.roleIconUrl || (u as any).roleIconUrl || "",
         };
       });
       callback?.({ success: true, users, count: users.length });
@@ -194,7 +269,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   const handleProfileUpdate = async (data: Record<string, any>) => {
     if (!data || typeof data !== "object") return;
 
-    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl", "nameColor", "messageColor"];
+    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl", "nameColor", "messageColor", "statusFontColor", "giftedBannerUrl", "giftedGiftIconUrl", "giftedPromotionIconUrl"];
     for (const key of allowedKeys) {
       if (typeof data[key] === "string") {
         const val = data[key].trim().slice(0, 255);
@@ -229,7 +304,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     // تحديث البيانات في كاش الحضور بـ Redis
     try {
       // Also update the in-memory user profile (source of truth for get_online_users)
-      const profileUpdates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string } = {};
+      const profileUpdates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string } = {};
       if (typeof data.avatar === "string" || typeof data.avatarUrl === "string") {
         profileUpdates.avatar = socket.data.user.avatar;
       }
@@ -249,6 +324,10 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       if (typeof data.messageColor === "string") {
         console.log("[presenceHandlers] Setting messageColor in socket.data.user:", data.messageColor);
         profileUpdates.messageColor = data.messageColor.trim().slice(0, 20);
+      }
+      if (typeof data.statusFontColor === "string") {
+        console.log("[presenceHandlers] Setting statusFontColor in socket.data.user:", data.statusFontColor);
+        profileUpdates.statusFontColor = data.statusFontColor.trim().slice(0, 20);
       }
       if (Object.keys(profileUpdates).length > 0) {
         updateInMemoryUserProfile(user.username, profileUpdates);
@@ -277,6 +356,10 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         idreg: socket.data.user.idreg || user.idreg || "",
         siteBadge: socket.data.user.siteBadge || "",
         statusMsg: socket.data.user.statusMsg || "",
+        giftedBannerUrl: (socket.data.user as any).giftedBannerUrl || "",
+        giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
+        giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
+        roleIconUrl: (socket.data.user as any).roleIconUrl || "",
       });
 
       console.log("[presenceHandlers] addConnectedUser called with nameColor:", socket.data.user.nameColor);
@@ -288,6 +371,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     updateUserMessageIdentity(user.username, {
       avatar: socket.data.user.avatar || user.avatar,
       nameColor: socket.data.user.nameColor || "",
+      statusFontColor: socket.data.user.statusFontColor || "",
     });
 
     updateCachedWallAuthorProfile(
@@ -298,7 +382,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       },
     );
 
-    io.emit("user_profile_updated", {
+io.emit("user_profile_updated", {
       socketId: socket.id,
       userId: user.id,
       username: user.username,
@@ -314,11 +398,16 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
       nameColor: socket.data.user.nameColor || "",
       messageColor: socket.data.user.messageColor || "",
+      statusFontColor: socket.data.user.statusFontColor || "",
       messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
       roomId: socket.data.user.roomId || "",
       idreg: socket.data.user.idreg || user.idreg || "",
       siteBadge: socket.data.user.siteBadge || "",
       statusMsg: socket.data.user.statusMsg || socket.data.user.profileMsg || "",
+      giftedBannerUrl: (socket.data.user as any).giftedBannerUrl || "",
+      giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
+      giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
+      roleIconUrl: (socket.data.user as any).roleIconUrl || "",
     });
   };
 
@@ -347,6 +436,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
         nameColor: socket.data.user.nameColor || "",
         messageColor: socket.data.user.messageColor || "",
+        statusFontColor: socket.data.user.statusFontColor || "",
         messageBubbleStyle: socket.data.user.messageBubbleStyle || "default",
         roomId: socket.data.user.roomId || "",
         connectedAt: user.connectedAt,
@@ -354,6 +444,10 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         idreg: socket.data.user.idreg || user.idreg || "",
         siteBadge: socket.data.user.siteBadge || "",
         statusMsg: socket.data.user.statusMsg || "",
+        giftedBannerUrl: (socket.data.user as any).giftedBannerUrl || "",
+        giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
+        giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
+        roleIconUrl: (socket.data.user as any).roleIconUrl || "",
       });
     } catch (err) {
       console.error("Failed to update status in Redis:", err);

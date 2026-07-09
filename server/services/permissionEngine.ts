@@ -13,7 +13,7 @@ export type BasicResource =
   // ── Members & Hierarchy ──
   | "edituser" | "setpower" | "stealth" | "mynick" | "unick" | "loveu" | "ulike" | "status_color" | "reveal" | "profile_viewers"
   // ── Rooms & Communication ──
-  | "roomowner" | "createroom" | "rooms" | "publicmsg" | "publicmsghide" | "bot" | "grupes"
+  | "roomowner" | "createroom" | "rooms" | "publicmsg" | "publicmsghide" | "bot" | "grupes" | "lockedroom"
   // ── Management ──
   | "flter" | "shrt" | "subs" | "upgrades" | "msgs" | "micprovideredit" | "evaluationpoints" | "bootedit" | "gift" | "filter_alerts"
   // ── System ──
@@ -77,7 +77,7 @@ export const RESOURCE_ACTIONS: Record<string, string[]> = {
     ([
       "kick", "ban", "meiut", "delmsg", "delbc", "delpic", "alert", "forcepm", "history",
       "edituser", "setpower", "stealth", "mynick", "unick", "loveu", "ulike", "status_color", "reveal", "profile_viewers",
-      "roomowner", "createroom", "rooms", "publicmsg", "publicmsghide", "bot", "grupes",
+      "roomowner", "createroom", "rooms", "publicmsg", "publicmsghide", "bot", "grupes", "lockedroom",
       "flter", "shrt", "subs", "upgrades", "msgs", "micprovideredit", "evaluationpoints", "bootedit", "gift", "filter_alerts",
       "moderation_monitor", "realtime_admin", "analytics_access", "audit_logs",
       "manage_notifications", "manage_wallets", "manage_domains", "anti_ddos", "maintenance_mode",

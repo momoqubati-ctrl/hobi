@@ -11,6 +11,34 @@ import VoiceMessagePlayer from "./VoiceMessagePlayer";
 import EmojiPickerPopover, { EmojiPanel } from "./EmojiPickerPopover";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
+const showMuteAlert = (message: string) => {
+  let detail: any = {
+    alertId: String(Date.now()),
+    fromUsername: "النظام",
+    fromAvatar: "/pic.png",
+    message,
+    timestamp: Date.now()
+  };
+  try {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      const user = JSON.parse(raw);
+      detail = {
+        alertId: String(Date.now()),
+        fromUsername: user.name || user.username || "النظام",
+        fromAvatar: user.avatar || "/pic.png",
+        fromBanner: user.giftedBannerUrl || "",
+        fromGiftIcon: user.giftedGiftIconUrl || "",
+        fromPromotionIcon: user.roleIconUrl || user.giftedPromotionIconUrl || "",
+        fromAvatarFrame: user.avatarFrameUrl || "",
+        message,
+        timestamp: Date.now()
+      };
+    }
+  } catch {}
+  window.dispatchEvent(new CustomEvent("show-client-alert", { detail }));
+};
+
 import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
 import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { compressImage, COMPRESS_PRESETS } from "@/lib/image-compress";
@@ -72,6 +100,8 @@ interface PMMessage {
   replyToMediaUrl?: string;
   replyToMediaType?: "image" | "video";
   animatedFaces?: string[];
+  nameColor?: string;
+  statusFontColor?: string;
   createdAt: string;
   read: boolean;
   pending?: boolean;
@@ -105,6 +135,8 @@ const normalizePrivateMessage = (
   replyToMediaUrl: raw?.replyToMediaUrl || fallback.replyToMediaUrl,
   replyToMediaType: raw?.replyToMediaType || fallback.replyToMediaType,
   animatedFaces: raw?.animatedFaces || fallback.animatedFaces,
+  nameColor: raw?.nameColor || "",
+  statusFontColor: raw?.statusFontColor || "",
   createdAt: String(raw?.createdAt || raw?.created_at || new Date().toISOString()),
   read: Boolean(raw?.read || raw?.readAt || raw?.read_at),
   pending: false,
@@ -302,6 +334,10 @@ const PrivateChat = ({
   }, []);
 
   const handleSendVoice = useCallback(async () => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     if (!recorder.audioBlob || !otherUser?.id) return;
     setSending(true);
     try {
@@ -390,6 +426,10 @@ const PrivateChat = ({
   // ─── إرسال رسالة ──────────────────────────────────────────────────────────
 
   const handleSend = useCallback(async () => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const hasText = text.trim().length > 0 || !!selectedVideo;
     const hasMedia = !!pendingMedia;
     if ((!hasText && !hasMedia) || sending) return;
@@ -564,6 +604,10 @@ const PrivateChat = ({
   }, [text, pendingMedia, sending, conversationId, currentUserId, otherUser.id, uploadFile, replyToMsg, selectedVideo, animatedFaces, currentUser?.name, currentUser?.username, myAvatar]);
 
   const handleSendSticker = useCallback(async (stickerUrl: string) => {
+    if (useRealtimeStore.getState().isMuted) {
+      showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
+      return;
+    }
     const socket = getSocket();
     if (!socket || !socket.connected || !otherUser?.id) return;
 
@@ -751,6 +795,7 @@ const PrivateChat = ({
         name: data.username || prev.name,
         avatar: data.avatar || data.avatarUrl || prev.avatar,
         nameColor: data.nameColor !== undefined ? data.nameColor : prev.nameColor,
+        statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : prev.statusFontColor,
       }));
     };
     socket.on("user_profile_updated", onUserProfileUpdated);
@@ -971,7 +1016,20 @@ const PrivateChat = ({
           className="flex-1 min-w-0 cursor-pointer"
           onClick={() => onOpenProfile?.(otherUserData.id)}
         >
-          <h4 className="font-black text-sm hover:underline truncate" style={resolvedNameColor && resolvedNameColor !== "#000000" ? { color: resolvedNameColor } : undefined}>{resolvedName}</h4>
+          <div className="flex items-center gap-1">
+            {(() => {
+              const u = onlineUsers.find(o => String(o.id) === String(otherUserData.id));
+              if (!u) return null;
+              return (
+                <>
+                  {(u.roleIconUrl || u.giftedPromotionIconUrl) && <img src={u.roleIconUrl || u.giftedPromotionIconUrl} alt="" className="h-4 w-4 rounded object-contain" />}
+                  {u.giftedGiftIconUrl && <img src={u.giftedGiftIconUrl} alt="" className="h-4 w-4 rounded object-contain" />}
+                  {u.giftedBannerUrl && <img src={u.giftedBannerUrl} alt="" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" />}
+                </>
+              );
+            })()}
+            <h4 className="font-black text-sm hover:underline truncate" style={resolvedNameColor && resolvedNameColor !== "#000000" ? { color: resolvedNameColor } : undefined}>{resolvedName}</h4>
+          </div>
           {isTyping ? (
             <p className="text-[10px] text-primary font-bold animate-pulse">يكتب...</p>
           ) : (
@@ -1129,7 +1187,7 @@ const PrivateChat = ({
                           )}
 
                           {renderMedia(msg)}
-                          {msg.text && <p dir="auto">{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
+                          {msg.text && <p dir="auto" style={msg.statusFontColor && msg.statusFontColor !== "#000000" ? { color: msg.statusFontColor } : undefined}>{renderTextWithFaces(msg.text, msg.animatedFaces)}</p>}
                           {msg.text && findYouTubeLinks(msg.text).map((link) => (
                             <YouTubePreviewCard
                               key={link}

@@ -149,18 +149,43 @@ const InternalMail = () => {
               <AvatarFallback className="rounded-xl">{(name || "?")[0]}</AvatarFallback>
             </Avatar>
             <div>
-              <p className="font-bold text-sm" style={(() => {
-                const mailId = selectedMail?.senderId === currentUser?.id ? selectedMail.recipientId : selectedMail?.senderId;
-                if (!mailId) return undefined;
-                const u = onlineUsers.find(o => String(o.id) === String(mailId));
-                const storedColor = isIncoming ? selectedMail?.senderNameColor : selectedMail?.recipientNameColor;
-                const resolvedColor = u?.nameColor || storedColor || "";
-                return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
-              })()}>{name}</p>
+              <div className="flex items-center gap-1">
+                {(() => {
+                  const isIncomingMail = selectedMail?.senderId !== currentUser?.id;
+                  const mailId = isIncomingMail ? selectedMail?.senderId : selectedMail?.recipientId;
+                  if (!mailId) return null;
+                  const u = onlineUsers.find(o => String(o.id) === String(mailId));
+                  const banner = u?.giftedBannerUrl || (isIncomingMail ? (selectedMail as any)?.senderGiftedBannerUrl : (selectedMail as any)?.recipientGiftedBannerUrl) || "";
+                  const giftIcon = u?.giftedGiftIconUrl || (isIncomingMail ? (selectedMail as any)?.senderGiftedGiftIconUrl : (selectedMail as any)?.recipientGiftedGiftIconUrl) || "";
+                  const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (isIncomingMail ? (selectedMail as any)?.senderRoleIconUrl : (selectedMail as any)?.recipientRoleIconUrl) || (isIncomingMail ? (selectedMail as any)?.senderGiftedPromotionIconUrl : (selectedMail as any)?.recipientGiftedPromotionIconUrl) || "";
+                  return (
+                    <>
+                      {promoIcon && <img src={promoIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                      {giftIcon && <img src={giftIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                      {banner && <img src={banner} alt="" className="h-5 w-auto rounded object-contain max-w-[5rem]" />}
+                    </>
+                  );
+                })()}
+                <p className="font-bold text-sm" style={(() => {
+                  const mailId = selectedMail?.senderId === currentUser?.id ? selectedMail.recipientId : selectedMail?.senderId;
+                  if (!mailId) return undefined;
+                  const u = onlineUsers.find(o => String(o.id) === String(mailId));
+                  const storedColor = isIncoming ? selectedMail?.senderNameColor : selectedMail?.recipientNameColor;
+                  const resolvedColor = u?.nameColor || storedColor || "";
+                  return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                })()}>{name}</p>
+              </div>
               <p className="text-[10px] text-muted-foreground">{formatTime(selectedMail.createdAt)}</p>
             </div>
           </div>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{selectedMail.body}</p>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap" style={(() => {
+              const mailId = selectedMail?.senderId === currentUser?.id ? selectedMail.recipientId : selectedMail?.senderId;
+              if (!mailId) return undefined;
+              const u = onlineUsers.find(o => String(o.id) === String(mailId));
+              const storedColor = (selectedMail as any)?.senderStatusFontColor || "";
+              const resolvedColor = u?.statusFontColor || storedColor || "";
+              return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+            })()}>{selectedMail.body}</p>
         </div>
       </div>
     );
@@ -253,18 +278,35 @@ const InternalMail = () => {
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className={`text-xs truncate ${isUnread ? "font-black" : "font-bold text-slate-600 dark:text-slate-400"}`}
-                          style={(() => {
+                        <div className="flex items-center gap-1 min-w-0">
+                          {(() => {
                             const mailId = isIncoming ? mail.senderId : mail.recipientId;
-                            if (!mailId) return undefined;
+                            if (!mailId) return null;
                             const u = onlineUsers.find(o => String(o.id) === String(mailId));
-                            const storedColor = isIncoming ? mail.senderNameColor : mail.recipientNameColor;
-                            const resolvedColor = u?.nameColor || storedColor || "";
-                            return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                            const banner = u?.giftedBannerUrl || (isIncoming ? (mail as any)?.senderGiftedBannerUrl : (mail as any)?.recipientGiftedBannerUrl) || "";
+                            const giftIcon = u?.giftedGiftIconUrl || (isIncoming ? (mail as any)?.senderGiftedGiftIconUrl : (mail as any)?.recipientGiftedGiftIconUrl) || "";
+                            const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (isIncoming ? (mail as any)?.senderRoleIconUrl : (mail as any)?.recipientRoleIconUrl) || (isIncoming ? (mail as any)?.senderGiftedPromotionIconUrl : (mail as any)?.recipientGiftedPromotionIconUrl) || "";
+                            return (
+                              <>
+                                {promoIcon && <img src={promoIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                                {giftIcon && <img src={giftIcon} alt="" className="h-3.5 w-3.5 rounded object-contain" />}
+                                {banner && <img src={banner} alt="" className="h-5 w-auto rounded object-contain max-w-[5rem]" />}
+                              </>
+                            );
                           })()}
-                        >
-                          {name}
-                        </h4>
+                          <h4 className={`text-xs truncate ${isUnread ? "font-black" : "font-bold text-slate-600 dark:text-slate-400"}`}
+                            style={(() => {
+                              const mailId = isIncoming ? mail.senderId : mail.recipientId;
+                              if (!mailId) return undefined;
+                              const u = onlineUsers.find(o => String(o.id) === String(mailId));
+                              const storedColor = isIncoming ? mail.senderNameColor : mail.recipientNameColor;
+                              const resolvedColor = u?.nameColor || storedColor || "";
+                              return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
+                            })()}
+                          >
+                            {name}
+                          </h4>
+                        </div>
                         <span className="text-[9px] text-muted-foreground shrink-0">{formatTime(mail.createdAt)}</span>
                       </div>
                       <p className={`text-[11px] truncate mt-0.5 ${isUnread ? "font-bold text-foreground" : "text-muted-foreground"}`}>
