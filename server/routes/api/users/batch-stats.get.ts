@@ -1,30 +1,27 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
+import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "../../../services/minioClient";
 
-const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT || "127.0.0.1";
-const MINIO_PORT = Number(process.env.MINIO_PORT) || 9000;
-const MINIO_INTERNAL_HOSTS = [
-  `http://127.0.0.1:${MINIO_PORT}`,
-  `http://localhost:${MINIO_PORT}`,
-];
-
-function toProxyUrl(url: string): string {
-  if (!url) return "/pic.png";
-  const trimmed = url.trim();
-  if (!trimmed) return "/pic.png";
-  if (trimmed.startsWith("data:")) return trimmed;
-  if (trimmed.startsWith("/")) return trimmed;
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    return `/${trimmed}`;
-  }
-  for (const host of MINIO_INTERNAL_HOSTS) {
-    if (trimmed.startsWith(host)) {
-      const key = trimmed.slice(host.length + 1).replace(/^\/+/, "");
-      if (key) return `/minio/${key}`;
-    }
-  }
-  return trimmed;
-}
+type MemberStats = {
+  avatar: string;
+  cover: string;
+  statusMsg: string;
+  nameColor: string;
+  avatarFrameUrl: string;
+  giftedBannerUrl: string;
+  giftedGiftIconUrl: string;
+  giftedPromotionIconUrl: string;
+  roleIconUrl: string;
+  memberCardBgUrl: string;
+  evaluation: number;
+  rep: number;
+  coins: number;
+  likes: number;
+  giftsReceivedCount: number;
+  followerCount: number;
+  followingCount: number;
+  isFollowedByMe: boolean;
+};
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event);
@@ -113,20 +110,20 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    const statsMap: Record<string, any> = {};
+    const statsMap: Record<string, MemberStats> = {};
     for (const row of result.rows) {
       const uid = String(row.id);
       statsMap[uid] = {
-        avatar: toProxyUrl(String(row.avatar)),
-        cover: toProxyUrl(String(row.cover)),
+        avatar: normalizeMinioUrl(String(row.avatar)),
+        cover: normalizeMinioUrl(String(row.cover)),
         statusMsg: String(row.statusMsg || ""),
         nameColor: String(row.nameColor || ""),
-        avatarFrameUrl: toProxyUrl(String(row.avatarFrameUrl)),
-        giftedBannerUrl: toProxyUrl(String(row.giftedBannerUrl)),
-        giftedGiftIconUrl: toProxyUrl(String(row.giftedGiftIconUrl)),
-        giftedPromotionIconUrl: toProxyUrl(String(row.giftedPromotionIconUrl)),
-        roleIconUrl: toProxyUrl(String(row.roleIconUrl)),
-        memberCardBgUrl: toProxyUrl(String(row.memberCardBgUrl)),
+        avatarFrameUrl: normalizeOptionalMinioUrl(row.avatarFrameUrl),
+        giftedBannerUrl: normalizeOptionalMinioUrl(row.giftedBannerUrl),
+        giftedGiftIconUrl: normalizeOptionalMinioUrl(row.giftedGiftIconUrl),
+        giftedPromotionIconUrl: normalizeOptionalMinioUrl(row.giftedPromotionIconUrl),
+        roleIconUrl: normalizeOptionalMinioUrl(row.roleIconUrl),
+        memberCardBgUrl: normalizeOptionalMinioUrl(row.memberCardBgUrl),
         evaluation: Number(row.evaluation) || 0,
         rep: Number(row.rep) || 0,
         coins: Number(row.coins) || 0,

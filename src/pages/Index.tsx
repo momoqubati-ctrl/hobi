@@ -8,8 +8,9 @@ import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/componen
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Users, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { showSuccess } from "@/utils/toast";
-import { refreshSocketAuth, getSocket } from "@/lib/socket";
+import { refreshSocketAuth, getSocket, reconnectSocket } from "@/lib/socket";
 import { getDeviceId, getDeviceSignature } from "@/lib/deviceFingerprint";
+import { getActiveSession, terminateUserSession } from "@/lib/authSession";
 
 type AuthMode = "guest" | "member" | "register";
 type DatabaseStatus = "checking" | "connected" | "disconnected";
@@ -22,6 +23,7 @@ const authEndpointByMode: Record<AuthMode, string> = {
 
 const Index = () => {
   const navigate = useNavigate();
+  const [checkingSession, setCheckingSession] = useState(true);
   const [activeTab, setActiveTab] = useState<AuthMode>("guest");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,6 +31,28 @@ const Index = () => {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus>("checking");
+
+  // التحقق من وجود جلسة نشطة: إذا كانت هناك جلسة لا تظهر نافذة الدخول وتوجه للدردشة فوراً
+  // وإذا تم فتح نافذة الدخول بأي طريقة يتم إنهاء الجلسة تماماً وقطع السوكيت
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const isExplicitAction = searchParams.get("action") === "login" || searchParams.get("logout") === "true";
+
+    const session = getActiveSession();
+    if (session && !isExplicitAction) {
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+
+    // إذا وصلنا إلى نافذة تسجيل الدخول بأي طريقة، يجب إنهاء الجلسة تماماً وعدم إظهار العضو كمتصل
+    terminateUserSession(true);
+    setCheckingSession(false);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("session_replaced")) {
+      setError(urlParams.get("msg") || "تم تسجيل خروجك لأن حسابك فُتح في صفحة أو جهاز آخر.");
+    }
+  }, [navigate]);
 
   useEffect(() => {
     let isMounted = true;
@@ -58,6 +82,10 @@ const Index = () => {
 
   const handleLogin = async () => {
     try {
+      if (activeTab === "guest" && !username.trim()) {
+        setError("يرجى إدخال اسم الزائر");
+        return;
+      }
       setLoading(true);
       setError("");
 
@@ -97,28 +125,36 @@ const Index = () => {
           : (typeof data.user?.profileMsg === "string" && data.user.profileMsg.trim() ? data.user.profileMsg : ""),
       };
       localStorage.setItem("authToken", data.token);
+      localStorage.setItem("auth_token", data.token);
       localStorage.setItem("user", JSON.stringify(normalizedUser));
-      // Ensure socket handshake uses latest auth data
+      localStorage.setItem("auth_user", JSON.stringify(normalizedUser));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("app-auth-login"));
+      }
+      // Ensure socket handshake uses latest auth data and reconnects cleanly
       try {
-        refreshSocketAuth();
-        // Trigger reconnect so server receives updated handshake immediately
-        const s = getSocket();
-        if (s && s.connected) {
-          s.disconnect();
-          // reconnect will use refreshed auth
-          getSocket();
-        }
-      } catch {}
+        reconnectSocket();
+      } catch (err) {
+        console.error("[Index] Failed to reconnect socket:", err);
+      }
       if (activeTab === "register") {
         showSuccess("تم إنشاء الحساب بنجاح");
       }
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر تسجيل الدخول");
     } finally {
       setLoading(false);
     }
   };
+
+  if (checkingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 rtl">

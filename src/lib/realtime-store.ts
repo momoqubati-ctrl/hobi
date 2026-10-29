@@ -122,6 +122,8 @@ interface RealtimeState {
   setCommentLiked: (commentId: string, liked: boolean) => void;
   isMuted: boolean;
   setIsMuted: (val: boolean) => void;
+  userPermissions: string[];
+  setUserPermissions: (permissions: string[]) => void;
 }
 
 const getPresenceKey = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
@@ -130,7 +132,7 @@ const getPresenceKey = (member: { id?: string; socketId?: string; username?: str
   if (member.socketId) return `socket:${member.socketId}`;
   const name = String(member.username || member.name || "").trim().toLowerCase();
   if (name && member.role !== "guest") return `username:${name}`;
-  return `guest:${name || "anonymous"}`;
+  return `guest:${member.socketId || (id && id !== "0" ? id : "") || name || "anonymous"}`;
 };
 
 // عدّ كل التعليقات بما فيهم الردود المتداخلة
@@ -268,7 +270,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           const u = next[i];
           const existingId = String(u.id).trim();
           const sameSocket = u.socketId && incoming.socketId && u.socketId === incoming.socketId;
-          const sameUsername = u.username && incoming.username && String(u.username).trim().toLowerCase() === String(incoming.username).trim().toLowerCase();
+          const sameUsername = u.role !== "guest" && incoming.role !== "guest" && u.username && incoming.username && String(u.username).trim().toLowerCase() === String(incoming.username).trim().toLowerCase();
           const sameId = existingId === incomingId;
           if (sameSocket || sameUsername || sameId) {
             next[i] = applyMerge(u, incoming);
@@ -637,4 +639,6 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     return false;
   })(),
   setIsMuted: (val) => set({ isMuted: val }),
+  userPermissions: [],
+  setUserPermissions: (permissions) => set({ userPermissions: permissions }),
 }));

@@ -30,6 +30,14 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403);
       return { success: false, code: "BANNED", message: "تم حظرك من الموقع" };
     }
+    if (error.code === "USERNAME_TAKEN") {
+      setResponseStatus(event, 409);
+      return { success: false, code: "USERNAME_TAKEN", message: error.message || "هذا الاسم موجود من سابق قم بادخال اسم اخر" };
+    }
+    if (error.code === "USERNAME_REQUIRED") {
+      setResponseStatus(event, 400);
+      return { success: false, code: "USERNAME_REQUIRED", message: error.message || "يرجى إدخال اسم الزائر" };
+    }
     setResponseStatus(event, 500);
     return { success: false, message: "حدث خطأ أثناء تسجيل الدخول" };
   }

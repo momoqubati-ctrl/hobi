@@ -1,5 +1,6 @@
 import { io, Socket } from "socket.io-client";
 import { getDeviceId, getDeviceSignature } from "./deviceFingerprint";
+import { useRealtimeStore } from "./realtime-store";
 
 let socket: Socket | null = null;
 let cachedDeviceId = "";
@@ -49,13 +50,36 @@ function readSocketAuth(): Record<string, string> {
   }
 }
 
+export function hasValidUserAuth(): boolean {
+  try {
+    const raw = localStorage.getItem("user") || localStorage.getItem("auth_user");
+    if (!raw) return false;
+    const user = JSON.parse(raw);
+    return Boolean(user && (user.id || user.username));
+  } catch {
+    return false;
+  }
+}
+
 export function getSocket(): Socket {
-  if (socket) return socket;
+  if (typeof window !== "undefined" && (window as any).__sessionReplaced) {
+    if (socket && socket.connected) socket.disconnect();
+    return socket || (io({ autoConnect: false }) as any);
+  }
+  const hasAuth = hasValidUserAuth();
+  if (socket) {
+    if (!socket.connected && hasAuth) {
+      socket.auth = readSocketAuth();
+      socket.connect();
+    }
+    return socket;
+  }
 
   socket = io({
     path: "/ws",
     transports: ["websocket", "polling"],
     auth: readSocketAuth(),
+    autoConnect: hasAuth,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
@@ -65,10 +89,52 @@ export function getSocket(): Socket {
 
   socket.on("connect", () => {
     console.log("[CLIENT_SOCKET] connected", { id: socket?.id, auth: readSocketAuth() });
+    // Join user-specific channels for call signaling
+    const auth = readSocketAuth();
+    if (auth.userId) {
+      socket?.emit("join_user", { userId: auth.userId });
+      console.log("[CLIENT_SOCKET] emitted join_user for", auth.userId);
+    }
   });
 
   socket.on("disconnect", (reason: string) => {
     console.log("[CLIENT_SOCKET] disconnected", { reason, id: socket?.id });
+  });
+
+  socket.on("session_replaced", (payload: any) => {
+    try {
+      console.warn("[CLIENT_SOCKET] session_replaced received:", payload);
+      if (typeof window !== "undefined") {
+        (window as any).__sessionReplaced = true;
+        if (socket) {
+          socket.disconnect();
+        }
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user");
+        const msg = payload?.message || "تم تسجيل الدخول بحسابك من صفحة أو جهاز آخر";
+        window.dispatchEvent(new CustomEvent("session-replaced-event", { detail: { message: msg } }));
+        setTimeout(() => {
+          window.location.replace(`/?session_replaced=1&msg=${encodeURIComponent(msg)}`);
+        }, 300);
+      }
+    } catch (_) {}
+  });
+
+  socket.on("system_alert", (payload: any) => {
+    try {
+      if (payload?.message) {
+        window.dispatchEvent(new CustomEvent("show-client-alert", {
+          detail: {
+            alertId: String(Date.now()),
+            fromUsername: "النظام",
+            fromAvatar: "/pic.png",
+            message: payload.message,
+            timestamp: Date.now(),
+          }
+        }));
+      }
+    } catch (_) {}
   });
 
   socket.on("connected", (payload: any) => {
@@ -128,6 +194,44 @@ export function getSocket(): Socket {
     } catch {}
   });
 
+  socket.on("role:updated", (payload: any) => {
+    try {
+      console.log("[CLIENT_SOCKET] role:updated received in real-time:", payload);
+      const raw = localStorage.getItem("user") || localStorage.getItem("auth_user");
+      if (raw) {
+        const user = JSON.parse(raw);
+        if (payload.role !== undefined) user.role = payload.role;
+        if (payload.roleName !== undefined) user.roleName = payload.roleName;
+        if (payload.power !== undefined) user.power = payload.power;
+        if (payload.roleIconUrl !== undefined) user.roleIconUrl = payload.roleIconUrl;
+        if (Array.isArray(payload.permissions)) user.permissions = payload.permissions;
+
+        localStorage.setItem("user", JSON.stringify(user));
+        localStorage.setItem("auth_user", JSON.stringify(user));
+      }
+
+      if (payload.token) {
+        localStorage.setItem("authToken", payload.token);
+        localStorage.setItem("auth_token", payload.token);
+      }
+
+      // تحديث بيانات المصادقة للسوكيت فورياً
+      refreshSocketAuth();
+
+      // تحديث الصلاحيات اللحظية في المتجر
+      if (Array.isArray(payload.permissions)) {
+        useRealtimeStore.getState().setUserPermissions(payload.permissions);
+      }
+
+      // إشعار سياق تسجيل الدخول AuthContext وكافة المكونات فوراً دون ريفريش
+      window.dispatchEvent(new CustomEvent("app-auth-login"));
+      window.dispatchEvent(new CustomEvent("user-role-updated", { detail: payload }));
+      window.dispatchEvent(new CustomEvent("frame-updated"));
+    } catch (err) {
+      console.error("[CLIENT_SOCKET] role:updated handler error:", err);
+    }
+  });
+
   socket.onAny((eventName: string, ...args: unknown[]) => {
     if (eventName === "room_kicked" || eventName === "system_alert" || eventName === "connect" || eventName === "disconnect") {
       console.log("[CLIENT_SOCKET] event", eventName, args);
@@ -143,6 +247,21 @@ export function refreshSocketAuth(): void {
   }
 }
 
+export function reconnectSocket(): Socket {
+  const auth = readSocketAuth();
+  if (socket) {
+    socket.auth = auth;
+    if (socket.connected) {
+      socket.disconnect();
+    }
+    if (hasValidUserAuth()) {
+      socket.connect();
+    }
+    return socket;
+  }
+  return getSocket();
+}
+
 export function disconnectSocket(): void {
   if (socket) {
     socket.removeAllListeners();
@@ -154,7 +273,9 @@ export function disconnectSocket(): void {
 export function logoutSocket(): void {
   if (socket) {
     try {
-      socket.emit("user_logout");
+      if (socket.connected) {
+        socket.emit("user_logout");
+      }
     } catch {}
     socket.removeAllListeners();
     socket.disconnect();

@@ -1,4 +1,4 @@
-import { runAutoMigrations, verifyDatabaseSchema, ensureRoomBadgesColumns, ensureUserProfilesColumns } from "../db/migrate";
+import { runAutoMigrations, verifyDatabaseSchema, ensureRoomBadgesColumns, ensureUserProfilesColumns, ensureRoomAndMemberFeatures } from "../db/migrate";
 import { redis } from "../services/redis";
 
 let migrationDone = false;
@@ -27,6 +27,7 @@ export default (nitroApp: any) => {
 
       // تحديث جدول بروفايلات المستخدمين بالأعمدة الجديدة
       await ensureUserProfilesColumns();
+      await ensureRoomAndMemberFeatures();
 
       // مسح كاش الصلاحيات عند بدء التشغيل
       try {

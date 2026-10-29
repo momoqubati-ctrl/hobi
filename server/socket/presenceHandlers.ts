@@ -10,14 +10,47 @@ import {
   getTotalOnlineCount,
   getRoomMemberCount,
   pendingDisconnects,
+  kickDuplicateUserSockets,
 } from "./presenceManager";
 import { publishGlobalEvent } from "./SocketBroker";
 import { updateCachedWallAuthorProfile } from "../services/wallService";
-import { normalizeMinioUrl } from "../services/minioClient";
+import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "../services/minioClient";
 import { findInMemoryUser, updateInMemoryUserProfile } from "../services/authService";
 import { dbPool } from "../db";
 import { updatePersistedUserProfile } from "../services/userRepository";
 import { updateUserMessageIdentity } from "../services/chatStore";
+
+type PresenceAssetFields = {
+  avatar?: unknown;
+  avatarFrameUrl?: unknown;
+  giftIconUrl?: unknown;
+  memberCardBgUrl?: unknown;
+  giftedBannerUrl?: unknown;
+  giftedGiftIconUrl?: unknown;
+  giftedPromotionIconUrl?: unknown;
+  roleIconUrl?: unknown;
+};
+
+export const normalizePresenceUserAssets = <T extends PresenceAssetFields>(user: T): T & {
+  avatar: string;
+  avatarFrameUrl: string;
+  giftIconUrl: string;
+  memberCardBgUrl: string;
+  giftedBannerUrl: string;
+  giftedGiftIconUrl: string;
+  giftedPromotionIconUrl: string;
+  roleIconUrl: string;
+} => ({
+  ...user,
+  avatar: normalizeOptionalMinioUrl(user.avatar) || "/pic.png",
+  avatarFrameUrl: normalizeOptionalMinioUrl(user.avatarFrameUrl),
+  giftIconUrl: normalizeOptionalMinioUrl(user.giftIconUrl),
+  memberCardBgUrl: normalizeOptionalMinioUrl(user.memberCardBgUrl),
+  giftedBannerUrl: normalizeOptionalMinioUrl(user.giftedBannerUrl),
+  giftedGiftIconUrl: normalizeOptionalMinioUrl(user.giftedGiftIconUrl),
+  giftedPromotionIconUrl: normalizeOptionalMinioUrl(user.giftedPromotionIconUrl),
+  roleIconUrl: normalizeOptionalMinioUrl(user.roleIconUrl),
+});
 
 export async function registerPresenceHandlers(io: Server, socket: Socket): Promise<void> {
   const user = socket.data.user;
@@ -54,14 +87,14 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     if (profileRow) {
       dbIdreg = (profileRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (profileRow.profile_msg || "").toString().trim() || dbStatusMsg;
-      dbMemberCardBg = (profileRow.member_card_bg_url || "").toString().trim();
-      dbAvatarFrameUrl = (profileRow.avatar_frame_url || "").toString().trim();
+      dbMemberCardBg = normalizeOptionalMinioUrl(profileRow.member_card_bg_url);
+      dbAvatarFrameUrl = normalizeOptionalMinioUrl(profileRow.avatar_frame_url);
       dbNameColor = (profileRow.name_color || "").toString().trim();
       dbMessageColor = (profileRow.message_color || "").toString().trim();
       dbStatusFontColor = (profileRow.status_font_color || "").toString().trim();
-      dbGiftedBannerUrl = (profileRow.gifted_banner_url || "").toString().trim();
-      dbGiftedGiftIconUrl = (profileRow.gifted_gift_icon_url || "").toString().trim();
-      dbGiftedPromotionIconUrl = (profileRow.gifted_promotion_icon_url || "").toString().trim();
+      dbGiftedBannerUrl = normalizeOptionalMinioUrl(profileRow.gifted_banner_url);
+      dbGiftedGiftIconUrl = normalizeOptionalMinioUrl(profileRow.gifted_gift_icon_url);
+      dbGiftedPromotionIconUrl = normalizeOptionalMinioUrl(profileRow.gifted_promotion_icon_url);
     } else if (legacyRow) {
       dbIdreg = (legacyRow.idreg || "").toString().trim() || dbIdreg;
       dbStatusMsg = (legacyRow.msg || "").toString().trim() || dbStatusMsg;
@@ -82,7 +115,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       [user.id]
     );
     if (roleResult.rows[0]?.role_icon_url) {
-      dbRoleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
+      dbRoleIconUrl = normalizeOptionalMinioUrl(roleResult.rows[0].role_icon_url);
     }
   } catch (_) {}
 
@@ -96,6 +129,11 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         if (!dbMessageColor) dbMessageColor = (legacyColors.mcol || "").toString().trim();
       }
     } catch (_) {}
+  }
+
+  // إنهاء أي جلسة سابقة لنفس العضو المسجل وإخراجه من الصفحة القديمة
+  if (user.role !== "guest" && user.id && user.id !== "0") {
+    await kickDuplicateUserSockets(user.id, socket.id, io);
   }
 
   await addConnectedUser(socket.id, {
@@ -142,16 +180,23 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     const frameUrl = dbAvatarFrameUrl || user.avatarFrameUrl || "";
     const bgUrl = dbMemberCardBg || user.memberCardBgUrl || "";
     console.debug("[presence] emit user_connected", { socketId: socket.id, userId: user.id, idreg: dbIdreg, count, giftedBannerUrl: dbGiftedBannerUrl });
+    const connectedAssets = normalizePresenceUserAssets({
+      avatar: user.avatar || "/pic.png",
+      avatarFrameUrl: frameUrl,
+      giftIconUrl: user.giftIconUrl || "",
+      memberCardBgUrl: bgUrl,
+      giftedBannerUrl: dbGiftedBannerUrl || "",
+      giftedGiftIconUrl: dbGiftedGiftIconUrl || "",
+      giftedPromotionIconUrl: dbGiftedPromotionIconUrl || "",
+      roleIconUrl: dbRoleIconUrl || "",
+    });
     io.emit("user_connected", {
+      ...connectedAssets,
       socketId: socket.id,
       userId: user.id,
       username: user.username,
       role: user.role,
-      avatar: normalizeMinioUrl(user.avatar || "/pic.png"),
       countryCode: user.countryCode,
-      avatarFrameUrl: frameUrl ? normalizeMinioUrl(frameUrl) : "",
-      giftIconUrl: user.giftIconUrl || "",
-      memberCardBgUrl: bgUrl,
       nameColor: dbNameColor || user.nameColor || "",
       messageColor: dbMessageColor || user.messageColor || "",
       statusFontColor: dbStatusFontColor || user.statusFontColor || "",
@@ -160,10 +205,6 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       idreg: dbIdreg,
       siteBadge: user.siteBadge || "",
       statusMsg: dbStatusMsg,
-      giftedBannerUrl: dbGiftedBannerUrl || "",
-      giftedGiftIconUrl: dbGiftedGiftIconUrl || "",
-      giftedPromotionIconUrl: dbGiftedPromotionIconUrl || "",
-      roleIconUrl: dbRoleIconUrl || "",
       count,
     });
   } catch (err) {
@@ -242,8 +283,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         const dbProfile = profileMap.get(u.id);
         const statusMsg = (dbProfile?.msg || "").toString().trim() || u.statusMsg || "";
         const idreg = (dbProfile?.idreg || "").toString().trim() || u.idreg || "";
-        return {
+        return normalizePresenceUserAssets({
           id: u.id,
+          socketId: u.socketId,
           username: u.username,
           role: u.role,
           avatar: u.avatar,
@@ -263,7 +305,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
           giftedGiftIconUrl: dbProfile?.giftedGiftIconUrl || (u as any).giftedGiftIconUrl || "",
           giftedPromotionIconUrl: dbProfile?.giftedPromotionIconUrl || (u as any).giftedPromotionIconUrl || "",
           roleIconUrl: dbProfile?.roleIconUrl || (u as any).roleIconUrl || "",
-        };
+        });
       });
       callback?.({ success: true, users, count: users.length });
       console.debug("[presence] get_online_users response count=", users.length);
@@ -392,19 +434,16 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       },
     );
 
-io.emit("user_profile_updated", {
-      socketId: socket.id,
-      userId: user.id,
-      username: user.username,
-      previousUsername: oldUsername,
-      role: user.role,
-      avatar: normalizeMinioUrl(socket.data.user.avatar || user.avatar || "/pic.png"),
-      avatarUrl: normalizeMinioUrl(socket.data.user.avatar || user.avatar || "/pic.png"),
-      cover: socket.data.user.cover || "",
-      profileCover: socket.data.user.cover || "",
-      profileMsg: socket.data.user.profileMsg,
-      avatarFrameUrl: socket.data.user.avatarFrameUrl ? normalizeMinioUrl(socket.data.user.avatarFrameUrl) : "",
-      giftIconUrl: socket.data.user.giftIconUrl || "",
+const updatedAssets = normalizePresenceUserAssets({
+  socketId: socket.id,
+  userId: user.id,
+  username: user.username,
+  previousUsername: oldUsername,
+  role: user.role,
+  avatar: socket.data.user.avatar || user.avatar || "/pic.png",
+  profileMsg: socket.data.user.profileMsg,
+  avatarFrameUrl: socket.data.user.avatarFrameUrl ? normalizeMinioUrl(socket.data.user.avatarFrameUrl) : "",
+  giftIconUrl: socket.data.user.giftIconUrl || "",
       memberCardBgUrl: socket.data.user.memberCardBgUrl || "",
       nameColor: socket.data.user.nameColor || "",
       messageColor: socket.data.user.messageColor || "",
@@ -418,6 +457,12 @@ io.emit("user_profile_updated", {
       giftedGiftIconUrl: (socket.data.user as any).giftedGiftIconUrl || "",
       giftedPromotionIconUrl: (socket.data.user as any).giftedPromotionIconUrl || "",
       roleIconUrl: (socket.data.user as any).roleIconUrl || "",
+    });
+    io.emit("user_profile_updated", {
+      ...updatedAssets,
+      avatarUrl: updatedAssets.avatar,
+      cover: normalizeOptionalMinioUrl(socket.data.user.cover),
+      profileCover: normalizeOptionalMinioUrl(socket.data.user.cover),
     });
   };
 

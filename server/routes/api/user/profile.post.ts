@@ -44,11 +44,11 @@ export default defineEventHandler(async (event) => {
 
   try {
 const body = await readBody(event);
-      const { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor } = body;
+      const { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor, youtubeUrl } = body;
 
-      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor });
+      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor, youtubeUrl });
 
-      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string } = {};
+      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string; youtubeUrl?: string } = {};
 
     if (avatar && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
@@ -90,6 +90,10 @@ const body = await readBody(event);
       updates.statusFontColor = statusFontColor.trim().slice(0, 20);
     }
 
+    if (youtubeUrl !== undefined && typeof youtubeUrl === "string") {
+      updates.youtubeUrl = youtubeUrl.trim().slice(0, 255);
+    }
+
     // 2. Update Database
     const dbSuccess = await updatePersistedUserProfile(userId, updates);
 
@@ -125,6 +129,7 @@ const body = await readBody(event);
       nameColor: updates.nameColor,
       messageColor: updates.messageColor,
       statusFontColor: updates.statusFontColor,
+      youtubeUrl: updates.youtubeUrl,
     };
 
     console.log("[API] Profile update eventPayload:", eventPayload);

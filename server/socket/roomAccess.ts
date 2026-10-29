@@ -47,11 +47,32 @@ export async function resolveRoomIdVariants(input?: string | null): Promise<stri
 
 export async function resolveRoomId(input?: string | null): Promise<string> {
   const raw = String(input ?? "").trim();
-  const variants = await resolveRoomIdVariants(input);
-  const normalizedRaw = normalizeRoomIdValue(raw);
-  const canonical = variants.find((value) => {
-    const normalizedValue = normalizeRoomIdValue(value);
-    return Boolean(value) && normalizedValue && normalizedValue !== normalizedRaw;
-  });
-  return canonical || variants[0] || normalizedRaw || raw;
+  if (!raw) return "";
+  
+  const normalized = normalizeRoomIdValue(raw);
+  const candidates = Array.from(new Set([
+    raw,
+    normalized,
+    raw.replace(/^room:/i, "").trim(),
+    raw.replace(/^social:/i, "").trim(),
+    raw.split(":").pop()?.trim(),
+  ].filter(Boolean)));
+
+  try {
+    const result = await dbPool.query(
+      `SELECT CAST(id AS text) AS id
+       FROM rooms
+       WHERE CAST(id AS text) = ANY($1::text[])
+          OR slug = ANY($1::text[])
+       LIMIT 1`,
+      [candidates]
+    );
+    if (result.rows[0]?.id) {
+      return String(result.rows[0].id);
+    }
+  } catch (err) {
+    // keep fallback values
+  }
+
+  return normalized || raw;
 }

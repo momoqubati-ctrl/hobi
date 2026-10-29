@@ -165,7 +165,9 @@ const RoomList = ({ onSelectRoom, onLockedRoom, activeRoomId }: { onSelectRoom: 
             )}
 
             {filteredRooms.map((room) => (
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 key={room.id}
                 onClick={() => {
                   if (room.locked) {
@@ -174,8 +176,13 @@ const RoomList = ({ onSelectRoom, onLockedRoom, activeRoomId }: { onSelectRoom: 
                     onSelectRoom(room);
                   }
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    if (room.locked) onLockedRoom(room);
+                    else onSelectRoom(room);
+                  }
+                }}
                 className={`group flex w-full cursor-pointer items-center gap-3 rounded-lg border-b border-border/50 p-2 text-left transition-all hover:bg-slate-100 [direction:ltr] ${activeRoomId === room.id ? "bg-primary/10 border-r-2 border-r-primary" : ""}`}
-                type="button"
               >
                 <div className="relative shrink-0">
                   <img src={room.image} alt={room.name} className="h-12 w-12 rounded-lg object-cover shadow-sm" />
@@ -239,7 +246,7 @@ const RoomList = ({ onSelectRoom, onLockedRoom, activeRoomId }: { onSelectRoom: 
                     </div>
                   </div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </>

@@ -1,13 +1,14 @@
 import { defineEventHandler, getRouterParam, readBody, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
-import { getAdminContext } from "../../../../services/adminAccess";
+import { getUserAuthContext } from "../../../../services/adminAccess";
+import { getUserContext } from "../../../../services/permissionEngine";
 import { invalidateRoomCache } from "../../../../services/chatStore";
 
 export default defineEventHandler(async (event) => {
-  const admin = getAdminContext(event);
-  if (!admin.ok) {
-    setResponseStatus(event, admin.statusCode);
-    return { success: false, message: admin.message };
+  const auth = getUserAuthContext(event);
+  if (!auth.ok) {
+    setResponseStatus(event, auth.statusCode);
+    return { success: false, message: auth.message };
   }
 
   const id = getRouterParam(event, "id");
@@ -17,12 +18,51 @@ export default defineEventHandler(async (event) => {
 
   try {
     const room = await dbPool.query(
-      "SELECT idroom FROM rooms WHERE idroom = $1 AND COALESCE(deleted, 0) = 0 LIMIT 1",
+      "SELECT idroom, owner, \"user\" FROM rooms WHERE (CAST(idroom AS text) = $1 OR CAST(id AS text) = $1 OR slug = $1) AND COALESCE(deleted, 0) = 0 LIMIT 1",
       [id],
     );
 
     if ((room.rowCount || 0) === 0) {
       return { success: false, message: "الغرفة غير موجودة" };
+    }
+
+    const roomRow = room.rows[0];
+    const actualIdroom = roomRow.idroom;
+
+    // Check permissions
+    let isAuthorized = false;
+    if (auth.role === "owner" || auth.role === "admin") {
+      isAuthorized = true;
+    } else {
+      const userCtx = await getUserContext(auth.userId);
+      if (
+        userCtx.permissions.has("rooms.edit") ||
+        userCtx.permissions.has("rooms.all") ||
+        userCtx.permissions.has("admin_rooms.edit") ||
+        userCtx.permissions.has("admin_rooms.all")
+      ) {
+        isAuthorized = true;
+      } else {
+        const uRes = await dbPool.query(
+          "SELECT idreg, username FROM users WHERE id = $1 OR CAST(idreg AS text) = $1 OR CAST(uid AS text) = $1 LIMIT 1",
+          [auth.userId],
+        );
+        const uRow = uRes.rows[0];
+        const isOwner = Boolean(
+          uRow && (
+            (uRow.idreg && roomRow.owner === `#${uRow.idreg}`) ||
+            (uRow.username && (roomRow.user === uRow.username || roomRow.owner === uRow.username))
+          )
+        );
+        if (isOwner || userCtx.permissions.has("roomowner.edit") || userCtx.permissions.has("roomowner.all")) {
+          isAuthorized = true;
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "لا تملك الصلاحية الكافية لتعديل هذه الغرفة" };
     }
 
     const body = await readBody(event);
@@ -55,7 +95,7 @@ export default defineEventHandler(async (event) => {
       }
       const existing = await dbPool.query(
         "SELECT idroom FROM rooms WHERE slug = $1 AND idroom != $2 LIMIT 1",
-        [safeSlug, id],
+        [safeSlug, actualIdroom],
       );
       if ((existing.rowCount || 0) > 0) {
         return { success: false, message: "رابط الغرفة مستخدم بالفعل، اختر رابطاً آخر" };
@@ -116,7 +156,7 @@ export default defineEventHandler(async (event) => {
         localSendMode || null,
         micSlots ? Math.max(parseInt(micSlots, 10), 1) : null,
         stageState ? JSON.stringify(stageState) : undefined,
-        id,
+        actualIdroom,
       ].filter((p) => p !== undefined),
     );
 

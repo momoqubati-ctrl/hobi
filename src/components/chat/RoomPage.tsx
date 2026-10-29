@@ -1,4 +1,5 @@
 "use client";
+import { RoomProfileModal } from "./RoomProfileModal";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -7,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmojiPanel } from "./EmojiPickerPopover";
-import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile, LogOut, Menu } from "lucide-react";
+import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile, LogOut, Menu, Settings } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
@@ -18,6 +19,8 @@ import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { fetchAnimatedFaces, AnimatedFace, findAnimatedFace } from "@/lib/animatedFaceData";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import { NotificationsBell } from "./NotificationsPanel";
+import { VoiceStage } from "./VoiceStage";
+import { RoomSettingsModal } from "./RoomSettingsModal";
 const showMuteAlert = (message: string) => {
   let detail: any = {
     alertId: String(Date.now()),
@@ -103,6 +106,14 @@ type RoomMember = {
   avatarFrameUrl?: string;
   giftIconUrl?: string;
   statusFontColor?: string;
+  level?: number;
+  exp?: number;
+  roomRole?: string;
+  roomPower?: number;
+  customTitle?: string;
+  idreg?: string;
+  nameColor?: string;
+  status?: string;
 };
 
 const getStoredUser = () => {
@@ -755,8 +766,13 @@ const RoomPage = ({
 }: any) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const onlineUsers = useRealtimeStore((state) => state.onlineUsers);
-  const roomId = useMemo(() => String(room?.id ?? "general"), [room?.id]);
-  const roomFromStore = useRealtimeStore((state) => state.rooms.find((r) => String(r.id) === roomId));
+  const rawRoomId = useMemo(() => String(room?.id ?? "general"), [room?.id]);
+  const roomsFromStoreList = useRealtimeStore((state) => state.rooms);
+  const roomId = useMemo(() => {
+    const matchedRoom = roomsFromStoreList.find((r) => r.id === rawRoomId || r.slug === rawRoomId);
+    return matchedRoom?.id || rawRoomId;
+  }, [rawRoomId, roomsFromStoreList]);
+  const roomFromStore = useMemo(() => roomsFromStoreList.find((r) => String(r.id) === roomId), [roomId, roomsFromStoreList]);
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [memberCount, setMemberCount] = useState(() => roomFromStore?.members ?? room?.members ?? 0);
   const [isLoading, setIsLoading] = useState(true);
@@ -773,6 +789,81 @@ const RoomPage = ({
   const hasJoinedOnceRef = useRef(false);
   const reactionPickerRef = useRef<HTMLDivElement>(null);
   const currentUser = getStoredUser();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRoomProfileOpen, setIsRoomProfileOpen] = useState(false);
+  const userPermissions = useRealtimeStore((state) => state.userPermissions) || [];
+  const [permissions, setPermissions] = useState<string[]>(userPermissions);
+  const [userRole, setUserRole] = useState<string>(() => currentUser?.role || "");
+
+  useEffect(() => {
+    if (userPermissions && userPermissions.length > 0) {
+      setPermissions(userPermissions);
+    }
+  }, [userPermissions]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("authToken");
+    if (!token) return;
+    fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (Array.isArray(data.permissions)) {
+            setPermissions(data.permissions);
+            useRealtimeStore.getState().setUserPermissions?.(data.permissions);
+          }
+          if (data.role) {
+            setUserRole(data.role);
+          }
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch user permissions in RoomPage:", err));
+  }, []);
+
+  const canManageRoom = useMemo(() => {
+    if (!currentUser || currentUser.role === "guest") return false;
+
+    // 1. Owner or Admin role
+    if (userRole === "owner" || userRole === "admin" || currentUser.role === "admin") {
+      return true;
+    }
+
+    // 2. Room management permissions from "صلاحيات" (Roles / Permissions) tab in CP
+    const hasRoomPermission = permissions.some((p) =>
+      [
+        "rooms.edit",
+        "rooms.all",
+        "admin_rooms.edit",
+        "admin_rooms.all",
+        "rooms.delete",
+      ].includes(p)
+    );
+    if (hasRoomPermission) return true;
+
+    // 3. Room owner matching
+    const currentRoom = roomFromStore || room;
+    const isOwner = Boolean(
+      currentRoom?.owner && (
+        currentRoom.owner === `#${currentUser.id}` ||
+        currentRoom.owner === currentUser.name ||
+        currentRoom.owner === (currentUser as any).username ||
+        (currentRoom as any).user === currentUser.name ||
+        (currentRoom as any).user === (currentUser as any).username
+      )
+    ) || Boolean(currentRoom?.ownerId && String(currentRoom.ownerId) === String(currentUser.id));
+
+    if (isOwner) return true;
+
+    // 4. roomowner permission assigned to user in CP and room owner matching
+    const hasOwnerPermission = permissions.some((p) =>
+      ["roomowner.edit", "roomowner.all"].includes(p)
+    );
+    if (hasOwnerPermission && isOwner) return true;
+
+    return false;
+  }, [currentUser, userRole, permissions, room, roomFromStore]);
 
   const skipInitialJoinRef = useRef(false);
 
@@ -790,7 +881,12 @@ const RoomPage = ({
     setOpenActionMsgId(null);
     setActiveYouTubeEmbedUrl(null);
     setMemberCount(roomFromStore?.members ?? room?.members ?? 0);
-  }, [roomId, autoJoin, roomFromStore?.members, room?.members]);
+  }, [roomId, autoJoin]);
+
+  // تحديث عدد المتواجدين فقط عند تغيره في المخزن أو الخصائص دون إعادة تهيئة الغرفة بأكملها
+  useEffect(() => {
+    setMemberCount(roomFromStore?.members ?? room?.members ?? 0);
+  }, [roomFromStore?.members, room?.members]);
 
   // إغلاق قائمة التفاعل عند النقر خارجها
   useEffect(() => {
@@ -848,6 +944,11 @@ const RoomPage = ({
   // ربط Socket.io
   useEffect(() => {
     const socket = getSocket();
+
+    const onLevelUp = (data: any) => {
+      showSuccess(`🎉 مبروك! لقد ارتقيت إلى المستوى ${data.newLevel}!`);
+    };
+    socket.on("user:level_up", onLevelUp);
 
     const onConnect = () => {
       setIsConnected(true);
@@ -909,7 +1010,11 @@ const RoomPage = ({
 
     const onUserJoined = (data: { user: RoomMember; memberCount: number }) => {
       setMembers((prev) => {
-        if (prev.some((m) => m.id === data.user.id)) return prev;
+        const uId = String(data.user?.id || "");
+        const uName = String(data.user?.username || "").toLowerCase();
+        if (prev.some((m) => (uId && String(m.id) === uId) || (uName && String(m.username).toLowerCase() === uName))) {
+          return prev.map((m) => ((uId && String(m.id) === uId) || (uName && String(m.username).toLowerCase() === uName)) ? { ...m, ...data.user } : m);
+        }
         return [...prev, data.user];
       });
       setMemberCount(data.memberCount);
@@ -918,7 +1023,8 @@ const RoomPage = ({
     const onUserLeft = (data: { socketId: string; memberCount: number; username?: string }) => {
       setMemberCount(data.memberCount);
       if (data.username) {
-        setMembers((prev) => prev.filter((m) => m.username !== data.username));
+        const uName = data.username.toLowerCase();
+        setMembers((prev) => prev.filter((m) => String(m.username).toLowerCase() !== uName));
       }
     };
 
@@ -943,6 +1049,7 @@ const RoomPage = ({
       text: string;
       roomId: string;
       systemType?: "join" | "leave" | "transition";
+      createdAt?: string;
       user?: {
         id: string;
         username: string;
@@ -973,7 +1080,7 @@ const RoomPage = ({
             isSystem: true,
             systemType: data.systemType,
             targetRoom: data.targetRoom,
-            createdAt: new Date().toISOString(),
+            createdAt: data.createdAt || new Date().toISOString(),
           },
         ]);
       }
@@ -1058,6 +1165,7 @@ const RoomPage = ({
     }
 
     return () => {
+      socket.off("user:level_up", onLevelUp);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("new_message", onNewMessage);
@@ -1402,21 +1510,32 @@ const RoomPage = ({
               <ChevronLeft size={24} />
             </Button>
           )}
-          <div className="relative">
-            <Avatar className="w-10 h-10 rounded-xl border border-border shadow-sm">
-              <AvatarImage src={room.image} />
-              <AvatarFallback>{room.name?.[0] ?? "غ"}</AvatarFallback>
-            </Avatar>
-            <div className={`absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
-          </div>
-          <div dir="ltr">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-xs font-black leading-tight text-foreground">{room.name}</h3>
-              <Crown size={12} className="text-yellow-500" />
+                    <div 
+            className="flex items-center gap-2.5 cursor-pointer select-none group"
+            onClick={() => setIsRoomProfileOpen(true)}
+            title="عرض بروفايل الغرفة ومستواها"
+          >
+            <div className="relative">
+              <Avatar className="w-10 h-10 rounded-xl border border-border shadow-sm group-hover:ring-2 group-hover:ring-primary/50 transition-all">
+                <AvatarImage src={room.image || room.avatarUrl} />
+                <AvatarFallback>{room.name?.[0] ?? "غ"}</AvatarFallback>
+              </Avatar>
+              <div className={`absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
             </div>
-            <p className="text-[9px] font-bold text-muted-foreground">
-              {memberCount > 0 ? `${memberCount} متصل` : "بواسطة: " + room.owner}
-            </p>
+            <div dir="ltr">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-black leading-tight text-foreground group-hover:text-primary transition-colors">{room.name}</h3>
+                <Crown size={12} className="text-yellow-500" />
+                {(roomFromStore?.level || room?.level) && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/30 font-black">
+                    Lv.{roomFromStore?.level || room?.level}
+                  </span>
+                )}
+              </div>
+              <p className="text-[9px] font-bold text-muted-foreground">
+                {memberCount > 0 ? `${memberCount} متصل` : "بواسطة: " + (room.owner || "إدارة الموقع")}
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -1428,9 +1547,25 @@ const RoomPage = ({
           <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)} className={`h-9 w-9 rounded-xl ${isMuted ? "bg-red-50 text-red-500" : "text-muted-foreground"}`}>
             {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </Button>
-          {(room?.mics ?? 0) > 0 && (
-            <Button variant="ghost" size="icon" onClick={() => setShowMics(!showMics)} className={`h-9 w-9 rounded-xl ${showMics ? "bg-primary/5 text-primary" : "text-muted-foreground"}`}>
-              <Mic2 size={18} />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowMics(!showMics)}
+            title={showMics ? "إخفاء المنصة الصوتية" : "إظهار المنصة الصوتية"}
+            className={`h-9 w-9 rounded-xl transition-colors ${showMics ? "bg-emerald-500/10 text-emerald-500 font-bold" : "text-muted-foreground"}`}
+          >
+            <Mic2 size={18} />
+          </Button>
+
+          {canManageRoom && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsSettingsOpen(true)}
+              title="إدارة الغرفة"
+              className="h-9 w-9 rounded-xl text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Settings size={18} />
             </Button>
           )}
 
@@ -1440,28 +1575,23 @@ const RoomPage = ({
         </div>
       </header>
 
-      {showMics && (room?.mics ?? 0) > 0 && (
-        <div className="absolute top-[56px] inset-x-0 z-10 grid gap-2 overflow-x-auto border-b border-border bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-md p-2 no-scrollbar" style={{ gridTemplateColumns: `repeat(${Math.min(room?.mics ?? 5, 5)}, minmax(0, 1fr))` }}>
-          {Array.from({ length: Math.min(room?.mics ?? 5, 5) }, (_, idx) => idx + 1).map((i) => (
-            <div key={i} className="flex flex-col items-center gap-1">
-              <div className="relative">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${i === 1 ? "border-primary bg-card shadow-sm" : "border-border bg-slate-100"}`}>
-                  {i === 1 ? (
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src="https://i.pravatar.cc/150?u=active-speaker" />
-                      <AvatarFallback>م</AvatarFallback>
-                    </Avatar>
-                  ) : (
-                    <MicOff size={14} className="text-slate-300" />
-                  )}
-                </div>
-                <div className="absolute -bottom-1 -right-1 rounded-full border border-border bg-card px-1 text-[8px] font-black">
-                  {i}
-                </div>
-              </div>
-              <span className="w-12 truncate text-center text-[8px] font-bold text-muted-foreground">{i === 1 ? "متحدث" : "فارغ"}</span>
-            </div>
-          ))}
+      {showMics && (
+        <div className="absolute top-[56px] inset-x-0 z-10 shadow-md">
+          <VoiceStage
+            key={roomId}
+            roomId={roomId}
+            roomName={room?.name}
+            currentUser={{
+              id: String(currentUser?.id || currentUser?.name || "guest"),
+              username: String(currentUser?.username || currentUser?.name || "زائر"),
+              role: currentUser?.role,
+              avatar: currentUser?.avatar || "/pic.png",
+              seatFrameUrl: (currentUser as any)?.seatFrameUrl,
+            }}
+            isVoiceChannel={Boolean(room?.slug?.startsWith("voice-") || (room as any)?.settings?.type === "voice_channel" || (room?.mics ?? 0) > 5)}
+            externalMuted={isMuted}
+            onToggleExternalMute={() => setIsMuted((prev: boolean) => !prev)}
+          />
         </div>
       )}
 
@@ -1487,7 +1617,7 @@ const RoomPage = ({
         </div>
       )}
 
-      <div ref={scrollRef} dir="ltr" className={`flex-1 space-y-3 overflow-y-auto bg-muted/50 p-3 [direction:ltr] ${showMics ? "pt-[120px]" : "pt-[64px]"}`}>
+      <div ref={scrollRef} dir="ltr" className={`flex-1 space-y-3 overflow-y-auto bg-muted/50 p-3 [direction:ltr] ${showMics ? "pt-[140px]" : "pt-[64px]"}`}>
         {isLoading && (
           <div className="flex h-24 items-center justify-center text-muted-foreground">
             <Loader2 className="animate-spin" size={20} />
@@ -1675,12 +1805,17 @@ const RoomPage = ({
                       <Button
                         size="sm"
                         variant="default"
-                        onClick={() => onSelectRoom?.({
-                          id: msg.targetRoom?.id,
-                          name: msg.targetRoom?.name,
-                          image: msg.targetRoom?.image,
-                          owner: "إدارة الموقع"
-                        })}
+                        onClick={() => {
+                          const targetId = msg.targetRoom?.id;
+                          // Merge full room data from the store to ensure members, maxMembers, etc. are included
+                          const fullRoom = roomsFromStoreList.find((r: any) => r.id === targetId || r.slug === targetId);
+                          onSelectRoom?.({
+                            ...(fullRoom || {}),
+                            id: targetId,
+                            name: msg.targetRoom?.name || fullRoom?.name,
+                            image: msg.targetRoom?.image || fullRoom?.image,
+                          });
+                        }}
                         className="h-7 rounded-lg bg-primary hover:bg-primary/95 text-[9px] font-black text-white px-3 flex items-center gap-1 shadow-md shadow-primary/10 transition-all active:scale-95 shrink-0"
                       >
                         <span>انضمام</span>
@@ -1788,6 +1923,32 @@ const RoomPage = ({
         onSendAnimatedFace={handleSendAnimatedFace}
         replyToMsg={replyToMsg}
         onCancelReply={() => setReplyToMsg(null)}
+      />
+
+      {canManageRoom && (
+        <RoomSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          roomId={roomId}
+          room={roomFromStore || room}
+          onRoomUpdated={(updatedRoom) => {
+            if (updatedRoom) {
+              if (updatedRoom.micSlots !== undefined || updatedRoom.mics !== undefined) {
+                setShowMics(Number(updatedRoom.micSlots || updatedRoom.mics) > 0);
+              }
+            }
+          }}
+        />
+      )}
+
+      {/* مودال بروفايل الغرفة متاح لجميع الأعضاء والزوار */}
+      <RoomProfileModal
+        isOpen={isRoomProfileOpen}
+        onClose={() => setIsRoomProfileOpen(false)}
+        roomId={roomId}
+        room={roomFromStore || room}
+        members={members}
+        onOpenProfile={onOpenProfile}
       />
     </div>
   );

@@ -18,7 +18,7 @@ const normalizeAuthorName = (value?: string | null) => {
   return name ? name.slice(0, 80) : "";
 };
 
-const mapWallPost = (row: any) => {
+export const mapWallPost = (row: any) => {
   let mediaUrls: string[] | null = null;
   try {
     if (row.mediaUrls) {
@@ -28,6 +28,8 @@ const mapWallPost = (row: any) => {
   } catch {
     mediaUrls = null;
   }
+  const normalizedMediaUrls = mediaUrls?.map((url) => normalizeAssetPath(url, "")) ??
+    (row.mediaUrl ? [normalizeAssetPath(row.mediaUrl, "")] : null);
 
   let animatedFaces: string[] | null = null;
   try {
@@ -43,7 +45,7 @@ const mapWallPost = (row: any) => {
     id: String(row.id),
     body: row.body,
     mediaUrl: row.mediaUrl ? normalizeAssetPath(row.mediaUrl, "") : null,
-    mediaUrls: mediaUrls || (row.mediaUrl ? [normalizeAssetPath(row.mediaUrl, "")] : null),
+    mediaUrls: normalizedMediaUrls,
     animatedFaces,
     createdAt: row.createdAt || new Date().toISOString(),
     author: {
@@ -51,10 +53,10 @@ const mapWallPost = (row: any) => {
       name: row.authorName || row.fallbackAuthorName || row.authorId || "زائر",
       avatar: normalizeAssetPath(row.authorAvatar, "/pic.png"),
       nameColor: row.authorNameColor || "",
-      giftedBannerUrl: row.authorGiftedBannerUrl || "",
-      giftedGiftIconUrl: row.authorGiftedGiftIconUrl || "",
-      giftedPromotionIconUrl: row.authorGiftedPromotionIconUrl || "",
-      roleIconUrl: row.authorRoleIconUrl || "",
+      giftedBannerUrl: normalizeAssetPath(row.authorGiftedBannerUrl, ""),
+      giftedGiftIconUrl: normalizeAssetPath(row.authorGiftedGiftIconUrl, ""),
+      giftedPromotionIconUrl: normalizeAssetPath(row.authorGiftedPromotionIconUrl, ""),
+      roleIconUrl: normalizeAssetPath(row.authorRoleIconUrl, ""),
     },
   };
 };

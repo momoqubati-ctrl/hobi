@@ -77,6 +77,13 @@
   background: #cbd5e1;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
 .chat-bubble-rtl {
   border-radius: 18px 18px 0px 18px;
 }

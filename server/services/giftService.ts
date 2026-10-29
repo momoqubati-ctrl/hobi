@@ -1,3 +1,4 @@
+import { addUserExp } from "./userLevelService";
 import { dbPool } from "../db";
 
 export interface GiftCatalogItem {
@@ -75,6 +76,12 @@ export const sendGift = async (
     );
 
     await client.query("COMMIT");
+
+    // ترقية مستوى المرسل والمستقبل بناءً على قيمة الهدية
+    addUserExp(senderId, totalCoins * 2, { source: "gift" }).catch(() => {});
+    if (receiverId) {
+      addUserExp(receiverId, totalCoins * 1, { source: "gift" }).catch(() => {});
+    }
 
     const txn = txnRes.rows[0];
     return {

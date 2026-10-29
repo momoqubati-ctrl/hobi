@@ -44,6 +44,7 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
   const [mediaPreview, setMediaPreview] = useState<string>("");
   const [mediaType, setMediaType] = useState<"image" | "video" | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socket = getSocket();
 
@@ -80,7 +81,7 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
       return;
     }
 
-    // ضغط الصور فقط (وليس الفيديو)
+    // ضغط الصور تلقائياً فوراً
     if (isImage) {
       try {
         const { compressImage, COMPRESS_PRESETS, getCompressionSummary } = await import("@/lib/image-compress");
@@ -95,6 +96,14 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
       } catch {
         // Fallback: use original
       }
+    }
+
+    // فيديوهات القصص: تعيين فوري لمعاينة الفيديو دون تعطيل المستخدم
+    if (isVideo) {
+      setMediaType("video");
+      setMediaFile(file);
+      setMediaPreview(URL.createObjectURL(file));
+      return;
     }
 
     setMediaFile(file);
@@ -121,17 +130,19 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
       let finalMediaType: "image" | "video" | "text" = mode === "text" ? "text" : mediaType || "image";
 
       if (mode === "media" && mediaFile) {
-        const token = localStorage.getItem("authToken");
+        const token = localStorage.getItem("auth_token") || localStorage.getItem("authToken");
         const reader = new FileReader();
         finalMediaUrl = await new Promise((resolve, reject) => {
           reader.onload = async () => {
             const base64Data = reader.result as string;
-            const ext = mediaFile.name.split(".").pop() || "jpg";
+            const rawExt = mediaFile.name.split(".").pop()?.toLowerCase() || (mediaType === "video" ? "mp4" : "jpg");
+            const ext = mediaType === "video" ? (rawExt === "mov" ? "mp4" : rawExt) : rawExt;
+            const contentType = mediaType === "video" ? (mediaFile.type === "video/quicktime" ? "video/mp4" : (mediaFile.type || "video/mp4")) : mediaFile.type;
             try {
               const uploadRes = await fetch("/api/upload", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ file: base64Data.split(",")[1], filename: `story.${ext}`, contentType: mediaFile.type }),
+                body: JSON.stringify({ file: base64Data.split(",")[1], filename: `story.${ext}`, contentType }),
               });
               const uploadData = await uploadRes.json();
               if (uploadData.success) resolve(uploadData.url);
@@ -222,7 +233,7 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
                     >
                       {bgColor === g.value && (
                         <Check className="absolute inset-0 m-auto h-4 w-4 text-white drop-shadow" />
-          )}
+                      )}
                     </button>
                   ))}
                 </div>
@@ -290,7 +301,7 @@ const StoryCreator = ({ open, onClose }: StoryCreatorProps) => {
                 >
                   <Camera className="h-8 w-8 sm:h-10 sm:w-10" />
                   <span className="text-xs sm:text-sm font-bold">اختر صورة أو فيديو</span>
-                  <span className="text-[10px] font-bold">حد أقصى 50 ميجابايت</span>
+                  <span className="text-[10px] font-bold">دعم تشغيل فوري وسلس للفيديوهات</span>
                 </button>
               )}
               <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleFileSelect} />

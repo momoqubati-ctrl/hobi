@@ -7,8 +7,9 @@ export default (nitroApp: any) => {
     if (initialized) return;
 
     // في وضع التطوير (Vite)، الـ Socket.io مُدار بواسطة Vite plugin — لا ننشئ خادماً جديداً
-    if ((globalThis as any).__VITE_SOCKET_IO_CREATED__) {
+    if ((process as any).__VITE_SOCKET_IO_CREATED__ || (globalThis as any).__VITE_SOCKET_IO_CREATED__) {
       initialized = true;
+      console.log("[Socket.io] Skipping Nitro Socket.io init (Vite plugin owns it)");
       return;
     }
 

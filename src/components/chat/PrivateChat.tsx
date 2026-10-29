@@ -4,7 +4,8 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, Send, Wifi, WifiOff, ImagePlus, X, SmilePlus, Reply, ArrowLeft, Youtube, Smile, Plus, Mic, MicOff } from "lucide-react";
+import { ArrowRight, Loader2, Send, Wifi, WifiOff, ImagePlus, X, SmilePlus, Reply, ArrowLeft, Youtube, Smile, Plus, Mic, MicOff, PhoneCall, Video } from "lucide-react";
+import VoiceCallManager, { ChatCallLog, CallLogMessage } from "./call";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import VoiceMessagePlayer from "./VoiceMessagePlayer";
@@ -195,6 +196,35 @@ const PrivateChat = ({
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
   const recorder = useVoiceRecorder();
+  const [callLogs, setCallLogs] = useState<CallLogMessage[]>([
+    {
+      id: "demo_call_1",
+      type: "missed",
+      timestamp: "10:30 م",
+      callerId: otherUser.id,
+      callerName: otherUser.name,
+    },
+    {
+      id: "demo_call_2",
+      type: "completed",
+      durationSeconds: 255,
+      timestamp: "10:45 م",
+      callerId: otherUser.id,
+      callerName: otherUser.name,
+    },
+  ]);
+
+  useEffect(() => {
+    const handleLog = (e: any) => {
+      const log = e.detail;
+      if (log && (log.callerId === otherUser.id || log.callerId === otherUserData.id)) {
+        setCallLogs((prev) => [...prev, log]);
+      }
+    };
+    window.addEventListener("call-logged", handleLog);
+    return () => window.removeEventListener("call-logged", handleLog);
+  }, [otherUser.id, otherUserData.id]);
+  const [triggerCall, setTriggerCall] = useState<boolean>(false);
 
   useEffect(() => {
     fetchAnimatedFaces().then((f) => { if (f.length > 0) setAnimatedFaces(f); });
@@ -1036,6 +1066,59 @@ const PrivateChat = ({
             <p className="text-[10px] text-muted-foreground font-medium">محادثة خاصة</p>
           )}
         </div>
+        {/* زر بدء الاتصال الصوتي */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-xl h-9 w-9 shrink-0 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+          onClick={() => {
+            console.log("[PrivateChat] Call button clicked. Target user:", otherUserData);
+            window.dispatchEvent(
+              new CustomEvent("start-voice-call", {
+                detail: {
+                  user: {
+                    id: String(otherUserData.id || otherUser.id),
+                    name: resolvedName,
+                    avatar: resolvedAvatar,
+                    rank: "عضو نشط",
+                    verified: true,
+                  },
+                },
+              })
+            );
+          }}
+          title="اتصال صوتي"
+        >
+          <PhoneCall size={18} />
+        </Button>
+
+        {/* زر بدء مكالمة فيديو */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-xl h-9 w-9 shrink-0 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
+          onClick={() => {
+            console.log("[PrivateChat] Video call button clicked. Target user:", otherUserData);
+            window.dispatchEvent(
+              new CustomEvent("start-voice-call", {
+                detail: {
+                  mode: "video",
+                  user: {
+                    id: String(otherUserData.id || otherUser.id),
+                    name: resolvedName,
+                    avatar: resolvedAvatar,
+                    rank: "عضو نشط",
+                    verified: true,
+                  },
+                },
+              })
+            );
+          }}
+          title="مكالمة فيديو HD"
+        >
+          <Video size={18} />
+        </Button>
+
         <div className="shrink-0" title={socketConnected ? "متصل" : "غير متصل"}>
           {socketConnected
             ? <Wifi size={14} className="text-green-500" />
@@ -1068,6 +1151,14 @@ const PrivateChat = ({
 
       {/* منطقة الرسائل */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 bg-slate-50 dark:bg-slate-950">
+        {/* سجلات المكالمات التجريبية / Call Logs */}
+        {callLogs.map((log) => (
+          <ChatCallLog
+            key={log.id}
+            log={log}
+            onCallBack={() => setTriggerCall((prev) => !prev)}
+          />
+        ))}
         {loading ? (
           <div className="flex justify-center py-10">
             <Loader2 className="animate-spin text-primary" size={22} />
@@ -1569,6 +1660,8 @@ const PrivateChat = ({
           </Button>
         </div>
       </div>
+
+
     </div>
   );
 };

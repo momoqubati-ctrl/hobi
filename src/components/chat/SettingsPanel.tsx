@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useTheme } from "next-themes";
 import { useNavigate } from "react-router-dom";
 import { getSocket, logoutSocket, refreshSocketAuth } from "@/lib/socket";
+import { terminateUserSession } from "@/lib/authSession";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { useStoriesStore } from "@/lib/stories-store";
 import { 
@@ -23,13 +24,16 @@ import {
   Sun,
   Camera,
   Loader2,
-  ChevronRight
+  ChevronRight,
+  Youtube,
+  Sparkles
 } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { showSuccess, showError } from "@/utils/toast";
 import FrameSelector from "./FrameSelector";
 import MemberCardBgSelector from "./MemberCardBgSelector";
+import { SeatFrameSelector } from "./SeatFrameSelector";
 
 type PresenceStatus = "online" | "busy" | "away";
 
@@ -46,6 +50,7 @@ const SettingsPanel = () => {
   const [updateTrigger, setUpdateTrigger] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [showFrameSelector, setShowFrameSelector] = useState(false);
+  const [showSeatFrameSelector, setShowSeatFrameSelector] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
 
   const [newAvatar, setNewAvatar] = useState<string | null>(null);
@@ -55,6 +60,7 @@ const SettingsPanel = () => {
   const [newNameColor, setNewNameColor] = useState("#000000");
   const [newMessageColor, setNewMessageColor] = useState("#000000");
   const [newStatusFontColor, setNewStatusFontColor] = useState("#000000");
+  const [newYoutubeUrl, setNewYoutubeUrl] = useState("");
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +102,7 @@ const SettingsPanel = () => {
         nameColor: typeof user.nameColor === "string" && user.nameColor.trim() ? user.nameColor : "#000000",
         messageColor: typeof user.messageColor === "string" && user.messageColor.trim() ? user.messageColor : "#000000",
         statusFontColor: typeof user.statusFontColor === "string" && user.statusFontColor.trim() ? user.statusFontColor : "#000000",
+        youtubeUrl: typeof user.youtubeUrl === "string" ? user.youtubeUrl : "",
       };
     } catch {
       return null;
@@ -111,6 +118,7 @@ const SettingsPanel = () => {
     setNewNameColor(currentUser?.nameColor || "#000000");
     setNewMessageColor(currentUser?.messageColor || "#000000");
     setNewStatusFontColor(currentUser?.statusFontColor || "#000000");
+    setNewYoutubeUrl(currentUser?.youtubeUrl || "");
     setShowEditProfile(true);
   };
 
@@ -175,6 +183,7 @@ const SettingsPanel = () => {
           nameColor: newNameColor,
           messageColor: newMessageColor,
           statusFontColor: newStatusFontColor,
+          youtubeUrl: newYoutubeUrl,
         })
       });
 
@@ -231,6 +240,9 @@ const SettingsPanel = () => {
           if (data.statusFontColor) {
             user.statusFontColor = data.statusFontColor;
           }
+          if (data.updates?.youtubeUrl !== undefined) {
+            user.youtubeUrl = data.updates.youtubeUrl;
+          }
           localStorage.setItem("user", JSON.stringify(user));
           console.log("[SettingsPanel] Updated localStorage user:", user);
         }
@@ -247,6 +259,7 @@ const SettingsPanel = () => {
             ...(data.nameColor ? { nameColor: data.nameColor } : {}),
             ...(data.messageColor ? { messageColor: data.messageColor } : {}),
             ...(data.statusFontColor ? { statusFontColor: data.statusFontColor } : {}),
+            ...(data.updates?.youtubeUrl !== undefined ? { youtubeUrl: data.updates.youtubeUrl } : {}),
           });
           
           // Also emit user_profile_updated directly to ensure all users see the change immediately
@@ -269,6 +282,7 @@ const SettingsPanel = () => {
               nameColor: data.nameColor || currentUser.nameColor || "",
               messageColor: data.messageColor || currentUser.messageColor || "",
               statusFontColor: data.statusFontColor || currentUser.statusFontColor || "",
+              youtubeUrl: data.updates?.youtubeUrl || currentUser.youtubeUrl || "",
             });
           }
         }
@@ -319,12 +333,9 @@ const SettingsPanel = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     useRealtimeStore.getState().resetSession();
-    logoutSocket();
-    sessionStorage.removeItem("manualStatus");
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("user");
+    await terminateUserSession(true);
     navigate("/", { replace: true });
   };
 
@@ -489,6 +500,26 @@ const SettingsPanel = () => {
               />
             </div>
           </div>
+
+          {/* YouTube URL */}
+          <div className="space-y-2">
+            <Label htmlFor="youtubeUrl" className="text-xs font-bold text-muted-foreground">رابط الأغنية المفضلة (يوتيوب)</Label>
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-red-500/10 rounded-xl shrink-0">
+                <Youtube size={18} className="text-red-500" />
+              </div>
+              <Input
+                id="youtubeUrl"
+                type="url"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={newYoutubeUrl}
+                onChange={(e) => setNewYoutubeUrl(e.target.value)}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold"
+                maxLength={255}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground font-medium">سيظهر أيقونة يوتيوب في بطاقة عضويتك للمتصفحين</p>
+          </div>
         </div>
 
         <div className="flex gap-2 justify-end pt-2">
@@ -533,6 +564,10 @@ const SettingsPanel = () => {
         <MemberCardBgSelector onClose={() => setShowFrameSelector(false)} />
       </div>
     );
+  }
+
+  if (showSeatFrameSelector) {
+    return <SeatFrameSelector onClose={() => setShowSeatFrameSelector(false)} />;
   }
 
   return (
@@ -640,6 +675,7 @@ const SettingsPanel = () => {
         <h4 className="text-xs font-bold text-muted-foreground px-2 uppercase tracking-wider">الحساب والخصوصية</h4>
         <SettingsItem icon={<User size={20} className="text-blue-500" />} label="تعديل الملف الشخصي" onClick={openEditModal} />
         <SettingsItem icon={<Palette size={20} className="text-purple-500" />} label="الألوان والثيمات" onClick={() => setShowFrameSelector(true)} />
+        <SettingsItem icon={<Sparkles size={20} className="text-amber-500" />} label="إطارات المقاعد الصوتية 🎙️" onClick={() => setShowSeatFrameSelector(true)} />
         <SettingsItem icon={<ShieldCheck size={20} className="text-green-500" />} label="إعدادات الخصوصية" />
         <SettingsItem icon={<Bell size={20} className="text-amber-500" />} label="التنبيهات والإشعارات" />
       </div>

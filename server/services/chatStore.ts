@@ -156,7 +156,12 @@ const loadRoomsFromDatabase = async () => {
         COALESCE(rmli, 0) as "likesRequired",
         COALESCE(broadcast, 0) != 0 as "broadcast",
         stage_state as "stage_state",
-        COALESCE(stage_count, 5) as "stage_count"
+        COALESCE(stage_count, 5) as "stage_count",
+        COALESCE(cover_url, '') as "coverUrl",
+        COALESCE(level, 1) as "level",
+        COALESCE(exp, 0) as "exp",
+        badge_id as "badgeId",
+        pinned_announcement as "pinnedAnnouncement"
       FROM rooms 
       WHERE COALESCE(deleted, 0) = 0
       ORDER BY idroom ASC
@@ -197,6 +202,11 @@ const loadRoomsFromDatabase = async () => {
         broadcast: Boolean(r.broadcast),
         stageLocks,
         stageCount: Number(r.stage_count) || 5,
+        coverUrl: r.coverUrl || "",
+        level: Number(r.level) || 1,
+        exp: Number(r.exp) || 0,
+        badgeId: r.badgeId || null,
+        pinnedAnnouncement: r.pinnedAnnouncement || "",
       };
     });
     setRoomCache(rooms);
@@ -246,6 +256,7 @@ export const createRoomInDatabase = async (data: {
   pic: string;
   color: string;
   owner: string;
+  owner_id?: string | null;
   user: string;
   verified: boolean;
   roomLayout: string;
@@ -273,9 +284,9 @@ export const createRoomInDatabase = async (data: {
   try {
     await dbPool.query(
       `INSERT INTO rooms
-        (slug, topic, about, welcome, pass, max, rmli, deleted, broadcast, mic, stage_count, stage_state, pic, color, "user", owner, needpass, room_owner_meta, message_mode, verified, room_layout, is_public, name)
+        (slug, topic, about, welcome, pass, max, rmli, deleted, broadcast, mic, stage_count, stage_state, pic, color, "user", owner, owner_id, needpass, room_owner_meta, message_mode, verified, room_layout, is_public, name)
        VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, true, $22)`,
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, true, $23)`,
       [
         slug,
         data.topic,
@@ -293,6 +304,7 @@ export const createRoomInDatabase = async (data: {
         data.color || "#000000",
         data.user,
         data.owner,
+        data.owner_id || null,
         needpass,
         roomOwnerMeta,
         "real",

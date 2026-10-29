@@ -6,6 +6,7 @@ import { useRealtimeStore } from "@/lib/realtime-store";
 import StoriesViewer from "@/components/story/StoriesViewer";
 import { initStoriesListeners } from "@/lib/stories-store";
 import { logoutSocket, getSocket } from "@/lib/socket";
+import { terminateUserSession } from "@/lib/authSession";
 import {
   Users, MessageSquare, Home, LayoutGrid, Settings, Bell, Bot, Gift, Mail, FolderOpen,
   Image as LucideImage, X, ShieldCheck, Menu, Search, Activity, Zap, LogOut, MessageCircle, Youtube, Lock, Loader2
@@ -39,8 +40,13 @@ const hasControlPanelAccess = (data: any) => {
     if (typeof permission !== "string") return false;
     return permission === "cp" || permission === "cp.all" || permission.startsWith("cp.");
   });
-  const role = String(data?.role || "").toLowerCase();
-  return hasCpPermission || role === "owner" || role === "admin";
+  const role = String(data?.role || "").toLowerCase().trim();
+  const power = String(data?.power || "").toLowerCase().trim();
+  return (
+    hasCpPermission ||
+    ["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(role) ||
+    ["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(power)
+  );
 };
 
 const Dashboard = () => {
@@ -64,19 +70,38 @@ const Dashboard = () => {
     if (pendingRoomLoading) return;
     const socket = getSocket();
     if (!socket?.connected) return;
-    setPendingRoom(room);
+
+    // Resolve room.id if it's a slug to its canonical UUID from the store
+    // AND merge full room data from the store to fill in missing fields (members, maxMembers, etc.)
+    const allRooms = useRealtimeStore.getState().rooms;
+    const matchedRoom = allRooms.find((r: any) => r.id === room.id || r.slug === room.id);
+    const canonicalId = matchedRoom?.id || room.id;
+    // Merge: store data first (complete), then incoming room data (may override name/image), then canonical id
+    const resolvedRoom = { ...(matchedRoom || {}), ...room, id: canonicalId };
+
+    setPendingRoom(resolvedRoom);
     setPendingRoomLoading(true);
     setPendingRoomError("");
-    console.log("[CLIENT_JOIN] emitting join_room", { roomId: room.id, password });
-    socket.emit("join_room", { roomId: room.id, password }, (res: any) => {
-      console.log("[CLIENT_JOIN] callback", { roomId: room.id, res });
+    console.log("[CLIENT_JOIN] emitting join_room", { roomId: resolvedRoom.id, password });
+    socket.emit("join_room", { roomId: resolvedRoom.id, password }, (res: any) => {
+      console.log("[CLIENT_JOIN] callback", { roomId: resolvedRoom.id, res });
       setPendingRoomLoading(false);
       setPendingRoom(null);
       if (res?.success) {
         setLockedRoom(null);
         lockedAttemptsRef.current = 0;
         setLockedRoomAttempts(0);
-        setActiveRoom(room);
+        const finalRoomId = res.roomId || resolvedRoom.id;
+        const finalMemberCount = res.memberCount ?? resolvedRoom.members;
+        
+        // Update store instantly for local consistency
+        useRealtimeStore.getState().updateRoomMemberCount(finalRoomId, finalMemberCount);
+
+        setActiveRoom({
+          ...resolvedRoom,
+          id: finalRoomId,
+          members: finalMemberCount
+        });
         setActiveRoomPassword(password);
         setSidebarOpen(false);
         setPendingRoomError("");
@@ -144,12 +169,9 @@ const Dashboard = () => {
     requestAnimationFrame(() => { isOpeningChatRef.current = false; });
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     resetSession();
-    logoutSocket();
-    sessionStorage.removeItem("manualStatus");
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("user");
+    await terminateUserSession(true);
     navigate("/", { replace: true });
   };
 
@@ -206,6 +228,15 @@ const Dashboard = () => {
       });
     };
 
+    const onRoomCountUpdate = (data: { roomId: string; memberCount: number }) => {
+      setActiveRoom((prev: any) => {
+        if (prev && String(prev.id) === String(data.roomId)) {
+          return { ...prev, members: data.memberCount };
+        }
+        return prev;
+      });
+    };
+
     const onRoomKicked = (payload: { roomId: string; duration: number; message: string }) => {
       // السيرفر لا يُرسل هذا الحدث إلا للسوكيت المطرود بالفعل
       // لذا نُطبِّق الطرد مباشرة بدون شرط إضافي
@@ -222,18 +253,41 @@ const Dashboard = () => {
       setActiveRoom(null);
     };
 
+    const onForceJoinRoom = (data: { roomId: string; from?: string }) => {
+      if (!data?.roomId) return;
+      const allRooms = useRealtimeStore.getState().rooms;
+      const matchedRoom = allRooms.find((r: any) => r.id === data.roomId || r.slug === data.roomId);
+      if (matchedRoom) {
+        performJoinRoom(matchedRoom, "");
+      } else {
+        performJoinRoom({ id: data.roomId }, "");
+      }
+    };
+
+    const onForceLogout = async (_data: { message?: string }) => {
+      useRealtimeStore.getState().resetSession();
+      await terminateUserSession(false);
+      navigate("/", { replace: true });
+    };
+
     socket.on("room_updated", onRoomUpdated);
+    socket.on("room_count_update", onRoomCountUpdate);
     socket.on("room_kicked", onRoomKicked);
+    socket.on("force_join_room", onForceJoinRoom);
+    socket.on("force_logout", onForceLogout);
     return () => {
       socket.off("room_updated", onRoomUpdated);
+      socket.off("room_count_update", onRoomCountUpdate);
       socket.off("room_kicked", onRoomKicked);
+      socket.off("force_join_room", onForceJoinRoom);
+      socket.off("force_logout", onForceLogout);
     };
-  }, []);
+  }, [performJoinRoom, navigate]);
 
   useEffect(() => {
     const fetchPermissions = async () => {
       try {
-        const token = localStorage.getItem("authToken");
+        const token = localStorage.getItem("authToken") || localStorage.getItem("auth_token");
         if (!token) return;
         const res = await fetch("/api/auth/me", {
           headers: {
@@ -244,13 +298,29 @@ const Dashboard = () => {
           const data = await res.json();
           if (data.success) {
             setIsAdmin(hasControlPanelAccess(data));
+            if (Array.isArray(data.permissions)) {
+              useRealtimeStore.getState().setUserPermissions(data.permissions);
+            }
           }
         }
       } catch (err) {
         console.error("Error fetching permissions:", err);
       }
     };
+
     fetchPermissions();
+
+    const handleRoleChange = () => {
+      console.log("[Dashboard] Refreshing user permissions live...");
+      fetchPermissions();
+    };
+
+    window.addEventListener("user-role-updated", handleRoleChange);
+    window.addEventListener("app-auth-login", handleRoleChange);
+    return () => {
+      window.removeEventListener("user-role-updated", handleRoleChange);
+      window.removeEventListener("app-auth-login", handleRoleChange);
+    };
   }, []);
 
   const TABS = [
@@ -529,6 +599,7 @@ const Dashboard = () => {
             <AdminDashboard section={adminSection} />
           ) : activeRoom ? (
             <RoomPage 
+              key={activeRoom.id}
               room={activeRoom} 
               roomPassword={activeRoomPassword}
               onBack={() => setActiveRoom(null)} 

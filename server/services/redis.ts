@@ -6,6 +6,7 @@ const resolvedRedisUrl = redisUrl || "redis://localhost:6379";
 
 type RedisCommandClient = {
   del: (...args: any[]) => Promise<number>;
+  eval: (script: string, numberOfKeys: number, ...args: any[]) => Promise<string | number>;
   expire: (...args: any[]) => Promise<number>;
   get: (...args: any[]) => Promise<string | null>;
   hgetall: (...args: any[]) => Promise<Record<string, string>>;
@@ -18,7 +19,7 @@ type RedisCommandClient = {
   ltrim: (...args: any[]) => Promise<string>;
   publish: (...args: any[]) => Promise<number>;
   rpush: (...args: any[]) => Promise<number>;
-  set: (...args: any[]) => Promise<string>;
+  set: (...args: any[]) => Promise<string | null>;
   xadd: (...args: any[]) => Promise<string | null>;
   zadd: (...args: any[]) => Promise<number>;
   zincrby: (...args: any[]) => Promise<string>;
@@ -33,6 +34,9 @@ type RedisCommandClient = {
 function createNoopRedis(): RedisCommandClient {
   return {
     del: async () => 0,
+    eval: async () => {
+      throw new Error("Redis is disabled");
+    },
     expire: async () => 0,
     get: async () => null,
     hgetall: async () => ({}),

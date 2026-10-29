@@ -6,6 +6,9 @@ import type { Plugin } from "vite";
 import { Server as SocketIOServer } from "socket.io";
 import { initializeSocketBroker } from "./server/socket/SocketBroker";
 import { joinUserChannels } from "./server/socket/SocketChannels";
+import { addConnectedUser, removeConnectedUser, joinRoom, leaveRoom } from "./server/socket/presenceManager";
+import { registerCallHandlers } from "./server/socket/callHandlers";
+import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "./server/services/minioClient";
 
 export function viteSocketIO(): Plugin {
   let io: SocketIOServer | null = null;
@@ -16,6 +19,7 @@ export function viteSocketIO(): Plugin {
       if (!server.httpServer) return;
 
       (globalThis as any).__VITE_SOCKET_IO_CREATED__ = true;
+      (process as any).__VITE_SOCKET_IO_CREATED__ = true;
 
       io = new SocketIOServer(server.httpServer, {
         path: "/ws",
@@ -39,6 +43,63 @@ export function viteSocketIO(): Plugin {
       // Initialize the SocketBroker with this io instance
       initializeSocketBroker(io);
       (globalThis as any).__socket_io_instance__ = io;
+      (process as any).__socket_io_instance__ = io;
+
+      // Expose room member counts as JSON endpoint for Nitro to consume
+      server.middlewares.use((req: any, res: any, next: any) => {
+        if (req.url === '/__terminate_user_sessions__' && req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk: any) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const { userId } = JSON.parse(body || '{}');
+              if (userId) {
+                const targetId = String(userId).trim();
+                for (const [sid, u] of Array.from(connectedUsers.entries())) {
+                  if (String(u.id) === targetId || String(u.username).toLowerCase() === targetId.toLowerCase()) {
+                    removeUser(sid);
+                    removeConnectedUser(sid).catch(() => {});
+                    io?.to(sid).emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
+                    io?.sockets.sockets.get(sid)?.disconnect(true);
+                  }
+                }
+                const count = connectedUsers.size;
+                io?.emit("online_count", { count });
+                io?.emit("user_disconnected", { userId: targetId, count });
+              }
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: true }));
+            } catch {
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: false }));
+            }
+          });
+          return;
+        }
+
+        if (req.url === '/__room_counts__') {
+          const counts: Record<string, number> = {};
+          // Use Socket.IO adapter rooms as source of truth (shared across all io instances)
+          if (io) {
+            const adapterRooms = io.sockets.adapter.rooms;
+            for (const [name, s] of adapterRooms.entries()) {
+              if (name.startsWith('room:')) {
+                counts[name.slice(5)] = s.size;
+              }
+            }
+          }
+          // Fallback: also include roomMembersMap entries not yet in adapter
+          for (const [roomId, members] of roomMembersMap.entries()) {
+            if (counts[roomId] === undefined) {
+              counts[roomId] = members.size;
+            }
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(counts));
+          return;
+        }
+        next();
+      });
 
       // Profile handlers
       let profileHandlers: any;
@@ -58,6 +119,12 @@ export function viteSocketIO(): Plugin {
       // Private message handlers
       let privateHandlers: any;
       import("./server/socket/privateHandlers").then(m => { privateHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load privateHandlers:", e));
+      // Voice Stage handlers
+      let voiceStageHandlers: any;
+      import("./server/socket/voiceStageHandlers").then(m => { voiceStageHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load voiceStageHandlers:", e));
+      // Room Handlers (profile, roles)
+      let roomHandlers: any;
+      import("./server/socket/roomHandlers").then(m => { roomHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load roomHandlers:", e));
 
       // ========== Presence Manager (inline) ==========
       type OnlineUser = {
@@ -72,6 +139,7 @@ export function viteSocketIO(): Plugin {
         memberCardBgUrl: string;
         nameColor: string;
         messageColor: string;
+        statusFontColor: string;
         messageBubbleStyle: string;
         roomId: string;
         connectedAt: string;
@@ -89,22 +157,36 @@ export function viteSocketIO(): Plugin {
       const roomMembersMap = new Map<string, Set<string>>();
       const pendingLeaves = new Map<string, { roomId: string; timeout: NodeJS.Timeout }>();
       const pendingDisconnects = new Map<string, { roomId: string; timeout: NodeJS.Timeout; socketId: string }>();
+      console.log("[VITE_TRACE_PRESENCE] Exposed connectedUsers and roomMembersMap on globalThis");
+
+      const normalizeOnlineUserAssets = (user: OnlineUser): OnlineUser => ({
+        ...user,
+        avatar: normalizeMinioUrl(user.avatar || "/pic.png"),
+        avatarFrameUrl: normalizeOptionalMinioUrl(user.avatarFrameUrl),
+        giftIconUrl: normalizeOptionalMinioUrl(user.giftIconUrl),
+        memberCardBgUrl: normalizeOptionalMinioUrl(user.memberCardBgUrl),
+        giftedBannerUrl: normalizeOptionalMinioUrl(user.giftedBannerUrl),
+        giftedGiftIconUrl: normalizeOptionalMinioUrl(user.giftedGiftIconUrl),
+        giftedPromotionIconUrl: normalizeOptionalMinioUrl(user.giftedPromotionIconUrl),
+        roleIconUrl: normalizeOptionalMinioUrl(user.roleIconUrl),
+      });
 
       function addUser(socketId: string, data: Omit<OnlineUser, "socketId">) {
         connectedUsers.set(socketId, { ...data, socketId } as OnlineUser);
       }
 
       function broadcastUserConnected(user: OnlineUser) {
+        const assets = normalizeOnlineUserAssets(user);
         io!.emit("user_connected", {
           socketId: user.socketId,
           userId: user.id,
           username: user.username,
           role: user.role,
-          avatar: user.avatar,
           countryCode: user.countryCode,
-          avatarFrameUrl: user.avatarFrameUrl,
-          giftIconUrl: user.giftIconUrl,
-          memberCardBgUrl: user.memberCardBgUrl,
+          avatar: assets.avatar,
+          avatarFrameUrl: assets.avatarFrameUrl,
+          giftIconUrl: assets.giftIconUrl,
+          memberCardBgUrl: assets.memberCardBgUrl,
           nameColor: user.nameColor,
           messageColor: user.messageColor,
           roomId: user.roomId,
@@ -112,10 +194,10 @@ export function viteSocketIO(): Plugin {
           idreg: user.idreg,
           siteBadge: user.siteBadge,
           statusMsg: user.statusMsg || "",
-          giftedBannerUrl: user.giftedBannerUrl || "",
-          giftedGiftIconUrl: user.giftedGiftIconUrl || "",
-          giftedPromotionIconUrl: user.giftedPromotionIconUrl || "",
-          roleIconUrl: user.roleIconUrl || "",
+          giftedBannerUrl: assets.giftedBannerUrl,
+          giftedGiftIconUrl: assets.giftedGiftIconUrl,
+          giftedPromotionIconUrl: assets.giftedPromotionIconUrl,
+          roleIconUrl: assets.roleIconUrl,
           count: connectedUsers.size,
         });
       }
@@ -133,39 +215,66 @@ export function viteSocketIO(): Plugin {
       function removeUser(socketId: string) {
         const user = connectedUsers.get(socketId);
         if (user) {
+          console.log(`[VITE_TRACE_ROOM] removeUser START socketId=${socketId} user=${user.username} roomId=${user.roomId} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
           connectedUsers.delete(socketId);
           if (user.roomId) {
             const members = roomMembersMap.get(user.roomId);
             if (members) {
               members.delete(socketId);
-              if (members.size === 0) roomMembersMap.delete(user.roomId);
+              if (members.size === 0) {
+                roomMembersMap.delete(user.roomId);
+                console.log(`[VITE_TRACE_ROOM] removeUser: roomMembersMap DELETED key ${user.roomId} (became empty)`);
+              }
             }
           }
+          console.log(`[VITE_TRACE_ROOM] removeUser END socketId=${socketId} user=${user.username} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
+          removeConnectedUser(socketId).catch(err => console.error("[vite-socket] removeConnectedUser failed:", err));
+        } else {
+          console.log(`[VITE_TRACE_ROOM] removeUser: user NOT FOUND socketId=${socketId}`);
         }
         return user;
       }
 
       function joinUserToRoom(socketId: string, roomId: string) {
         const user = connectedUsers.get(socketId);
-        if (!user) return;
+        if (!user) {
+          console.log(`[VITE_TRACE_ROOM] joinUserToRoom: user NOT FOUND socketId=${socketId} roomId=${roomId}`);
+          return;
+        }
+        console.log(`[VITE_TRACE_ROOM] joinUserToRoom START socketId=${socketId} roomId=${roomId} user.roomId=${user.roomId} roomMembersMap.has(roomId)=${roomMembersMap.has(roomId)} currentCount=${getRoomCount(roomId)}`);
         if (user.roomId && user.roomId !== roomId) {
           leaveUserFromRoom(socketId);
         }
         user.roomId = roomId;
         if (!roomMembersMap.has(roomId)) roomMembersMap.set(roomId, new Set());
         roomMembersMap.get(roomId)!.add(socketId);
+        console.log(`[VITE_TRACE_ROOM] joinUserToRoom END socketId=${socketId} roomId=${roomId} count=${getRoomCount(roomId)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
+        joinRoom(socketId, roomId).catch(err => console.error("[vite-socket] joinRoom failed:", err));
       }
 
       function leaveUserFromRoom(socketId: string) {
         const user = connectedUsers.get(socketId);
-        if (!user || !user.roomId) return undefined;
+        if (!user || !user.roomId) {
+          console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom: no user or no roomId socketId=${socketId} user=${!!user}`);
+          return undefined;
+        }
         const roomId = user.roomId;
         const members = roomMembersMap.get(roomId);
+        const beforeCount = members?.size ?? 0;
+        console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom START socketId=${socketId} roomId=${roomId} beforeCount=${beforeCount} user.roomId=${user.roomId}`);
+        console.log(`[VITE_TRACE_ROOM] CALLER: ${new Error().stack?.split('\n').slice(2, 6).join(' → ')}`);
         if (members) {
           members.delete(socketId);
-          if (members.size === 0) roomMembersMap.delete(roomId);
+          if (members.size === 0) {
+            roomMembersMap.delete(roomId);
+            console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom: roomMembersMap deleted key roomId=${roomId} (became empty)`);
+          }
         }
         user.roomId = "";
+        const s = io?.sockets.sockets.get(socketId);
+        if (s) s.data.user.roomId = "";
+        console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom END socketId=${socketId} removedFrom=${roomId} countAfter=${getRoomCount(roomId)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
+        leaveRoom(socketId).catch(err => console.error("[vite-socket] leaveRoom failed:", err));
         return roomId;
       }
 
@@ -202,9 +311,17 @@ export function viteSocketIO(): Plugin {
       // ========== Socket.io Connection Handler ==========
       io.on("connection", (socket) => {
         const auth = socket.handshake.auth || {};
+
+        // رفض الاتصال غير الموثق لضمان عدم ظهور الزوار على شاشة الدخول كمتصلين
+        if (!auth.userId || typeof auth.userId !== "string" || !auth.userId.trim()) {
+          console.debug("[vite-socket] rejecting unauthenticated socket connection:", socket.id);
+          socket.disconnect(true);
+          return;
+        }
+
         let username = auth.username || "زائر";
         const role = auth.role || "guest";
-        const userId = auth.userId || socket.id;
+        const userId = auth.userId.trim();
 
         const handshakeProfileMsg = typeof auth.statusMsg === "string" && auth.statusMsg.trim()
           ? auth.statusMsg.trim()
@@ -223,6 +340,7 @@ export function viteSocketIO(): Plugin {
           nameColor: auth.nameColor || "",
           messageColor: auth.messageColor || "",
           messageBubbleStyle: auth.messageBubbleStyle || "default",
+          statusFontColor: auth.statusFontColor || "",
           roomId: "",
           connectedAt: new Date().toISOString(),
           status: "online",
@@ -236,7 +354,11 @@ export function viteSocketIO(): Plugin {
         };
 
         socket.data.user = userData;
+        console.log(`[VITE_TRACE_PRESENCE] new connection socketId=${socket.id} username=${username} userId=${userId}`);
+        console.log(`[VITE_TRACE_PRESENCE] existing connectedUsers count=${connectedUsers.size} entries=${JSON.stringify(Array.from(connectedUsers.values()).map(u=>({id:u.id, username:u.username, socketId:u.socketId, roomId:u.roomId})))}`);
+        console.log(`[VITE_TRACE_PRESENCE] existing roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))} details=${JSON.stringify(Object.fromEntries(Array.from(roomMembersMap.entries()).map(([k,v])=>[k,Array.from(v)])))}`);
         addUser(socket.id, userData);
+        addConnectedUser(socket.id, userData).catch(err => console.error("[vite-socket] addConnectedUser failed:", err));
 
         // Enrich from DB at connection time
         (async () => {
@@ -266,6 +388,18 @@ export function viteSocketIO(): Plugin {
                 }
               }
             }
+            // Fetch missing idreg from users table if not present in profile
+            const currentU = connectedUsers.get(socket.id);
+            if (currentU && !currentU.idreg && userId) {
+              const userRes = await mod.dbPool.query(
+                `SELECT idreg FROM users WHERE id::text = $1 OR uid::text = $1 OR lower(username) = lower($2) LIMIT 1`,
+                [userId, username]
+              );
+              if (userRes.rows[0]?.idreg) {
+                currentU.idreg = String(userRes.rows[0].idreg).trim();
+                socket.data.user.idreg = currentU.idreg;
+              }
+            }
             // Fetch role icon
             const roleResult = await mod.dbPool.query(
               `SELECT r.icon_url AS role_icon_url
@@ -279,7 +413,7 @@ export function viteSocketIO(): Plugin {
             if (roleResult.rows[0]?.role_icon_url) {
               const u = connectedUsers.get(socket.id);
               if (u) {
-                u.roleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
+                u.roleIconUrl = normalizeOptionalMinioUrl(roleResult.rows[0].role_icon_url);
               }
             }
             // Fallback to legacy ucol/mcol
@@ -394,29 +528,38 @@ export function viteSocketIO(): Plugin {
 
           const pendingLeave = pendingLeaves.get(socket.id);
           let prev = connectedUsers.get(socket.id)?.roomId;
+          console.log(`[VITE_TRACE] join_room START user=${username} socket=${socket.id} roomId=${roomId} prev=${prev} pendingLeave=${!!pendingLeave} connectedUsers.size=${connectedUsers.size} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
+          
           if (pendingLeave) {
             clearTimeout(pendingLeave.timeout);
             prev = pendingLeave.roomId;
             pendingLeaves.delete(socket.id);
+            console.log(`[VITE_TRACE] pendingLeave resolved: prev=${prev}`);
           }
 
-          const userKey = userData.username;
+          const userKey = userId;
           const pendingDisconnect = pendingDisconnects.get(userKey);
           let isReconnect = false;
 
           if (pendingDisconnect) {
-            // إلغاء مؤقت الخروج بالكامل!
             clearTimeout(pendingDisconnect.timeout);
             pendingDisconnects.delete(userKey);
 
-            // إزالة السوكت القديم من الحضور فوراً لمنع الازدواجية
             const oldSocketId = pendingDisconnect.socketId;
-            removeUser(oldSocketId);
+            const isSameSocket = oldSocketId === socket.id;
+            if (!isSameSocket) {
+              removeUser(oldSocketId);
+              console.log(`[VITE_TRACE] pendingDisconnect: removed OLD socket oldSocketId=${oldSocketId} (different from current)`);
+            } else {
+              console.log(`[VITE_TRACE] pendingDisconnect: SKIPPED removeUser (same socket) oldSocketId=${oldSocketId}`);
+            }
 
-            if (pendingDisconnect.roomId === roomId || data?.isReconnect) {
+            if (pendingDisconnect.roomId === roomId) {
               isReconnect = true;
+              console.log(`[VITE_TRACE] isReconnect=true (same room) roomId=${roomId}`);
             } else {
               prev = pendingDisconnect.roomId;
+              console.log(`[VITE_TRACE] pendingDisconnect: setting prev=${prev} oldSocketId=${oldSocketId} roomId=${roomId}`);
             }
           }
 
@@ -440,9 +583,16 @@ export function viteSocketIO(): Plugin {
           }
 
           if (prev && prev !== roomId) {
+            console.log(`[VITE_TRACE] === TRANSITION user=${username} socket=${socket.id} from=${prev} to=${roomId} ===`);
+            console.log(`[VITE_TRACE] before leave: prevRoom=${prev} getRoomCount=${getRoomCount(prev)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))} roomMembersMap[${prev}]=${JSON.stringify(Array.from(roomMembersMap.get(prev) || []))}`);
+            
             socket.leave(`room:${prev}`);
             leaveUserFromRoom(socket.id);
-            io!.to(`room:${prev}`).emit("user_left", { socketId: socket.id, username, roomId: prev, memberCount: getRoomCount(prev) });
+            
+            const countAfterLeave = getRoomCount(prev);
+            console.log(`[VITE_TRACE] after leave: prevRoom=${prev} getRoomCount=${countAfterLeave} roomMembersMap[${prev}]=${JSON.stringify(Array.from(roomMembersMap.get(prev) || []))}`);
+            
+            io!.to(`room:${prev}`).emit("user_left", { socketId: socket.id, username, roomId: prev, memberCount: countAfterLeave });
             
             // Broadcast transition message to previous room
             io!.to(`room:${prev}`).emit("system_message", {
@@ -466,35 +616,106 @@ export function viteSocketIO(): Plugin {
             });
             
             // Broadcast live counter update globally for the previous room
-            io!.emit("room_count_update", { roomId: prev, memberCount: getRoomCount(prev) });
+            io!.emit("room_count_update", { roomId: prev, memberCount: countAfterLeave });
+          } else {
+            console.log(`[VITE_TRACE] NO TRANSITION (first join or same room) user=${username} socket=${socket.id} room=${roomId} prev=${prev}`);
           }
 
           socket.join(`room:${roomId}`);
           joinUserToRoom(socket.id, roomId);
+          socket.data.user.roomId = roomId;
 
           const members = getRoomUsers(roomId);
+          console.log(`[VITE_TRACE] after join: newRoom=${roomId} getRoomUsers=${members.length} getRoomCount=${getRoomCount(roomId)} roomMembersMap[${roomId}]=${JSON.stringify(Array.from(roomMembersMap.get(roomId) || []))} memberIds=${JSON.stringify(members.map(m=>({id:m.id, uname:m.username, sid:m.socketId})))}`);
           
           try {
             const messages = await chatStore.listMessages(roomId);
             const rooms = await chatStore.listRooms();
             const room = rooms.find((r: any) => r.id === roomId);
 
+            // Batch fetch member levels, exp, idreg
+            const memberIds = members.map(m => String(m.id)).filter(Boolean);
+            const memberProfilesMap = new Map<string, any>();
+            if (memberIds.length > 0) {
+              try {
+                const mod = await import("./server/db");
+                const profRes = await mod.dbPool.query(
+                  `SELECT user_id, level, exp, idreg FROM user_profiles WHERE user_id = ANY($1::text[])`,
+                  [memberIds]
+                );
+                for (const row of profRes.rows) {
+                  memberProfilesMap.set(String(row.user_id), row);
+                }
+                const usersRes = await mod.dbPool.query(
+                  `SELECT id, idreg, username FROM users WHERE id::text = ANY($1::text[])`,
+                  [memberIds]
+                );
+                for (const row of usersRes.rows) {
+                  const existing = memberProfilesMap.get(String(row.id)) || {};
+                  if (row.idreg) existing.idreg = String(row.idreg);
+                  memberProfilesMap.set(String(row.id), existing);
+                }
+              } catch (_) {}
+            }
+
+            const mappedMembers = members.map(m => {
+              const p = memberProfilesMap.get(String(m.id));
+              const mIdreg = String(p?.idreg || m.idreg || "").replace(/^#+/, "");
+              return {
+                id: m.id,
+                username: m.username,
+                role: m.role,
+                avatar: m.avatar,
+                countryCode: m.countryCode,
+                avatarFrameUrl: m.avatarFrameUrl,
+                giftIconUrl: m.giftIconUrl,
+                status: m.status || "online",
+                nameColor: m.nameColor || "",
+                statusFontColor: m.statusFontColor || "",
+                level: Number(p?.level) || Number(m.level) || 1,
+                exp: Number(p?.exp) || Number(m.exp) || 0,
+                roomRole: m.roomRole || (m.role === "admin" || m.role === "owner" ? "super_admin" : (m.role === "moderator" ? "moderator" : "member")),
+                idreg: mIdreg,
+              };
+            });
+
             callback?.({
               success: true,
               roomId,
               messages,
-              members: members.map(m => ({ id: m.id, username: m.username, role: m.role, avatar: m.avatar, countryCode: m.countryCode, avatarFrameUrl: m.avatarFrameUrl, giftIconUrl: m.giftIconUrl, status: m.status || "online" })),
+              members: mappedMembers,
               memberCount: members.length,
             });
+            console.log(`[VITE_TRACE] callback sent: memberCount=${members.length}`);
 
             if (!isReconnect) {
+              const currentUserRecord = connectedUsers.get(socket.id);
+              const currentUserProfile = memberProfilesMap.get(String(userId));
+              const currentIdreg = String(currentUserProfile?.idreg || currentUserRecord?.idreg || userData.idreg || "").replace(/^#+/, "");
+              console.log(`[VITE_TRACE] emitting user_joined to room=${roomId} memberCount=${members.length}`);
               socket.to(`room:${roomId}`).emit("user_joined", {
                 socketId: socket.id,
-                user: { id: userId, username, role, avatar: userData.avatar, countryCode: userData.countryCode, avatarFrameUrl: userData.avatarFrameUrl, giftIconUrl: userData.giftIconUrl, status: userData.status || "online" },
+                user: {
+                  id: userId,
+                  username,
+                  role,
+                  avatar: userData.avatar,
+                  countryCode: userData.countryCode,
+                  avatarFrameUrl: userData.avatarFrameUrl,
+                  giftIconUrl: userData.giftIconUrl,
+                  status: userData.status || "online",
+                  nameColor: currentUserRecord?.nameColor || "",
+                  statusFontColor: currentUserRecord?.statusFontColor || "",
+                  level: Number(currentUserProfile?.level) || 1,
+                  exp: Number(currentUserProfile?.exp) || 0,
+                  roomRole: role === "admin" || role === "owner" ? "super_admin" : (role === "moderator" ? "moderator" : "member"),
+                  idreg: currentIdreg,
+                },
                 memberCount: members.length,
               });
 
               // Broadcast live counter update globally for the new room
+              console.log(`[VITE_TRACE] emitting room_count_update for room=${roomId} memberCount=${members.length}`);
               io!.emit("room_count_update", { roomId, memberCount: members.length });
 
               // Broadcast entrance/transition message to new room
@@ -551,25 +772,37 @@ export function viteSocketIO(): Plugin {
 
           const runLeave = () => {
             pendingLeaves.delete(socket.id);
+            const currentUser = connectedUsers.get(socket.id);
+            console.log(`[KICK_TRACE_LEAVE] runLeave triggered socketId=${socket.id} roomId=${roomId} currentRoom=${currentUser?.roomId} kicked=${!!(socket as any).kicked}`);
+            if (!currentUser || currentUser.roomId !== roomId) {
+              console.log(`[VITE_TRACE] runLeave: SKIPPED (user no longer in room ${roomId}, current room=${currentUser?.roomId}) socketId=${socket.id}`);
+              return;
+            }
             socket.leave(`room:${roomId}`);
             leaveUserFromRoom(socket.id);
             io!.to(`room:${roomId}`).emit("user_left", { socketId: socket.id, username, roomId, memberCount: getRoomCount(roomId) });
             
-            // Broadcast leave system message
-            io!.to(`room:${roomId}`).emit("system_message", {
-              text: `غادر الغرفة`,
-              roomId,
-              systemType: "leave",
-              user: {
-                id: userData.id,
-                username: userData.username,
-                role: userData.role,
-                avatar: userData.avatar,
-                countryCode: userData.countryCode,
-                avatarFrameUrl: userData.avatarFrameUrl,
-                giftIconUrl: userData.giftIconUrl,
-              }
-            });
+            // إذا كان العضو مطروداً لا نرسل رسالة "غادر الغرفة"
+            const isKicked = !!(socket as any).kicked;
+            if (isKicked) {
+              (socket as any).kicked = false;
+            } else {
+              // Broadcast leave system message
+              io!.to(`room:${roomId}`).emit("system_message", {
+                text: `غادر الغرفة`,
+                roomId,
+                systemType: "leave",
+                user: {
+                  id: userData.id,
+                  username: userData.username,
+                  role: userData.role,
+                  avatar: userData.avatar,
+                  countryCode: userData.countryCode,
+                  avatarFrameUrl: userData.avatarFrameUrl,
+                  giftIconUrl: userData.giftIconUrl,
+                }
+              });
+            }
 
             // Broadcast live counter update globally
             io!.emit("room_count_update", { roomId, memberCount: getRoomCount(roomId) });
@@ -776,11 +1009,12 @@ export function viteSocketIO(): Plugin {
                from: username
              });
              
-             // Disconnect user
-             const targetSocket = io!.sockets.sockets.get(targetSocketId);
-             if (targetSocket) {
-               targetSocket.disconnect(true);
-             }
+              // Disconnect user
+              const targetSocket = io!.sockets.sockets.get(targetSocketId);
+              if (targetSocket) {
+                (targetSocket as any).kicked = true;
+                targetSocket.disconnect(true);
+              }
           }
 
           await powersService.logModerationEvent({
@@ -795,9 +1029,16 @@ export function viteSocketIO(): Plugin {
           
           if (roomId) {
             io!.to(`room:${roomId}`).emit("system_message", { 
-              type: "moderation", 
-              text: `تم ${action === 'kick' ? 'طرد' : action === 'ban' ? 'حظر' : 'تنبيه'} ${targetUser.username}`, 
-              roomId 
+              text: `تم ${action === 'kick' ? 'طرد' : action === 'ban' ? 'حظر' : 'تنبيه'} ${targetUser.username}${action === 'kick' || action === 'ban' ? ` من الغرفة` : ''}`,
+              roomId,
+              systemType: action === 'kick' || action === 'ban' ? 'leave' : undefined,
+              createdAt: new Date().toISOString(),
+              user: {
+                id: targetUser.id,
+                username: targetUser.username,
+                role: targetUser.role,
+                avatar: targetUser.avatar || '/pic.png',
+              }
             });
           }
         });
@@ -823,6 +1064,7 @@ export function viteSocketIO(): Plugin {
         };
 
         socket.on("get_online_users", (callback?: any) => {
+          console.log(`[VITE_TRACE_PRESENCE] get_online_users requested by ${socket.id} connectedUsers count=${connectedUsers.size} users=${JSON.stringify(Array.from(connectedUsers.values()).map(u=>({id:u.id, username:u.username, socketId:u.socketId, roomId:u.roomId})))}`);
           const uniqueUsers = new Map<string, any>();
           
           for (const u of connectedUsers.values()) {
@@ -854,7 +1096,7 @@ export function viteSocketIO(): Plugin {
             }
           }
           
-          const users = Array.from(uniqueUsers.values());
+          const users = Array.from(uniqueUsers.values()).map(normalizeOnlineUserAssets);
           callback?.({ success: true, users, count: uniqueUsers.size });
         });
 
@@ -1012,15 +1254,83 @@ export function viteSocketIO(): Plugin {
           privateHandlers.registerPrivateHandlers(io!, socket);
         }
 
+        // ===== Voice Stage Handlers =====
+        if (voiceStageHandlers) {
+          voiceStageHandlers.registerVoiceStageHandlers(io!, socket);
+        }
+
+        // ===== Call Handlers (WebRTC 1-on-1 Private Voice Call) =====
+        try {
+          registerCallHandlers(io!, socket);
+        } catch (callErr) {
+          console.error("[vite-socket] Error registering call handlers:", callErr);
+        }
+
+        // ===== Room Profile & Role Handlers =====
+        socket.on("room:get_profile", (data: any, cb?: any) => {
+          if (roomHandlers?.handleGetRoomProfile) {
+            roomHandlers.handleGetRoomProfile(io!, socket, data, cb);
+          } else {
+            import("./server/socket/roomHandlers").then(m => {
+              m.handleGetRoomProfile(io!, socket, data, cb);
+            }).catch(err => {
+              console.error("[vite-socket] Failed to handle room:get_profile:", err);
+              cb?.({ success: false, message: "فشل معالجة طلب البروفايل" });
+            });
+          }
+        });
+
+        socket.on("room:set_role", (data: any, cb?: any) => {
+          if (roomHandlers?.handleSetRoomRole) {
+            roomHandlers.handleSetRoomRole(io!, socket, data, cb);
+          } else {
+            import("./server/socket/roomHandlers").then(m => {
+              m.handleSetRoomRole(io!, socket, data, cb);
+            }).catch(err => {
+              console.error("[vite-socket] Failed to handle room:set_role:", err);
+              cb?.({ success: false, message: "فشل تعيين الرتبة" });
+            });
+          }
+        });
+
+        // ===== User Logout =====
+        socket.on("user_logout", () => {
+          try {
+            (socket as any).loggedOut = true;
+            const removed = removeUser(socket.id);
+            removeConnectedUser(socket.id).catch(() => {});
+            if (removed) {
+              broadcastUserDisconnected(removed);
+              io!.emit("online_count", { count: connectedUsers.size });
+            }
+            if (userData.id) {
+              for (const [sid, u] of connectedUsers.entries()) {
+                if (sid !== socket.id && String(u.id) === String(userData.id)) {
+                  removeUser(sid);
+                  removeConnectedUser(sid).catch(() => {});
+                  io!.to(sid).emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
+                  io!.sockets.sockets.get(sid)?.disconnect(true);
+                }
+              }
+            }
+            socket.disconnect(true);
+          } catch (e) {
+            console.error("[vite-socket] user_logout error:", e);
+          }
+        });
+
         // ===== Disconnect =====
         socket.on("disconnect", () => {
+          if ((socket as any).loggedOut) {
+            return;
+          }
           if (pendingLeaves.has(socket.id)) {
             clearTimeout(pendingLeaves.get(socket.id)!.timeout);
             pendingLeaves.delete(socket.id);
           }
           const user = connectedUsers.get(socket.id);
           if (user?.roomId) {
-            const userKey = user.username;
+            const userKey = user.id;
             if (pendingDisconnects.has(userKey)) {
               clearTimeout(pendingDisconnects.get(userKey)!.timeout);
             }
@@ -1029,25 +1339,40 @@ export function viteSocketIO(): Plugin {
               pendingDisconnects.delete(userKey);
               const latestUser = connectedUsers.get(socket.id);
               if (!latestUser) return;
+              const isStillConnected = Array.from(connectedUsers.values()).some(
+                u => String(u.id) === String(user.id) && u.socketId !== socket.id
+              );
+              if (isStillConnected) {
+                console.log(`[VITE_TRACE] runDisconnect: user ${username} has another active socket, skipping user_left`);
+                removeUser(socket.id);
+                return;
+              }
               const roomId = latestUser.roomId;
+              console.log(`[KICK_TRACE_DISCONNECT] runDisconnect triggered (old server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket as any).kicked}`);
 
               io!.to(`room:${roomId}`).emit("user_left", { socketId: socket.id, username, roomId, memberCount: Math.max(0, getRoomCount(roomId) - 1) });
               
-              // Broadcast leave system message (disconnect)
-              io!.to(`room:${roomId}`).emit("system_message", {
-                text: `غادر الغرفة (انقطع الاتصال)`,
-                roomId,
-                systemType: "leave",
-                user: {
-                  id: latestUser.id,
-                  username: latestUser.username,
-                  role: latestUser.role,
-                  avatar: latestUser.avatar,
-                  countryCode: latestUser.countryCode,
-                  avatarFrameUrl: latestUser.avatarFrameUrl,
-                  giftIconUrl: latestUser.giftIconUrl,
-                }
-              });
+              // إذا كان العضو مطروداً لا نرسال رسالة "غادر الغرفة"
+              const isKicked = !!(socket as any).kicked;
+              if (isKicked) {
+                (socket as any).kicked = false;
+              } else {
+                // Broadcast leave system message (disconnect)
+                io!.to(`room:${roomId}`).emit("system_message", {
+                  text: `غادر الغرفة (انقطع الاتصال)`,
+                  roomId,
+                  systemType: "leave",
+                  user: {
+                    id: latestUser.id,
+                    username: latestUser.username,
+                    role: latestUser.role,
+                    avatar: latestUser.avatar,
+                    countryCode: latestUser.countryCode,
+                    avatarFrameUrl: latestUser.avatarFrameUrl,
+                    giftIconUrl: latestUser.giftIconUrl,
+                  }
+                });
+              }
 
               // Broadcast live counter update globally
               io!.emit("room_count_update", { roomId, memberCount: Math.max(0, getRoomCount(roomId) - 1) });

@@ -1,5 +1,21 @@
 import { dbPool } from "../db";
-import { getIO } from "../socket";
+
+type AlertCallback = (data: {
+  type: string;
+  word: string;
+  user: string;
+  source: string;
+  text: string;
+}) => void;
+
+let _alertCallback: AlertCallback | null = null;
+
+/**
+ * تسجيل callback لإرسال تنبيهات الفلتر — يُستدعى من socket/index.ts بعد إنشاء الـ io
+ */
+export const setFilterAlertCallback = (cb: AlertCallback) => {
+  _alertCallback = cb;
+};
 
 export type FilterAction = "block" | "watch" | "allow";
 
@@ -110,15 +126,25 @@ export const processText = async (params: {
       action: finalAction
     }).catch(err => console.error("Logging failed", err));
 
-    const io = getIO();
-    if (io) {
-      io.to("moderators_alerts").emit("filter_alert", {
+    if (_alertCallback) {
+      _alertCallback({
         type: finalAction,
         word: matchedWords[0],
         user: user.topic,
         source,
         text
       });
+    } else {
+      const fallbackIo = (global as any).__socket_io_instance__;
+      if (fallbackIo) {
+        fallbackIo.to("moderators_alerts").emit("filter_alert", {
+          type: finalAction,
+          word: matchedWords[0],
+          user: user.topic,
+          source,
+          text
+        });
+      }
     }
   }
 

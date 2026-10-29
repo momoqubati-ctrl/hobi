@@ -45,7 +45,20 @@ export const findInMemoryUser = (identifier: string): StoredUser | undefined => 
   return undefined;
 };
 
-const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
+const DEFAULT_DEV_SECRET = "dev-only-change-this-secret";
+
+if (process.env.NODE_ENV === "production" && (!process.env.AUTH_SECRET || process.env.AUTH_SECRET === DEFAULT_DEV_SECRET)) {
+  console.error("[FATAL] AUTH_SECRET is not set or uses the default dev value in production. Shutting down.");
+  process.exit(1);
+}
+
+const getSecret = () => {
+  const secret = process.env.AUTH_SECRET;
+  if (process.env.NODE_ENV === "production" && (!secret || secret === DEFAULT_DEV_SECRET)) {
+    throw new Error("[FATAL] AUTH_SECRET must be configured with a strong secret in production.");
+  }
+  return secret || DEFAULT_DEV_SECRET;
+};
 
 const normalizeUsername = (value: string) => value.trim().toLowerCase();
 
@@ -76,7 +89,7 @@ const toPublicUser = (user: StoredUser): PublicUser & { statusMsg: string } => (
   statusMsg: user.profile.profileMsg,
 });
 
-const issueToken = (user: PublicUser) => {
+export const issueToken = (user: { id: string | number; username: string; role: string }) => {
   const payload = Buffer.from(
     JSON.stringify({
       sub: user.id,
@@ -138,7 +151,11 @@ function storeDeviceInfo(userId: string, ip?: string, deviceFingerprint?: string
 }
 
 export const createGuestSession = async (displayName?: string, countryCode?: string, clientIp?: string, deviceFingerprint?: string, deviceSignature?: string) => {
-  const name = displayName?.trim().slice(0, 40) || `زائر ${Math.floor(1000 + Math.random() * 9000)}`;
+  const rawName = displayName?.trim();
+  if (!rawName) {
+    throw Object.assign(new Error("يرجى إدخال اسم الزائر"), { code: "USERNAME_REQUIRED" });
+  }
+  const name = rawName.slice(0, 40);
   const normalizedCountryCode = normalizeCountryCode(countryCode);
 
   const banCheck = await checkBan({
@@ -149,6 +166,41 @@ export const createGuestSession = async (displayName?: string, countryCode?: str
   });
   if (banCheck.banned) {
     throw Object.assign(new Error("تم حظرك من الموقع"), { code: "BANNED" });
+  }
+
+  // 1. التحقق من أن الاسم غير مسجل لعضو في قاعدة البيانات
+  if (canUseDatabaseAuth()) {
+    const existingMember = await findPersistedUserByUsername(name);
+    if (existingMember) {
+      throw Object.assign(new Error("هذا الاسم موجود من سابق قم بادخال اسم اخر"), { code: "USERNAME_TAKEN" });
+    }
+    try {
+      const { dbPool } = await import("../db");
+      const res = await dbPool.query(
+        `SELECT id FROM users WHERE LOWER(username) = LOWER($1) OR LOWER(display_name) = LOWER($1) LIMIT 1`,
+        [name]
+      );
+      if (res.rows.length > 0) {
+        throw Object.assign(new Error("هذا الاسم موجود من سابق قم بادخال اسم اخر"), { code: "USERNAME_TAKEN" });
+      }
+    } catch (err: any) {
+      if (err?.code === "USERNAME_TAKEN") throw err;
+    }
+  }
+
+  if (usersByUsername.has(normalizeUsername(name))) {
+    throw Object.assign(new Error("هذا الاسم موجود من سابق قم بادخال اسم اخر"), { code: "USERNAME_TAKEN" });
+  }
+
+  // 2. التحقق من أن الاسم غير متصل حالياً في الدردشة
+  try {
+    const { isUsernameOnline } = await import("../socket/presenceManager");
+    const isOnline = await isUsernameOnline(name);
+    if (isOnline) {
+      throw Object.assign(new Error("هذا الاسم موجود من سابق قم بادخال اسم اخر"), { code: "USERNAME_TAKEN" });
+    }
+  } catch (err: any) {
+    if (err?.code === "USERNAME_TAKEN") throw err;
   }
 
   const user: StoredUser = {

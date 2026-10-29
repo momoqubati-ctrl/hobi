@@ -1,6 +1,7 @@
 import { defineEventHandler, getHeader, setResponseStatus } from "h3";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getUserContext } from "../../../services/permissionEngine";
+import { getUserAuthoritativeRank } from "../../../services/powersService";
 
 const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
 
@@ -30,11 +31,14 @@ export default defineEventHandler(async (event) => {
 
     const userId = String(parsed.sub || "");
     const context = await getUserContext(userId);
+    const actor = await getUserAuthoritativeRank(userId, parsed.username);
+    const effectiveRole = actor?.roleName || parsed.role || "member";
 
     return {
       success: true,
       userId,
-      role: parsed.role,
+      role: effectiveRole,
+      power: actor?.roleName || "",
       permissions: Array.from(context.permissions),
       rankPriority: context.rankPriority,
       isStaff: context.isStaff,

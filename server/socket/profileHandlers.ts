@@ -4,9 +4,11 @@ import { createNotification } from "../services/notificationService";
 import { db, dbPool } from "../db";
 import { userProfiles } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { hasPermission, PermissionKey } from "../services/permissionEngine";
-import { getAllOnlineUsers } from "./presenceManager";
-import { canExecuteAction, logModerationEvent, PowerAction } from "../services/powersService";
+import { hasPermission, PermissionKey, getUserContext, invalidatePermissionCache } from "../services/permissionEngine";
+import { getAllOnlineUsers, updateUserRolePresence } from "./presenceManager";
+import { canExecuteAction, logModerationEvent, PowerAction, getPowerLevel, assignUserRole, getUserAuthoritativeRank } from "../services/powersService";
+import { listRooms } from "../services/chatStore";
+import { issueToken } from "../services/authService";
 
 type AdminAction =
   | "nick"
@@ -22,7 +24,8 @@ type AdminAction =
   | "kick"
   | "delete_pic"
   | "ban"
-  | "global_mute";
+  | "global_mute"
+  | "pull_to_room";
 
 const ADMIN_ACTION_PERMISSION: Partial<Record<AdminAction, PermissionKey>> = {
   nick: "edituser",
@@ -31,6 +34,7 @@ const ADMIN_ACTION_PERMISSION: Partial<Record<AdminAction, PermissionKey>> = {
   site_badge: "edituser",
   power: "setpower",
   room_move: "loveu",
+  pull_to_room: "loveu",
   history: "history",
   kick: "kick",
   delete_pic: "kick",
@@ -41,18 +45,23 @@ const ADMIN_ACTION_PERMISSION: Partial<Record<AdminAction, PermissionKey>> = {
 const normalizeId = (value: unknown) => String(value || "").trim();
 
 const canRunAdminAction = async (socket: Socket, userId: string, action: AdminAction) => {
-  const role = String(socket.data.user?.role || "");
-  if (role === "owner" || role === "admin") return true;
+  const role = String(socket.data.user?.role || "").toLowerCase().trim();
+  if (["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(role)) return true;
 
   if (action === "room_kick" || action === "room_mute" || action === "room_unmute") {
-    return role === "moderator";
+    return ["moderator", "سوبر", "مشرف"].includes(role);
   }
 
   const permission = ADMIN_ACTION_PERMISSION[action];
   if (!permission) return false;
 
   try {
-    return await hasPermission(userId, permission);
+    return (
+      (await hasPermission(userId, `${permission}.edit` as any)) ||
+      (await hasPermission(userId, `${permission}.all` as any)) ||
+      (await hasPermission(userId, `${permission}.read` as any)) ||
+      (await hasPermission(userId, permission as any))
+    );
   } catch (error) {
     console.warn(`[ProfilePermissions] failed to check ${permission} for ${userId}:`, error);
     return false;
@@ -367,14 +376,14 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (!targetProfile) return callback?.({ error: "Profile not found" });
       const target = await findOnlineUser(targetProfile.id, targetProfile.username);
 
-      if (["kick", "ban", "room_kick", "room_mute", "global_mute"].includes(action)) {
+      if (["kick", "ban", "room_kick", "room_mute", "global_mute", "pull_to_room"].includes(action)) {
         if (String(targetProfile.id || profileId) === String(userId)) {
           return callback?.({ error: "Cannot perform this action on yourself" });
         }
         const powerAction: PowerAction = action === "ban" ? "ban" : (action === "room_mute" || action === "global_mute") ? "mute" : "kick";
         const targetRole = String(target?.role || targetProfile.role || "guest");
         if (!canExecuteAction(String(socket.data.user?.role || "guest"), targetRole, powerAction)) {
-          return callback?.({ error: "Permission denied" });
+          return callback?.({ error: action === "pull_to_room" ? "العضو يملك ترقية اكبر منك لا تستطيع تنفيذ الامر" : "Permission denied" });
         }
       }
 
@@ -385,7 +394,120 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (action === "message") updates = { msg: data.value };
       if (action === "likes") updates = { wall_post_likes: data.value };
       if (action === "site_badge") updates = { site_badge: data.value };
-      if (action === "power") updates = { power: data.value };
+      if (action === "power") {
+        if (String(targetProfile.id || profileId) === String(userId)) {
+          return callback?.({ error: "لا يمكنك تعديل أو ترقية رتبتك بنفسك" });
+        }
+
+        const assignRes = await assignUserRole({
+          actorId: userId,
+          targetUserId: targetProfile.id || profileId,
+          roleIdentifier: data.value ? String(data.value).trim() : "",
+          startDate: (data as any).startDate,
+          endDate: (data as any).endDate,
+        });
+
+        if (!assignRes.success) {
+          return callback?.({ error: assignRes.error || "تعذر إسناد الرتبة" });
+        }
+
+        const newPowerValue = data.value ? String(data.value).trim() : "";
+        const roleDisplayName = assignRes.roleName || (data as any).displayName || newPowerValue || "عضو";
+        const canonicalRole = assignRes.canonicalRole || (newPowerValue ? "admin" : "member");
+        const adminName = socket.data.user?.username || "الإدارة";
+        const adminAvatar = socket.data.user?.avatar || "/pic.png";
+
+        // إبطال كاش الصلاحيات فوراً وجلب الصلاحيات المحدثة
+        await invalidatePermissionCache(targetProfile.id || profileId);
+        const userContext = await getUserContext(targetProfile.id || profileId);
+        const permissionsList = Array.from(userContext.permissions);
+
+        // توليد توكن مصادقة جديد محدث بالرتبة الجديدة لتفادي الحاجة لتسجيل الخروج
+        const freshToken = issueToken({
+          id: targetProfile.id || profileId,
+          username: targetProfile.username,
+          role: canonicalRole,
+        });
+
+        // تحديث الرتبة في الذاكرة اللحظية للحضور (presence)
+        await updateUserRolePresence(profileId, canonicalRole, assignRes.iconUrl || "");
+
+        const alertPayload = {
+          alertId: String(Date.now()),
+          fromUserId: userId,
+          fromUsername: adminName,
+          fromAvatar: adminAvatar,
+          fromBanner: (socket.data.user as any)?.giftedBannerUrl || "",
+          fromGiftIcon: (socket.data.user as any)?.giftedGiftIconUrl || "",
+          fromPromotionIcon: (socket.data.user as any)?.roleIconUrl || (socket.data.user as any)?.giftedPromotionIconUrl || "",
+          fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+          message: newPowerValue ? `تم رفع ترقيتك إلى ${roleDisplayName}` : "تم إزالة ترقيتك وإعادتك كعضو عادي",
+          timestamp: Date.now(),
+        };
+        io.to(`user:${profileId}`).emit("alert_received", alertPayload);
+
+        // تحديث role والأيقونة والصلاحيات فوراً على جميع سوكيتات العضو المتصلة
+        const targetId = normalizeId(profileId).toLowerCase();
+        const targetName = normalizeId(targetProfile.username).toLowerCase();
+        for (const [, s] of io.sockets.sockets) {
+          const ud = s.data?.user;
+          if (!ud) continue;
+          const sid = normalizeId(ud.id).toLowerCase();
+          const sname = normalizeId(ud.username).toLowerCase();
+          if (sid === targetId || sname === targetName) {
+            s.data.user.role = canonicalRole;
+            s.data.user.power = newPowerValue;
+            if (assignRes.iconUrl) {
+              (s.data.user as any).roleIconUrl = assignRes.iconUrl;
+            } else if (!newPowerValue) {
+              (s.data.user as any).roleIconUrl = "";
+            }
+
+            // تحديث غرفة تنبيهات المشرفين فوراً
+            if (canonicalRole === "admin" || canonicalRole === "owner") {
+              s.join("moderators_alerts");
+            } else {
+              s.leave("moderators_alerts");
+            }
+
+            s.emit("role:updated", {
+              role: canonicalRole,
+              roleName: roleDisplayName,
+              roleIconUrl: assignRes.iconUrl || "",
+              power: newPowerValue,
+              token: freshToken,
+              permissions: permissionsList,
+              rank: assignRes.rank || 1000,
+            });
+          }
+        }
+
+        const noticeText = newPowerValue
+          ? `تم تغيير ترقية العضو إلى ${roleDisplayName}`
+          : "تم إزالة الترقية بنجاح";
+
+        io.to(`user:${profileId}`).emit("profile:updated", {
+          power: newPowerValue,
+          role: canonicalRole,
+          roleIconUrl: assignRes.iconUrl || "",
+        });
+
+        io.emit("user_profile_updated", {
+          userId: profileId,
+          username: targetProfile.username,
+          role: canonicalRole,
+          roleName: roleDisplayName,
+          power: newPowerValue,
+          roleIconUrl: assignRes.iconUrl || "",
+        });
+
+        return callback?.({
+          success: true,
+          notice: noticeText,
+          role: roleDisplayName,
+          iconUrl: assignRes.iconUrl || "",
+        });
+      }
       if (action === "delete_pic") updates = { pic: "pic.png" };
       if (action === "room_mute" || action === "global_mute") updates = { muted: 1 };
       if (action === "room_unmute") updates = { muted: 0 };
@@ -396,6 +518,8 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (Object.keys(updates).length > 0) {
         await applyLegacyProfileUpdate(profileId, updates);
       }
+
+      
 
       // تحديث حالة الإسكات على الـ socket للمستخدم المستهدف وإرسال إشعار
       if (action === "room_mute" || action === "global_mute" || action === "room_unmute") {
@@ -457,15 +581,30 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       }
 
       if (target && (action === "kick" || action === "ban")) {
-        io.to(target.socketId).emit("system_alert", {
-          title: action === "ban" ? "حظر" : "طرد",
-          message: data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك بواسطة الإدارة"),
-          from: socket.data.user?.username,
+        const adminName = socket.data.user?.username || "الإدارة";
+        const adminAvatar = socket.data.user?.avatar || "/pic.png";
+        const msg = data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك من الموقع");
+        // إرسال تنبيه مرئي
+        io.to(`user:${profileId}`).emit("alert_received", {
+          alertId: String(Date.now()),
+          fromUserId: userId,
+          fromUsername: adminName,
+          fromAvatar: adminAvatar,
+          fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+          fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+          fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+          fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+          message: msg,
+          timestamp: Date.now(),
         });
-        io.sockets.sockets.get(target.socketId)?.disconnect(true);
+        // إرسال أمر تسجيل الخروج للسوكيت المستهدف
+        io.to(target.socketId).emit("force_logout", { message: msg });
       }
 
       if (action === "room_kick") {
+        console.log("========== [KICK_TRACE] ENTERED room_kick handler ==========");
+        console.log("[KICK_TRACE] action=room_kick value=", data.value, "reason=", data.reason);
+        console.log("[KICK_TRACE] adminUser=", socket.data.user?.username, "adminRole=", socket.data.user?.role);
         // اكتشاف الغرفة: أولاً من target، وإذا لم يُعثر عليها نبحث مباشرة في سوكيتات السيرفر
         let kickTargetRoomId = target?.roomId || "";
         const targetIdLow = normalizeId(targetProfile.id).toLowerCase();
@@ -504,6 +643,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         const bannedUntil = new Date(Date.now() + minutes * 60 * 1000);
         const { resolveRoomId, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
         const resolvedRoomId = await resolveRoomId(kickTargetRoomId);
+        console.log("[KICK_TRACE_ROOM] kickTargetRoomId=", kickTargetRoomId, "resolvedRoomId=", resolvedRoomId, "same=", kickTargetRoomId === resolvedRoomId);
         const roomIdVariants = await resolveRoomIdVariants(kickTargetRoomId);
         // Also include any exact room ids observed on the target's sockets
         const observedRoomIds = new Set<string>();
@@ -634,46 +774,48 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
           kicked = true;
 
+          // علامة تمنع إرسال رسالة "غادر الغرفة" عند طرد العضو
+          s.data.kicked = true;
+
           // إبلاغ العضو المستهدف بالطرد
           s.emit("room_kicked", {
-            roomId: resolvedRoomId,
+            roomId: kickTargetRoomId,
             duration: minutes,
             message: `تم طردك من الغرفة مؤقتاً لمدة ${minutes} دقائق`
           });
 
           // تنفيذ الخروج الفعلي من الغرفة
-          // Log s.rooms before leaving
           try {
             console.log(`[KICK_DIAG] before leave s.id=${s.id} s.rooms=${JSON.stringify(Array.from(s.rooms))}`);
           } catch (err) {
             console.warn('[KICK_DIAG] failed to stringify s.rooms before leave', err);
           }
           s.leave(`room:${resolvedRoomId}`);
-          if (kickTargetRoomId !== resolvedRoomId) {
-            s.leave(`room:${kickTargetRoomId}`);
-          }
+          s.leave(`room:${kickTargetRoomId}`);
           try {
-            // fetch sockets in the room after leaving to show state
-            const post = await io.in(`room:${resolvedRoomId}`).fetchSockets();
-            console.log(`[KICK_DIAG] after leave room=${resolvedRoomId} sockets=${post.length} ids=${JSON.stringify(post.map(p=>p.id))}`);
+            const post = await io.in(`room:${kickTargetRoomId}`).fetchSockets();
+            console.log(`[KICK_DIAG] after leave room=${kickTargetRoomId} sockets=${post.length} ids=${JSON.stringify(post.map(p=>p.id))}`);
           } catch (err) {
             console.warn('[KICK_DIAG] failed to fetch sockets after leave:', err);
           }
           await leaveRoom(s.id);
           s.data.user.roomId = "";
 
-          const memberCount = await getRoomMemberCount(resolvedRoomId);
-          await publishSocketEvent(resolvedRoomId, "user_left", {
+          const memberCount = await getRoomMemberCount(kickTargetRoomId);
+          await publishSocketEvent(kickTargetRoomId, "user_left", {
             socketId: s.id,
             username: s.data.user.username,
-            roomId: resolvedRoomId,
+            roomId: kickTargetRoomId,
             memberCount,
           });
 
-          await publishSocketEvent(resolvedRoomId, "system_message", {
+          const now = new Date().toISOString();
+          console.log("[KICK_TRACE] About to publish system_message to room:", kickTargetRoomId, "text:", `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`);
+          await publishSocketEvent(kickTargetRoomId, "system_message", {
             text: `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`,
-            roomId: resolvedRoomId,
+            roomId: kickTargetRoomId,
             systemType: "leave",
+            createdAt: now,
             user: {
               id: s.data.user.id,
               username: s.data.user.username,
@@ -684,8 +826,10 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
               giftIconUrl: s.data.user.giftIconUrl,
             }
           });
+          console.log("[KICK_TRACE] system_message sent successfully");
 
-          await publishGlobalEvent("room_count_update", { roomId: resolvedRoomId, memberCount });
+          await publishGlobalEvent("room_count_update", { roomId: kickTargetRoomId, memberCount });
+          console.log("[KICK_TRACE] Kick complete for socket:", s.id, "username:", s.data.user.username);
         }
 
         responsePayload.notice = kicked
@@ -700,6 +844,41 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           from: socket.data.user?.username,
         });
         responsePayload.notice = "تم إرسال طلب النقل للعضو المتصل";
+      }
+
+      if (target && action === "pull_to_room") {
+        const targetRoomId = normalizeId(data?.value);
+        if (!targetRoomId) return callback?.({ error: "معرف الغرفة مطلوب" });
+
+        // بحث عن اسم الغرفة
+        let roomName = targetRoomId;
+        try {
+          const allRooms = await listRooms();
+          const found = allRooms.find(r => r.id === targetRoomId || (r as any).slug === targetRoomId);
+          if (found) roomName = found.name;
+        } catch (_) {}
+
+        // إرسال تنبيه للعضو المستهدف
+        const adminName = socket.data.user?.username || "الإدارة";
+        const adminAvatar = socket.data.user?.avatar || "/pic.png";
+        io.to(`user:${profileId}`).emit("alert_received", {
+          alertId: String(Date.now()),
+          fromUserId: userId,
+          fromUsername: adminName,
+          fromAvatar: adminAvatar,
+          fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+          fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+          fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+          fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+          message: `تم نقلك إلى الغرفة ${roomName}`,
+          timestamp: Date.now(),
+        });
+
+        io.to(target.socketId).emit("force_join_room", {
+          roomId: targetRoomId,
+          from: adminName,
+        });
+        responsePayload.notice = "تم سحب العضو إلى الغرفة";
       }
 
       await logModerationEvent({
@@ -721,6 +900,20 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         statusMsg: updates.msg || "",
         siteBadge: updates.site_badge,
       });
+
+      // Update target's connected socket data so subsequent get_online_users uses the new name
+      if (action === "nick" && target?.socketId) {
+        try {
+          const { getIO: getIO2 } = await import("./index");
+          const io2 = getIO2();
+          const targetSocket = io2?.sockets?.sockets?.get(target.socketId);
+          if (targetSocket?.data?.user) {
+            targetSocket.data.user.username = newDisplayName;
+          }
+        } catch (e) {
+          console.error("[ProfileAdminAction] Failed to update target socket username:", e);
+        }
+      }
 
       callback?.({ success: true, ...responsePayload });
     } catch (err) {

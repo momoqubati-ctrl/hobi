@@ -190,33 +190,18 @@ const PresenceEngine = () => {
 
     setLoadingWallPosts(true);
     try {
-      const res = await fetch("/api/wall/posts");
+      let userId = "";
+      try {
+        userId = String(JSON.parse(localStorage.getItem("user") || "null")?.id || "");
+      } catch (error) {
+        console.warn("Could not read current user for wall post likes:", error);
+      }
+      const query = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+      const res = await fetch(`/api/wall/posts${query}`);
       const data = await res.json();
       if (res.ok && data.success) {
         setWallPosts(data.posts || []);
-        
-        // جلب الإعجابات التي قام بها المستخدم الحالي لتفعيل زر الإعجاب الأحمر
-        try {
-          const rawUser = localStorage.getItem("user");
-          if (rawUser) {
-            const user = JSON.parse(rawUser);
-            const postIds = (data.posts || []).map((p: any) => parseInt(p.id, 10)).filter(Boolean);
-            if (postIds.length > 0) {
-              const likesRes = await fetch("/api/wall/posts/likes-status", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: user.id, postIds })
-              });
-              const likesData = await likesRes.json();
-              if (likesRes.ok && likesData.success && likesData.likedPostIds) {
-                setLikedPosts(likesData.likedPostIds);
-              }
-            }
-          }
-        } catch (likeErr) {
-          console.error("Failed to fetch initial wall likes status:", likeErr);
-        }
-
+        setLikedPosts((data.posts || []).filter((post: any) => post.userLiked).map((post: any) => String(post.id)));
       } else {
         setLoadingWallPosts(false);
       }
@@ -271,6 +256,11 @@ const PresenceEngine = () => {
       // Force refresh presence and rooms on reconnect
       fetchOnlineUsers(true);
       fetchRooms(true);
+      socket.emit("get_rooms", (res: any) => {
+        if (res?.success && Array.isArray(res.rooms)) {
+          setRooms(res.rooms);
+        }
+      });
       fetchNotifications();
       fetchMail();
     };
@@ -283,6 +273,8 @@ const PresenceEngine = () => {
     socket.on("connect", onConnect);
     if (socket.connected) {
       onConnect();
+    } else {
+      socket.connect();
     }
 
     window.addEventListener("online", handleNetworkOnline);
@@ -407,46 +399,37 @@ const PresenceEngine = () => {
         return;
       }
 
-      // تحديث الجدار فقط للملفات الشخصية الخاصة بالأعضاء غير المتصلين بالإنترنت
-      const isOnline = useRealtimeStore.getState().onlineUsers.some(
-        (u) =>
-          String(u.id) === String(data.userId) ||
-          (u.username && String(u.username).toLowerCase() === String(data.username || "").toLowerCase())
-      );
+      console.log("[PresenceEngine] Calling mergeOnlineUser for user:", data.userId, data.username);
+      console.log("[PresenceEngine] nameColor in data:", data.nameColor, "messageColor:", data.messageColor);
 
-      if (isOnline) {
-        console.log("[PresenceEngine] Calling mergeOnlineUser for user:", data.userId, data.username);
-        console.log("[PresenceEngine] nameColor in data:", data.nameColor, "messageColor:", data.messageColor);
-
-        // Update online user (including display name)
-        // Only include fields present in data to avoid overwriting existing values with ""
-        const update: Record<string, any> = { id: data.userId };
-        if (data.username !== undefined) update.username = data.username;
-        if (data.avatar !== undefined || data.avatarUrl !== undefined) {
-          update.avatar = data.avatar || data.avatarUrl;
-          update.avatarUrl = data.avatar || data.avatarUrl;
-        }
-        if (data.profileCover !== undefined) update.profileCover = data.profileCover;
-        if (data.avatarFrameUrl !== undefined) update.avatarFrameUrl = data.avatarFrameUrl;
-        if (data.memberCardBgUrl !== undefined) update.memberCardBgUrl = data.memberCardBgUrl;
-        if (data.nameColor !== undefined) update.nameColor = data.nameColor;
-        if (data.messageColor !== undefined) update.messageColor = data.messageColor;
-        if (data.statusFontColor !== undefined) update.statusFontColor = data.statusFontColor;
-        if (data.statusMsg !== undefined || data.profileMsg !== undefined) {
-          update.statusMsg = data.statusMsg || data.profileMsg;
-        }
-        if (data.siteBadge !== undefined) update.siteBadge = data.siteBadge;
-        if (data.idreg !== undefined) update.idreg = data.idreg;
-        if (data.giftedBannerUrl !== undefined) update.giftedBannerUrl = data.giftedBannerUrl;
-        if (data.giftedGiftIconUrl !== undefined) update.giftedGiftIconUrl = data.giftedGiftIconUrl;
-        if (data.giftedPromotionIconUrl !== undefined) update.giftedPromotionIconUrl = data.giftedPromotionIconUrl;
-        if (data.roleIconUrl !== undefined) update.roleIconUrl = data.roleIconUrl;
-
-        const merged = mergeOnlineUser(hydratePresenceUser(update));
-        console.log("[PresenceEngine] Updated onlineUsers list now contains", useRealtimeStore.getState().onlineUsers.length, "users");
-      } else {
-        console.log("[PresenceEngine] User is offline, skipping mergeOnlineUser");
+      // Update online user (including display name)
+      // Only include fields present in data to avoid overwriting existing values with ""
+      const update: Record<string, any> = { id: data.userId };
+      if (data.username !== undefined) update.username = data.username;
+      if (data.avatar !== undefined || data.avatarUrl !== undefined) {
+        update.avatar = data.avatar || data.avatarUrl;
+        update.avatarUrl = data.avatar || data.avatarUrl;
       }
+      if (data.profileCover !== undefined) update.profileCover = data.profileCover;
+      if (data.avatarFrameUrl !== undefined) update.avatarFrameUrl = data.avatarFrameUrl;
+      if (data.memberCardBgUrl !== undefined) update.memberCardBgUrl = data.memberCardBgUrl;
+      if (data.nameColor !== undefined) update.nameColor = data.nameColor;
+      if (data.messageColor !== undefined) update.messageColor = data.messageColor;
+      if (data.statusFontColor !== undefined) update.statusFontColor = data.statusFontColor;
+      if (data.statusMsg !== undefined || data.profileMsg !== undefined) {
+        update.statusMsg = data.statusMsg || data.profileMsg;
+      }
+      if (data.siteBadge !== undefined) update.siteBadge = data.siteBadge;
+      if (data.idreg !== undefined) update.idreg = data.idreg;
+      if (data.giftedBannerUrl !== undefined) update.giftedBannerUrl = data.giftedBannerUrl;
+      if (data.giftedGiftIconUrl !== undefined) update.giftedGiftIconUrl = data.giftedGiftIconUrl;
+      if (data.giftedPromotionIconUrl !== undefined) update.giftedPromotionIconUrl = data.giftedPromotionIconUrl;
+      if (data.roleIconUrl !== undefined) update.roleIconUrl = data.roleIconUrl;
+      if (data.role !== undefined) update.role = data.role;
+      if (data.power !== undefined) update.power = data.power;
+
+      const merged = mergeOnlineUser(hydratePresenceUser(update));
+      console.log("[PresenceEngine] Updated onlineUsers list now contains", useRealtimeStore.getState().onlineUsers.length, "users");
 
       // Update wall post author (avatar + display name + banner + icons)
       updateWallAuthorProfile(
@@ -464,6 +447,18 @@ const PresenceEngine = () => {
 
     const onRoomCountUpdate = (data: { roomId: string; memberCount: number }) => {
       updateRoomMemberCount(data.roomId, data.memberCount);
+    };
+
+    const onRoomsUpdated = (data: { rooms?: any[] }) => {
+      if (Array.isArray(data?.rooms)) {
+        setRooms(data.rooms);
+      }
+    };
+
+    const onMsg = (data: { cmd: string; data: any }) => {
+      if (data?.cmd === "r+" && Array.isArray(data?.data)) {
+        setRooms(data.data);
+      }
     };
 
     const onWallPostCreated = (post: any) => {
@@ -594,6 +589,8 @@ const PresenceEngine = () => {
     socket.on("user_disconnected", onUserDisconnected);
     socket.on("user_profile_updated", onUserProfileUpdated);
     socket.on("room_count_update", onRoomCountUpdate);
+    socket.on("rooms_updated", onRoomsUpdated);
+    socket.on("msg", onMsg);
     socket.on("wall_post_created", onWallPostCreated);
     socket.on("wall_post_resolved", onWallPostResolved);
     socket.on("wall_post_failed", onWallPostFailed);
@@ -745,6 +742,8 @@ const PresenceEngine = () => {
       socket.off("user_disconnected", onUserDisconnected);
       socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("room_count_update", onRoomCountUpdate);
+      socket.off("rooms_updated", onRoomsUpdated);
+      socket.off("msg", onMsg);
       socket.off("wall_post_created", onWallPostCreated);
       socket.off("wall_post_resolved", onWallPostResolved);
       socket.off("wall_post_failed", onWallPostFailed);

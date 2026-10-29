@@ -1,9 +1,12 @@
+import { dbPool } from "../db/index";
+import { addUserExp, canGainChatExp } from "../services/userLevelService";
+import { setRoomMemberRole, getRoomMember } from "../services/roomMemberService";
 /**
  * Room Handlers
  * يدير أحداث WebSocket المتعلقة بالغرف والرسائل مع دمج نظام الفلترة
  */
 import type { Server, Socket } from "socket.io";
-import { joinRoom, leaveRoom, getRoomMembers, getRoomMemberCount, pendingDisconnects, removeConnectedUser } from "./presenceManager";
+import { joinRoom, leaveRoom, getRoomMembers, getRoomMemberCount, pendingDisconnects, removeConnectedUser, emitRoomCount, getTotalOnlineCount } from "./presenceManager";
 import { publishSocketEvent, publishGlobalEvent } from "./SocketBroker";
 import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, createRoomInDatabase, type RoomReactionType, ROOM_REACTIONS } from "../services/chatStore";
 import { processText } from "../services/filterService";
@@ -12,6 +15,7 @@ import { hasPermission } from "../services/permissionEngine";
 import { eventBus } from "../core/events/EventBus";
 import { bootstrapWorkers } from "../workers";
 import { randomUUID } from "node:crypto";
+import { vacateUserFromAllSeats } from "./voiceStageHandlers";
 
 const TYPING_THROTTLE_MS = 900;
 const typingTimers = new Map<string, NodeJS.Timeout>();
@@ -97,15 +101,18 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       // تحديد المالك (رقم العضوية)
       let ownerRef = `#${user.idreg || user.id || "0"}`;
       let ownerUser = String(user.username || "");
+      let ownerId: string | null = user.id || null;
       if (data.ownerUsername && data.ownerUsername !== "system") {
         const { dbPool } = await import("../db");
         const ownerResult = await dbPool.query(
-          "SELECT idreg, username FROM users WHERE username = $1 LIMIT 1",
+          "SELECT id, idreg, username FROM users WHERE username = $1 LIMIT 1",
           [data.ownerUsername]
         );
         if ((ownerResult.rowCount || 0) > 0) {
           ownerRef = `#${ownerResult.rows[0].idreg}`;
           ownerUser = ownerResult.rows[0].username;
+          // استخراج UUID الحقيقي للمالك لحفظه في owner_id (Fix #10)
+          ownerId = ownerResult.rows[0].id || user.id || null;
         }
       }
 
@@ -135,6 +142,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         verified: Boolean(data.verified),
         roomLayout: data.roomLayout || "normal",
         stageLocks: data.stageLocks,
+        owner_id: ownerId,
       });
 
       if (!created) {
@@ -371,9 +379,17 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       console.error("Room kick check error:", e);
     }
 
+    // جلب قائمة الغرف مرة واحدة وإعادة استخدامها في كل الفحوصات (Fix #9)
+    let allRooms: Awaited<ReturnType<typeof listRooms>> = [];
+    try {
+      allRooms = await listRooms();
+    } catch (e) {
+      console.error("Error fetching rooms in join_room:", e);
+    }
+
     // ── Password check for locked rooms ──
     try {
-      const rooms = await listRooms();
+      const rooms = allRooms;
       const room = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (room?.locked) {
         let canBypass = false;
@@ -402,7 +418,6 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
     // ── Likes required check ──
     try {
-      const allRooms = await listRooms();
       const roomInfo = allRooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (roomInfo && roomInfo.likesRequired > 0) {
         let userLikes = 0;
@@ -425,8 +440,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
     // ── Max capacity check ──
     try {
-      const rooms = await listRooms();
-      const roomInfo = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
+      const roomInfo = allRooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       const currentCount = await getRoomMemberCount(canonicalRoomId);
       const maxMembers = roomInfo?.maxMembers || 50;
       if (currentCount >= maxMembers) {
@@ -473,7 +487,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     let roomImage = "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&h=400&fit=crop";
     let prevRoomName = previousRoomId || "";
     try {
-      const rooms = await listRooms();
+      const rooms = allRooms;
       const currentRoom = rooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       if (currentRoom) {
         roomName = currentRoom.name;
@@ -488,11 +502,18 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     }
 
     if (previousRoomId && previousRoomId !== canonicalRoomId) {
+      console.log(`[TRANSITION_TRACE] === START TRANSITION user=${user.username}(id=${user.id}) socket=${socket.id} fromRoom=${previousRoomId} toRoom=${canonicalRoomId} ===`);
+      const prevCountBefore = await getRoomMemberCount(previousRoomId);
+      console.log(`[TRANSITION_TRACE] before leave: previousRoom=${previousRoomId} memberCount=${prevCountBefore}`);
+
       socket.leave(`room:${previousRoomId}`);
-      await leaveRoom(socket.id);
+      await leaveRoom(socket.id, previousRoomId);
+      await vacateUserFromAllSeats(user.id, io, user.username);
+
+      const prevCountAfter = await getRoomMemberCount(previousRoomId);
       try {
         const prevSockets = await io.in(`room:${previousRoomId}`).fetchSockets();
-        console.log(`[JOIN_ROOM_TRACE] after leave previousRoom=${previousRoomId} sockets=${prevSockets.length} ids=${JSON.stringify(prevSockets.map(s=>s.id))}`);
+        console.log(`[TRANSITION_TRACE] after leave: previousRoom=${previousRoomId} io_sockets=${prevSockets.length} presenceMemberCount=${prevCountAfter} ids=${JSON.stringify(prevSockets.map(s=>s.id))}`);
       } catch (err) {
         console.warn('[JOIN_ROOM_TRACE] failed to fetch sockets for previous room:', err);
       }
@@ -506,6 +527,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       }).catch(err => console.error("EventBus publish failed (room.left):", err));
 
       const memberCount = await getRoomMemberCount(previousRoomId);
+      console.log(`[TRANSITION_TRACE] emitting user_left to previousRoom=${previousRoomId} memberCount=${memberCount}`);
       await publishSocketEvent(previousRoomId, "user_left", {
         socketId: socket.id,
         username: user.username,
@@ -528,23 +550,31 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           giftIconUrl: user.giftIconUrl,
         },
         targetRoom: {
-          id: roomId,
+          id: canonicalRoomId,
           name: roomName,
           image: roomImage,
         }
       });
 
       // Broadcast live counter update globally for the previous room
-      await publishGlobalEvent("room_count_update", { roomId: previousRoomId, memberCount });
+      console.log(`[TRANSITION_TRACE] emitting room_count_update for previousRoom=${previousRoomId} memberCount=${memberCount}`);
+      await emitRoomCount(previousRoomId);
+    } else {
+      console.log(`[TRANSITION_TRACE] NO previousRoomId transition for user=${user.username} socket=${socket.id} -> room=${canonicalRoomId} previousRoomId=${previousRoomId}`);
     }
+
+    const newRoomCountBefore = await getRoomMemberCount(canonicalRoomId);
+    console.log(`[TRANSITION_TRACE] before join: newRoom=${canonicalRoomId} memberCount=${newRoomCountBefore}`);
 
     socket.join(`room:${canonicalRoomId}`);
     await joinRoom(socket.id, canonicalRoomId);
+    await vacateUserFromAllSeats(user.id, io, user.username);
     socket.data.user.roomId = canonicalRoomId;
 
+    const newRoomCountAfter = await getRoomMemberCount(canonicalRoomId);
     try {
       const currentSockets = await io.in(`room:${canonicalRoomId}`).fetchSockets();
-      console.log(`[JOIN_ROOM_TRACE] postJoin room=${canonicalRoomId} sockets=${currentSockets.length} ids=${JSON.stringify(currentSockets.map(s=>s.id))} socketRooms=${JSON.stringify(Array.from(socket.rooms))}`);
+      console.log(`[TRANSITION_TRACE] after join: newRoom=${canonicalRoomId} io_sockets=${currentSockets.length} presenceMemberCount=${newRoomCountAfter} ids=${JSON.stringify(currentSockets.map(s=>s.id))} socketRooms=${JSON.stringify(Array.from(socket.rooms))}`);
     } catch (err) {
       console.warn('[JOIN_ROOM_TRACE] failed to fetch sockets for joined room:', err);
     }
@@ -559,26 +589,51 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     }).catch(err => console.error("EventBus publish failed (room.joined):", err));
 
     const members = await getRoomMembers(canonicalRoomId);
+    console.log(`[TRANSITION_TRACE] getRoomMembers for newRoom=${canonicalRoomId} returned ${members.length} members for callback memberIds=${JSON.stringify(members.map(m=>({id:m.id, username:m.username, socketId:m.socketId})))}`);
+    
+    // Batch fetch member levels from user_profiles
+    const memberIds = members.map(m => String(m.id)).filter(Boolean);
+    const memberProfilesMap = new Map<string, { level: number; exp: number }>();
+    if (memberIds.length > 0) {
+      try {
+        const profRes = await dbPool.query(
+          `SELECT user_id, level, exp FROM user_profiles WHERE user_id = ANY($1::text[])`,
+          [memberIds]
+        );
+        for (const row of profRes.rows) {
+          memberProfilesMap.set(String(row.user_id), row);
+        }
+      } catch (_) {}
+    }
+
     callback?.({
       success: true,
       roomId: canonicalRoomId,
       messages: [],
-      members: members.map((m) => ({
-        id: m.id,
-        username: m.username,
-        role: m.role,
-        avatar: m.avatar,
-        countryCode: m.countryCode,
-        avatarFrameUrl: m.avatarFrameUrl,
-        giftIconUrl: m.giftIconUrl,
-        status: m.status || "online",
-        nameColor: m.nameColor || "",
-        statusFontColor: m.statusFontColor || "",
-      })),
+      members: members.map((m) => {
+        const p = memberProfilesMap.get(String(m.id));
+        return {
+          id: m.id,
+          username: m.username,
+          role: m.role,
+          avatar: m.avatar,
+          countryCode: m.countryCode,
+          avatarFrameUrl: m.avatarFrameUrl,
+          giftIconUrl: m.giftIconUrl,
+          status: m.status || "online",
+          nameColor: m.nameColor || "",
+          statusFontColor: m.statusFontColor || "",
+          level: Number(p?.level) || Number(m.level) || 1,
+          exp: Number(p?.exp) || Number(m.exp) || 0,
+          roomRole: m.roomRole || (m.role === "admin" || m.role === "owner" ? "super_admin" : (m.role === "moderator" ? "moderator" : "member")),
+          idreg: m.idreg || "",
+        };
+      }),
       memberCount: members.length,
     });
 
     if (!isReconnect) {
+      console.log(`[TRANSITION_TRACE] emitting user_joined to newRoom=${canonicalRoomId} memberCount=${members.length} excludeSocket=${socket.id}`);
       await publishSocketEvent(canonicalRoomId, "user_joined", {
         socketId: socket.id,
         user: {
@@ -592,18 +647,25 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           status: user.status || "online",
           nameColor: socket.data.user.nameColor || "",
           statusFontColor: socket.data.user.statusFontColor || "",
+          level: Number((user as any).level) || 1,
+          exp: Number((user as any).exp) || 0,
+          roomRole: (user as any).roomRole || (user.role === "admin" || user.role === "owner" ? "super_admin" : (user.role === "moderator" ? "moderator" : "member")),
+          idreg: String((user as any).idreg || ""),
         },
         memberCount: members.length,
       }, socket.id);
 
       // Broadcast live counter update globally for the joined room
-      await publishGlobalEvent("room_count_update", { roomId: canonicalRoomId, memberCount: members.length });
+      console.log(`[TRANSITION_TRACE] emitting room_count_update for newRoom=${canonicalRoomId} memberCount=${members.length}`);
+      await emitRoomCount(canonicalRoomId);
+
+      console.log(`[TRANSITION_TRACE] === END TRANSITION user=${user.username} socket=${socket.id} from=${previousRoomId} to=${canonicalRoomId} emittedMemberCount=${members.length} ===`);
 
       // Broadcast transition/entrance system message to the new room
-      if (previousRoomId && previousRoomId !== roomId) {
-        await publishSocketEvent(roomId, "system_message", {
+      if (previousRoomId && previousRoomId !== canonicalRoomId) {
+        await publishSocketEvent(canonicalRoomId, "system_message", {
           text: `دخل الغرفة (انتقل من: ${prevRoomName})`,
-          roomId,
+          roomId: canonicalRoomId,
           systemType: "join",
           user: {
             id: user.id,
@@ -616,9 +678,9 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           }
         });
       } else {
-        await publishSocketEvent(roomId, "system_message", {
+        await publishSocketEvent(canonicalRoomId, "system_message", {
           text: `دخل الغرفة`,
-          roomId,
+          roomId: canonicalRoomId,
           systemType: "join",
           user: {
             id: user.id,
@@ -813,8 +875,10 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
     const runLeave = async () => {
       pendingLeaves.delete(socket.id);
+      console.log(`[KICK_TRACE_LEAVE] runLeave triggered (new server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket.data as any).kicked}`);
       socket.leave(`room:${roomId}`);
-      await leaveRoom(socket.id);
+      await leaveRoom(socket.id, roomId);
+      await vacateUserFromAllSeats(user.id, io, user.username);
       if (socket.data.user.roomId === roomId) {
         socket.data.user.roomId = "";
       }
@@ -826,69 +890,14 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         memberCount,
       });
 
-      // Broadcast leave system message
-      await publishSocketEvent(roomId, "system_message", {
-        text: `غادر الغرفة`,
-        roomId,
-        systemType: "leave",
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          avatar: user.avatar,
-          countryCode: user.countryCode,
-          avatarFrameUrl: user.avatarFrameUrl,
-          giftIconUrl: user.giftIconUrl,
-        }
-      });
-
-      // Broadcast live counter update globally
-      await publishGlobalEvent("room_count_update", { roomId, memberCount });
-    };
-
-    const timeout = setTimeout(() => {
-      runLeave().catch(err => console.error("Delayed leave failed:", err));
-    }, 250);
-
-    pendingLeaves.set(socket.id, { roomId, timeout });
-  });
-
-  socket.on("disconnect", async () => {
-    if (pendingLeaves.has(socket.id)) {
-      clearTimeout(pendingLeaves.get(socket.id)!.timeout);
-      pendingLeaves.delete(socket.id);
-    }
-    const roomId = socket.data.user.roomId;
-    if (roomId) {
-      const userKey = user.username;
-
-      if (pendingDisconnects.has(userKey)) {
-        clearTimeout(pendingDisconnects.get(userKey)!.timeout);
-      }
-
-      const runDisconnect = async () => {
-        pendingDisconnects.delete(userKey);
-
-        eventBus.publish({
-          type: "room.left",
-          stream: "rooms",
-          actor: { id: user.id, username: user.username, role: user.role, socketId: socket.id, ip: socket.handshake.address },
-          target: { id: roomId, type: "room", roomId },
-          payload: { roomId, username: user.username, disconnected: true },
-          metadata: { roomId, source: "socket.roomHandlers.disconnect", shardKey: roomId },
-        }).catch(err => console.error("EventBus publish failed (room.left on disconnect):", err));
-
-        const memberCount = await getRoomMemberCount(roomId);
-        await publishSocketEvent(roomId, "user_left", {
-          socketId: socket.id,
-          username: user.username,
-          roomId,
-          memberCount: Math.max(0, memberCount),
-        });
-
-        // Broadcast leave system message on disconnect
+      // إذا كان العضو مطروداً لا نرسل رسالة "غادر الغرفة" لتجنب الازدواج
+      const isKicked = !!(socket.data as any).kicked;
+      if (isKicked) {
+        (socket.data as any).kicked = false;
+      } else {
+        // Broadcast leave system message
         await publishSocketEvent(roomId, "system_message", {
-          text: `غادر الغرفة (انقطع الاتصال)`,
+          text: `غادر الغرفة`,
           roomId,
           systemType: "leave",
           user: {
@@ -901,25 +910,450 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
             giftIconUrl: user.giftIconUrl,
           }
         });
-      };
-
-      const timeout = setTimeout(() => {
-        runDisconnect().catch(err => console.error("Delayed disconnect failed:", err));
-      }, 3000);
-
-      const existing = pendingDisconnects.get(userKey);
-      if (existing) {
-        existing.timeout = timeout;
-      } else {
-        // presenceTimeout is required by the pendingDisconnects shape; reuse the same timeout as a placeholder
-        pendingDisconnects.set(userKey, {
-          roomId,
-          timeout,
-          presenceTimeout: timeout,
-          socketId: socket.id,
-          userData: { ...user }
-        });
       }
-    }
+
+      // Broadcast live counter update globally
+      await emitRoomCount(roomId);
+    };
+
+    const timeout = setTimeout(() => {
+      runLeave().catch(err => console.error("Delayed leave failed:", err));
+    }, 250);
+
+    pendingLeaves.set(socket.id, { roomId, timeout });
   });
+
+  
+  // ─── جلب بروفايل الغرفة التفصيلي (Room Profile) ───────────────────────────
+  socket.on("room:get_profile", async (data: { roomId: string }, callback?: (res: any) => void) => {
+    return handleGetRoomProfile(io, socket, data, callback);
+  });
+
+  // ─── تعيين رتبة أو صلاحية لعضو داخل الغرفة ────────────────────────────────
+  socket.on("room:set_role", async (data: { roomId: string; targetUserId: string; role: any; customTitle?: string; badgeId?: string }, callback?: (res: any) => void) => {
+    return handleSetRoomRole(io, socket, data, callback);
+  });
+
+  socket.on("disconnect", async () => {
+    if (pendingLeaves.has(socket.id)) {
+      clearTimeout(pendingLeaves.get(socket.id)!.timeout);
+      pendingLeaves.delete(socket.id);
+    }
+
+    if (socket.data?.loggedOut) {
+      return;
+    }
+
+    const roomId = socket.data?.user?.roomId || "";
+    const userKey = user.id;
+
+    if (pendingDisconnects.has(userKey)) {
+      const prev = pendingDisconnects.get(userKey)!;
+      if (prev.timeout) clearTimeout(prev.timeout);
+      if (prev.presenceTimeout) clearTimeout(prev.presenceTimeout);
+      pendingDisconnects.delete(userKey);
+    }
+
+    const runDisconnect = async () => {
+      pendingDisconnects.delete(userKey);
+      console.log(`[KICK_TRACE_DISCONNECT] runDisconnect triggered (new server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket.data as any).kicked}`);
+
+      if (roomId) {
+        await vacateUserFromAllSeats(user.id, io, user.username);
+
+        // إذا كان العضو مطروداً لا نرسل رسالة "غادر الغرفة"
+        const isKicked = !!(socket.data as any).kicked;
+        if (isKicked) {
+          (socket.data as any).kicked = false;
+        } else {
+          eventBus.publish({
+            type: "room.left",
+            stream: "rooms",
+            actor: { id: user.id, username: user.username, role: user.role, socketId: socket.id, ip: socket.handshake.address },
+            target: { id: roomId, type: "room", roomId },
+            payload: { roomId, username: user.username, disconnected: true },
+            metadata: { roomId, source: "socket.roomHandlers.disconnect", shardKey: roomId },
+          }).catch(err => console.error("EventBus publish failed (room.left on disconnect):", err));
+        }
+
+        const memberCount = await getRoomMemberCount(roomId);
+        await publishSocketEvent(roomId, "user_left", {
+          socketId: socket.id,
+          username: user.username,
+          roomId,
+          memberCount: Math.max(0, memberCount),
+        });
+
+        // Broadcast leave system message on disconnect
+        if (!isKicked) {
+          await publishSocketEvent(roomId, "system_message", {
+            text: `غادر الغرفة (انقطع الاتصال)`,
+            roomId,
+            systemType: "leave",
+            user: {
+              id: user.id,
+              username: user.username,
+              role: user.role,
+              avatar: user.avatar,
+              countryCode: user.countryCode,
+              avatarFrameUrl: user.avatarFrameUrl,
+              giftIconUrl: user.giftIconUrl,
+            }
+          });
+        }
+      }
+
+      // تنظيف الحضور لجميع الحالات (سواء كان في غرفة أو لم يكن) (Fix #1)
+      try {
+        const removedUser = await removeConnectedUser(socket.id);
+        const totalCount = await getTotalOnlineCount();
+        io.emit("online_count", { count: totalCount });
+        io.emit("user_disconnected", {
+          socketId: socket.id,
+          userId: user.id,
+          username: user.username,
+          role: user.role,
+          count: totalCount,
+        });
+        const finalRoomId = roomId || removedUser?.roomId;
+        if (finalRoomId) {
+          await emitRoomCount(finalRoomId);
+        }
+      } catch (err) {
+        console.error("[disconnect] presence cleanup failed:", err);
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      runDisconnect().catch(err => console.error("Delayed disconnect failed:", err));
+    }, 3000);
+
+    pendingDisconnects.set(userKey, {
+      roomId,
+      timeout,
+      presenceTimeout: timeout,
+      socketId: socket.id,
+      userData: { ...user }
+    });
+  });
+}
+
+export async function handleGetRoomProfile(
+  io: Server,
+  socket: Socket,
+  data: { roomId: string },
+  callback?: (res: any) => void
+): Promise<void> {
+  const user = socket.data?.user || {};
+  try {
+    const rawRoomId = String(data?.roomId || "").trim();
+    if (!rawRoomId) {
+      callback?.({ success: false, message: "معرف الغرفة مطلوب" });
+      return;
+    }
+    const { resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
+    const normalized = normalizeRoomIdValue(rawRoomId);
+    const variants = await resolveRoomIdVariants(rawRoomId);
+    const candidates = Array.from(new Set([rawRoomId, normalized, ...variants].filter(Boolean)));
+    console.log("[room:get_profile] incoming:", { rawRoomId, candidates, user: user?.username });
+
+    const roomRes = await dbPool.query(
+      `SELECT r.id, r.slug, r.name, r.topic, r.about, r.description, r.cover_url, r.avatar_url, r.pic,
+              r.level, r.exp, r.pinned_announcement, r.owner, r.owner_id, r.created_at,
+              r.verified, r.rmli,
+              rb.id as badge_id, rb.name as badge_name, rb.icon as badge_icon, rb.bg as badge_bg,
+              rb.icon_url as badge_icon_url, rb.bg_type as badge_bg_type
+       FROM rooms r
+       LEFT JOIN room_badges rb ON rb.id = r.badge_id
+       WHERE CAST(r.id AS text) = ANY($1::text[]) 
+          OR r.slug = ANY($1::text[]) 
+          OR CAST(r.idroom AS text) = ANY($1::text[])
+       LIMIT 1`,
+      [candidates]
+    );
+    if (roomRes.rows.length === 0) {
+      callback?.({ success: false, message: "الغرفة غير موجودة" });
+      return;
+    }
+    const r = roomRes.rows[0];
+    const canonicalRoomId = String(r.id || rawRoomId);
+    const roomSlug = String(r.slug || "");
+
+    // 1. تحديد بيانات مالك الغرفة الحقيقي بدقة (سواء مسجل بالمعرف أو برقم العضوية أو بالاسم)
+    const cleanOwnerRef = String(r.owner || "").replace(/^#+/, "").trim();
+    let ownerUser: any = null;
+    if (r.owner_id) {
+      try {
+        const oRes = await dbPool.query(
+          `SELECT id, idreg, username, role, avatar FROM users WHERE id::text = $1 LIMIT 1`,
+          [r.owner_id]
+        );
+        if (oRes.rows.length > 0) ownerUser = oRes.rows[0];
+      } catch (_) {}
+    }
+    if (!ownerUser && cleanOwnerRef) {
+      try {
+        const oRes = await dbPool.query(
+          `SELECT id, idreg, username, role, avatar FROM users 
+           WHERE idreg::text = $1 OR lower(username) = lower($1) OR id::text = $1 LIMIT 1`,
+          [cleanOwnerRef]
+        );
+        if (oRes.rows.length > 0) ownerUser = oRes.rows[0];
+      } catch (_) {}
+    }
+    const resolvedOwnerName = ownerUser ? ownerUser.username : (cleanOwnerRef || "إدارة الموقع");
+    const resolvedOwnerId = ownerUser ? String(ownerUser.id) : (r.owner_id || "");
+    const resolvedOwnerIdreg = ownerUser ? String(ownerUser.idreg) : (cleanOwnerRef || "");
+
+    // فحص الإعجابات
+    let likesCount = Number(r.rmli) || 0;
+    let isLiked = false;
+    try {
+      const likeRes = await dbPool.query(
+        `SELECT 1 FROM room_likes WHERE room_id = $1 AND user_id = $2 LIMIT 1`,
+        [canonicalRoomId, String(user.id || "")]
+      );
+      isLiked = likeRes.rows.length > 0;
+    } catch (_) {}
+
+    // 2. جلب جميع الأعضاء المتواجدين حالياً في الغرفة عبر كافة معرفاتها (UUID, Slug, rawRoomId)
+    const lookupRoomIds = Array.from(new Set([canonicalRoomId, roomSlug, rawRoomId].filter(Boolean)));
+    const membersMap = new Map<string, OnlineUser>();
+    for (const rid of lookupRoomIds) {
+      try {
+        const list = await getRoomMembers(rid);
+        for (const m of list) {
+          const key = String(m.id || m.username).toLowerCase();
+          if (!membersMap.has(key)) {
+            membersMap.set(key, m);
+          }
+        }
+      } catch (_) {}
+    }
+    const onlineUsers = Array.from(membersMap.values());
+    const memberCount = Math.max(onlineUsers.length, await getRoomMemberCount(canonicalRoomId));
+
+    // 3. جلب الرتب والصلاحيات المعينة داخل الغرفة من جدول room_members
+    const assignedRolesMap = new Map<string, any>();
+    try {
+      const rolesRes = await dbPool.query(
+        `SELECT user_id, role, power, custom_title, badge_id FROM room_members 
+         WHERE room_id = $1 OR room_id::text = $2`,
+        [r.id, canonicalRoomId]
+      );
+      for (const row of rolesRes.rows) {
+        assignedRolesMap.set(String(row.user_id), row);
+      }
+    } catch (_) {}
+
+    // 4. جلب المستويات الحقيقية والخبرة وأرقام العضوية للأعضاء من قاعدة البيانات
+    const userIds = onlineUsers.map((u) => String(u.id)).filter(Boolean);
+    const userProfilesMap = new Map<string, { level: number; exp: number; idreg: string }>();
+    const userAccountsMap = new Map<string, { idreg: string; role: string; username: string }>();
+
+    if (userIds.length > 0) {
+      try {
+        const profRes = await dbPool.query(
+          `SELECT user_id, idreg, level, exp FROM user_profiles WHERE user_id = ANY($1::text[])`,
+          [userIds]
+        );
+        for (const row of profRes.rows) {
+          userProfilesMap.set(String(row.user_id), row);
+        }
+      } catch (_) {}
+
+      try {
+        const accRes = await dbPool.query(
+          `SELECT id, idreg, role, username FROM users WHERE id::text = ANY($1::text[]) OR lower(username) = ANY($2::text[])`,
+          [userIds, onlineUsers.map((u) => String(u.username).toLowerCase())]
+        );
+        for (const row of accRes.rows) {
+          userAccountsMap.set(String(row.id), row);
+          if (row.idreg) userAccountsMap.set(String(row.idreg), row);
+          if (row.username) userAccountsMap.set(String(row.username).toLowerCase(), row);
+        }
+      } catch (_) {}
+    }
+
+    // 5. بناء كائنات الأعضاء مع الرتبة والقوة والمستوى الحقيقي
+    const members = onlineUsers.map((m) => {
+      const userIdStr = String(m.id);
+      const assigned = assignedRolesMap.get(userIdStr);
+      const userProf = userProfilesMap.get(userIdStr);
+      const userAcc = userAccountsMap.get(userIdStr) || userAccountsMap.get(String(m.username).toLowerCase());
+      const idreg = String(userAcc?.idreg || userProf?.idreg || m.idreg || "").replace(/^#+/, "");
+
+      // التحقق الدقيق من مالك الغرفة
+      const isOwner = Boolean(
+        (resolvedOwnerId && userIdStr === resolvedOwnerId) ||
+        (resolvedOwnerIdreg && idreg === resolvedOwnerIdreg) ||
+        (resolvedOwnerName && m.username.toLowerCase() === resolvedOwnerName.toLowerCase())
+      );
+
+      let roomRole = "member";
+      let roomPower = 1000;
+      let customTitle = assigned?.custom_title || "";
+
+      if (isOwner) {
+        roomRole = "owner";
+        roomPower = 100000;
+      } else if (assigned?.role) {
+        roomRole = assigned.role;
+        roomPower = Number(assigned.power) || (
+          roomRole === "co_owner" ? 80000 :
+          roomRole === "super_admin" ? 50000 :
+          roomRole === "moderator" ? 30000 :
+          roomRole === "vip" ? 10000 : 1000
+        );
+      } else if (m.role === "admin" || m.role === "owner" || userAcc?.role === "admin" || userAcc?.role === "owner") {
+        roomRole = "super_admin";
+        roomPower = 50000;
+      } else if (m.role === "moderator" || userAcc?.role === "moderator") {
+        roomRole = "moderator";
+        roomPower = 30000;
+      } else if (m.role === "guest") {
+        roomRole = "guest";
+        roomPower = 100;
+      } else {
+        roomRole = "member";
+        roomPower = 1000;
+      }
+
+      const memberLevel = Number(userProf?.level) || Number((m as any).level) || 1;
+      const memberExp = Number(userProf?.exp) || Number((m as any).exp) || 0;
+
+      return {
+        id: userIdStr,
+        idreg,
+        username: m.username,
+        avatar: m.avatar || "/pic.png",
+        level: memberLevel,
+        exp: memberExp,
+        role: m.role,
+        roomRole,
+        roomPower,
+        customTitle,
+        status: m.status || "online",
+      };
+    });
+
+    // ترتيب الأعضاء تنازلياً بحسب القوة أولاً، ثم المستوى، ثم الخبرة
+    members.sort((a, b) => {
+      if (b.roomPower !== a.roomPower) return b.roomPower - a.roomPower;
+      if (b.level !== a.level) return b.level - a.level;
+      return b.exp - a.exp;
+    });
+
+    // 6. تكوين قائمة الشارات الحقيقية الممنوحة للغرفة (Badges) بدون أي شارات وهمية
+    const badges: any[] = [];
+
+    // أ) شارة التوثيق الرسمية
+    if (Boolean(r.verified)) {
+      badges.push({
+        id: "verified",
+        name: "غرفة موثقة",
+        description: "غرفة معتمدة وموثقة رسمياً بالعلامة الخضراء",
+        icon: "check",
+        type: "verified",
+        color: "bg-emerald-500",
+      });
+    }
+
+    // ب) شارة مخصصة ممنوحة للغرفة من جدول room_badges
+    if (r.badge_id && r.badge_name) {
+      badges.push({
+        id: String(r.badge_id),
+        name: r.badge_name,
+        description: "شارة إدارية شرفية ممنوحة للغرفة",
+        icon: r.badge_icon || r.badge_icon_url || "award",
+        bg: r.badge_bg || "",
+        bgType: r.badge_bg_type || "static",
+        type: "custom",
+        color: r.badge_bg ? "" : "bg-purple-600",
+      });
+    }
+
+    // ج) شارة مستوى الغرفة المتقدم
+    const roomLvl = Number(r.level) || 1;
+    if (roomLvl >= 2) {
+      badges.push({
+        id: "room_level",
+        name: `المستوى ${roomLvl}`,
+        description: `غرفة متميزة في المستوى ${roomLvl}`,
+        icon: "level",
+        level: roomLvl,
+        type: "level",
+        color: roomLvl >= 25 ? "bg-amber-500" : "bg-blue-600",
+      });
+    }
+
+    // د) شارة التفاعل والنشاط
+    if (members.length >= 5 && likesCount >= 10) {
+      badges.push({
+        id: "hot_room",
+        name: "غرفة متفاعلة",
+        description: "تفاعل مستمر وحضور مميز",
+        icon: "fire",
+        type: "active",
+        color: "bg-orange-500",
+      });
+    }
+
+    callback?.({
+      success: true,
+      profile: {
+        id: canonicalRoomId,
+        slug: roomSlug,
+        name: r.name || r.topic,
+        description: r.description || r.about || "",
+        coverUrl: r.cover_url || "",
+        avatarUrl: r.avatar_url || r.pic || "",
+        level: roomLvl,
+        exp: Number(r.exp) || 0,
+        pinnedAnnouncement: r.pinned_announcement || "",
+        owner: resolvedOwnerName,
+        ownerId: resolvedOwnerId,
+        ownerIdreg: resolvedOwnerIdreg,
+        createdAt: r.created_at,
+        memberCount: members.length || memberCount,
+        likesCount,
+        isLiked,
+        badges,
+        members,
+      }
+    });
+  } catch (err: any) {
+    console.error("room:get_profile error:", err);
+    callback?.({ success: false, message: "تعذر جلب ملف الغرفة" });
+  }
+}
+
+export async function handleSetRoomRole(
+  io: Server,
+  socket: Socket,
+  data: { roomId: string; targetUserId: string; role: any; customTitle?: string; badgeId?: string },
+  callback?: (res: any) => void
+): Promise<void> {
+  const user = socket.data?.user || {};
+  try {
+    const result = await setRoomMemberRole({
+      roomId: data.roomId,
+      actorUserId: String(user.id || ""),
+      targetUserId: data.targetUserId,
+      newRole: data.role,
+      customTitle: data.customTitle,
+      badgeId: data.badgeId,
+    });
+    if (result.success) {
+      io.to(`room:${data.roomId}`).emit("room:role_changed", {
+        roomId: data.roomId,
+        userId: data.targetUserId,
+        role: data.role,
+        customTitle: data.customTitle,
+      });
+    }
+    callback?.(result);
+  } catch (err: any) {
+    callback?.({ success: false, message: err?.message || "فشل تعيين الرتبة" });
+  }
 }

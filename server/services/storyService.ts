@@ -75,7 +75,8 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
       u.cover AS author_cover,
       COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) AS author_name_color,
       COALESCE(uv.viewed, false) AS viewed_by_me,
-      COALESCE(ul.liked, false) AS liked_by_me
+      COALESCE(ul.liked, false) AS liked_by_me,
+      COALESCE(uf.followed, false) AS followed_by_me
     FROM stories s
     LEFT JOIN users u ON u.id = s.author_id
     LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -91,6 +92,12 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
       WHERE sr.story_id = s.id AND sr.user_id = $1
       LIMIT 1
     ) ul ON true
+    LEFT JOIN LATERAL (
+      SELECT true AS followed
+      FROM user_follows uf
+      WHERE uf.follower_id = $1 AND uf.following_id = s.author_id
+      LIMIT 1
+    ) uf ON true
     WHERE s.is_active = true AND s.expires_at > NOW()
     ORDER BY s.created_at DESC
   `, [currentUserId || ""]);
@@ -118,7 +125,8 @@ export async function getUserStories(userId: string, currentViewerId?: string): 
       u.cover AS author_cover,
       COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) AS author_name_color,
       COALESCE(uv.viewed, false) AS viewed_by_me,
-      COALESCE(ul.liked, false) AS liked_by_me
+      COALESCE(ul.liked, false) AS liked_by_me,
+      COALESCE(uf.followed, false) AS followed_by_me
     FROM stories s
     LEFT JOIN users u ON u.id = s.author_id
     LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -134,6 +142,12 @@ export async function getUserStories(userId: string, currentViewerId?: string): 
       WHERE sr.story_id = s.id AND sr.user_id = $1
       LIMIT 1
     ) ul ON true
+    LEFT JOIN LATERAL (
+      SELECT true AS followed
+      FROM user_follows uf
+      WHERE uf.follower_id = $1 AND uf.following_id = s.author_id
+      LIMIT 1
+    ) uf ON true
     WHERE s.author_id = $2 AND s.is_active = true AND s.expires_at > NOW()
     ORDER BY s.created_at DESC
   `, [currentViewerId || "", userId]);
@@ -312,6 +326,7 @@ function normalizeStoryRow(row: any): any {
     shareCount: Number(row.share_count) || 0,
     viewedByMe: row.viewed_by_me === true || row.viewed_by_me === "true",
     likedByMe: row.liked_by_me === true || row.liked_by_me === "true",
+    followedByMe: row.followed_by_me === true || row.followed_by_me === "true",
     createdAt: row.created_at,
     expiresAt: row.expires_at,
   };

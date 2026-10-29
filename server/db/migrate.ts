@@ -1196,3 +1196,40 @@ export async function ensureUserProfilesColumns() {
     client.release();
   }
 }
+
+export async function ensureRoomAndMemberFeatures() {
+  const client = await dbPool.connect();
+  try {
+    // 1. الأعمدة الإضافية لجدول الغرف
+    await client.query('ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "cover_url" text;');
+    await client.query('ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "level" integer DEFAULT 1 NOT NULL;');
+    await client.query('ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "exp" integer DEFAULT 0 NOT NULL;');
+    await client.query('ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "badge_id" uuid;');
+    await client.query('ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "pinned_announcement" text;');
+
+    // 2. الأعمدة الإضافية لملفات المستخدمين
+    await client.query('ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "level" integer DEFAULT 1 NOT NULL;');
+    await client.query('ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "exp" integer DEFAULT 0 NOT NULL;');
+
+    // 3. جدول أعضاء وصلاحيات الغرفة
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "room_members" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "room_id" uuid NOT NULL REFERENCES "rooms"("id") ON DELETE CASCADE,
+        "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "role" varchar(40) DEFAULT 'member' NOT NULL,
+        "power" integer DEFAULT 1000 NOT NULL,
+        "custom_title" varchar(120),
+        "badge_id" uuid REFERENCES "room_badges"("id") ON DELETE SET NULL,
+        "joined_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+    `);
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS "room_members_room_user_idx" ON "room_members" ("room_id", "user_id");');
+    await client.query('CREATE INDEX IF NOT EXISTS "room_members_user_idx" ON "room_members" ("user_id");');
+    await client.query('CREATE INDEX IF NOT EXISTS "room_members_room_idx" ON "room_members" ("room_id");');
+  } catch (err) {
+    console.error("[DB] ensureRoomAndMemberFeatures error:", err);
+  } finally {
+    client.release();
+  }
+}

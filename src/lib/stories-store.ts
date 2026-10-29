@@ -22,6 +22,7 @@ export type Story = {
   shareCount: number;
   viewedByMe: boolean;
   likedByMe: boolean;
+  followedByMe?: boolean;
   createdAt: string;
   expiresAt: string;
 };
@@ -44,8 +45,11 @@ type StoriesState = {
   addStory: (story: Story) => void;
   removeStory: (storyId: string) => void;
   markViewed: (storyId: string) => void;
-  markReacted: (storyId: string, type: string, reacted: boolean) => void;
-  fetchStories: () => void;
+  updateViewCount: (storyId: string, viewCount: number, isMe?: boolean) => void;
+  markReacted: (storyId: string, type: string, reacted: boolean, isMe?: boolean) => void;
+  markFollowed: (authorId: string, followed: boolean) => void;
+  fetchStories: (force?: boolean) => void;
+  resetStories: () => void;
   openViewer: (userIndex: number, storyIndex?: number) => void;
   closeViewer: () => void;
   nextStory: () => void;
@@ -73,27 +77,61 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
   markViewed: (storyId) =>
     set((s) => ({
       stories: s.stories.map((st) =>
-        st.id === storyId ? { ...st, viewedByMe: true, viewCount: st.viewCount + 1 } : st
+        st.id === storyId ? { ...st, viewedByMe: true } : st
       ),
     })),
 
-  markReacted: (storyId, type, reacted) =>
+  updateViewCount: (storyId, viewCount, isMe = false) =>
     set((s) => ({
       stories: s.stories.map((st) =>
         st.id === storyId
-          ? { ...st, likeCount: st.likeCount + (reacted ? 1 : -1) }
+          ? {
+              ...st,
+              viewCount,
+              ...(isMe ? { viewedByMe: true } : {}),
+            }
           : st
       ),
     })),
 
-  fetchStories: () => {
+  markReacted: (storyId, type, reacted, isMe = false) =>
+    set((s) => ({
+      stories: s.stories.map((st) =>
+        st.id === storyId
+          ? {
+              ...st,
+              likeCount: Math.max(0, st.likeCount + (reacted ? 1 : -1)),
+              ...(isMe ? { likedByMe: reacted } : {}),
+            }
+          : st
+      ),
+    })),
+
+  markFollowed: (authorId, followed) =>
+    set((s) => ({
+      stories: s.stories.map((st) =>
+        st.authorId === authorId ? { ...st, followedByMe: followed } : st
+      ),
+    })),
+
+  fetchStories: (force = false) => {
     const state = get();
     if (state.isLoading) return;
+    if (state.isLoaded && !force) return;
     set({ isLoading: true });
 
+    let viewerId = "";
+    try {
+      const rawUser = localStorage.getItem("user") || localStorage.getItem("auth_user");
+      if (rawUser) {
+        const u = JSON.parse(rawUser);
+        viewerId = u?.id ? String(u.id) : "";
+      }
+    } catch {}
+
     const socket = getSocket();
-    
-    // Timeout safety: if callback never fires within 5s, allow retry
+
+    // مهلة أمان لمنع التعليق
     const timeoutId = setTimeout(() => {
       const s = get();
       if (s.isLoading && !s.isLoaded) {
@@ -101,9 +139,9 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
       }
     }, 5000);
 
-    socket.emit("stories:get", (response: any) => {
+    socket.emit("stories:get", { viewerId }, (response: any) => {
       clearTimeout(timeoutId);
-      if (response?.success) {
+      if (response?.success && Array.isArray(response.stories)) {
         set({ stories: response.stories, isLoaded: true, isLoading: false });
       } else {
         set({ isLoading: false });
@@ -111,8 +149,30 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
     });
   },
 
-  openViewer: (userIndex, storyIndex = 0) =>
-    set({ viewerOpen: true, viewerUserIndex: userIndex, viewerStoryIndex: storyIndex }),
+  resetStories: () =>
+    set({
+      stories: [],
+      isLoading: false,
+      isLoaded: false,
+      viewerOpen: false,
+      viewerUserIndex: 0,
+      viewerStoryIndex: 0,
+    }),
+
+  openViewer: (userIndex, storyIndex) => {
+    const { stories } = get();
+    let targetStoryIndex = storyIndex;
+    if (targetStoryIndex === undefined) {
+      const userStories = getStoriesByUser(stories, userIndex);
+      const firstUnviewed = userStories.findIndex((s) => !s.viewedByMe);
+      targetStoryIndex = firstUnviewed !== -1 ? firstUnviewed : 0;
+    }
+    set({
+      viewerOpen: true,
+      viewerUserIndex: userIndex,
+      viewerStoryIndex: targetStoryIndex,
+    });
+  },
 
   closeViewer: () => set({ viewerOpen: false }),
 
@@ -133,56 +193,138 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
 
   nextUser: () => {
     const { stories, viewerUserIndex } = get();
-    const userIds = [...new Set(stories.map((s) => s.authorId))];
-    if (viewerUserIndex < userIds.length - 1) {
-      set({ viewerUserIndex: viewerUserIndex + 1, viewerStoryIndex: 0 });
+    const storyUsers = getStoryUsers(stories);
+    if (viewerUserIndex < storyUsers.length - 1) {
+      const nextUserIndex = viewerUserIndex + 1;
+      const nextUserStories = getStoriesByUser(stories, nextUserIndex);
+      const firstUnviewed = nextUserStories.findIndex((s) => !s.viewedByMe);
+      set({
+        viewerUserIndex: nextUserIndex,
+        viewerStoryIndex: firstUnviewed !== -1 ? firstUnviewed : 0,
+      });
     } else {
       set({ viewerOpen: false });
     }
   },
 
   prevUser: () => {
-    const { viewerUserIndex } = get();
+    const { stories, viewerUserIndex } = get();
     if (viewerUserIndex > 0) {
-      set({ viewerUserIndex: viewerUserIndex - 1, viewerStoryIndex: 0 });
+      const prevUserIndex = viewerUserIndex - 1;
+      const prevUserStories = getStoriesByUser(stories, prevUserIndex);
+      const firstUnviewed = prevUserStories.findIndex((s) => !s.viewedByMe);
+      set({
+        viewerUserIndex: prevUserIndex,
+        viewerStoryIndex: firstUnviewed !== -1 ? firstUnviewed : 0,
+      });
     }
   },
 }));
 
-export function getStoriesByUser(stories: Story[], userIndex: number): Story[] {
-  const userIds = [...new Set(stories.map((s) => s.authorId))];
-  const authorId = userIds[userIndex];
-  return stories.filter((s) => s.authorId === authorId);
-}
+export function getStoryUsers(stories: Story[]): {
+  authorId: string;
+  authorUsername: string;
+  authorAvatar: string;
+  authorNameColor?: string;
+  hasUnviewed: boolean;
+}[] {
+  const seen = new Map<string, {
+    authorId: string;
+    authorUsername: string;
+    authorAvatar: string;
+    authorNameColor?: string;
+    hasUnviewed: boolean;
+  }>();
 
-export function getStoryUsers(stories: Story[]): { authorId: string; authorUsername: string; authorAvatar: string; authorNameColor?: string; hasUnviewed: boolean }[] {
-  const seen = new Map<string, { authorId: string; authorUsername: string; authorAvatar: string; authorNameColor?: string; hasUnviewed: boolean }>();
   for (const s of stories) {
+    const isUnviewed = !s.viewedByMe;
     if (!seen.has(s.authorId)) {
       seen.set(s.authorId, {
         authorId: s.authorId,
         authorUsername: s.authorUsername,
         authorAvatar: s.authorAvatar,
         authorNameColor: s.authorNameColor,
-        hasUnviewed: !s.viewedByMe,
+        hasUnviewed: isUnviewed,
       });
     } else {
       const existing = seen.get(s.authorId)!;
-      if (!s.viewedByMe) existing.hasUnviewed = true;
+      if (isUnviewed) {
+        existing.hasUnviewed = true;
+      }
     }
   }
   return Array.from(seen.values());
+}
+
+export function getStoriesByUser(stories: Story[], userIndex: number): Story[] {
+  const storyUsers = getStoryUsers(stories);
+  const targetUser = storyUsers[userIndex];
+  if (!targetUser) return [];
+  return stories
+    .filter((s) => s.authorId === targetUser.authorId)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
 export function initStoriesListeners() {
   const socket = getSocket();
   const store = useStoriesStore;
 
-  const onConnect = () => { store.getState().fetchStories(); };
-  const onNewStory = (story: Story) => { store.getState().addStory(story); };
-  const onDeleted = ({ storyId }: { storyId: string }) => { store.getState().removeStory(storyId); };
-  const onViewed = ({ storyId, viewCount }: { storyId: string; viewCount: number }) => { store.getState().markViewed(storyId); };
-  const onReacted = ({ storyId, type, reacted }: { storyId: string; type: string; reacted: boolean }) => { store.getState().markReacted(storyId, type, reacted); };
+  const onConnect = () => {
+    store.getState().fetchStories(true);
+  };
+  const onNewStory = (story: Story) => {
+    store.getState().addStory(story);
+  };
+  const onDeleted = ({ storyId }: { storyId: string }) => {
+    store.getState().removeStory(storyId);
+  };
+  const onViewed = ({
+    storyId,
+    viewerId,
+    viewCount,
+  }: {
+    storyId: string;
+    viewerId?: string;
+    viewCount: number;
+  }) => {
+    let myId = "";
+    try {
+      const rawUser = localStorage.getItem("user") || localStorage.getItem("auth_user");
+      if (rawUser) {
+        const u = JSON.parse(rawUser);
+        myId = u?.id ? String(u.id) : "";
+      }
+    } catch {}
+
+    const isMe = Boolean(myId && viewerId && String(viewerId) === myId);
+    store.getState().updateViewCount(storyId, viewCount, isMe);
+  };
+  const onReacted = ({
+    storyId,
+    userId,
+    type,
+    reacted,
+  }: {
+    storyId: string;
+    userId?: string;
+    type: string;
+    reacted: boolean;
+  }) => {
+    let myId = "";
+    try {
+      const rawUser = localStorage.getItem("user") || localStorage.getItem("auth_user");
+      if (rawUser) {
+        const u = JSON.parse(rawUser);
+        myId = u?.id ? String(u.id) : "";
+      }
+    } catch {}
+
+    const isMe = Boolean(myId && userId && String(userId) === myId);
+    // إذا كان التفاعل صادراً من المستخدم نفسه فقد تم تطبيقه تفاؤلياً فور الضغط، فلا نكرر الزيادة
+    if (!isMe) {
+      store.getState().markReacted(storyId, type, reacted, false);
+    }
+  };
   const onProfileUpdated = (data: any) => {
     if (data && data.userId) {
       const state = store.getState();
@@ -201,6 +343,13 @@ export function initStoriesListeners() {
     }
   };
 
+  const onAuthLogout = () => {
+    store.getState().resetStories();
+  };
+  const onAuthLogin = () => {
+    store.getState().fetchStories(true);
+  };
+
   socket.on("connect", onConnect);
   socket.on("stories:new", onNewStory);
   socket.on("stories:deleted", onDeleted);
@@ -208,8 +357,13 @@ export function initStoriesListeners() {
   socket.on("stories:reacted", onReacted);
   socket.on("user_profile_updated", onProfileUpdated);
 
+  if (typeof window !== "undefined") {
+    window.addEventListener("app-auth-logout", onAuthLogout);
+    window.addEventListener("app-auth-login", onAuthLogin);
+  }
+
   if (socket.connected) {
-    store.getState().fetchStories();
+    store.getState().fetchStories(true);
   }
 
   return () => {
@@ -219,5 +373,9 @@ export function initStoriesListeners() {
     socket.off("stories:viewed", onViewed);
     socket.off("stories:reacted", onReacted);
     socket.off("user_profile_updated", onProfileUpdated);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("app-auth-logout", onAuthLogout);
+      window.removeEventListener("app-auth-login", onAuthLogin);
+    }
   };
 }

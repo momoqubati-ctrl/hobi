@@ -1,10 +1,54 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
-import { guardAdminAction } from "../../../services/adminPermissions";
+import { getUserAuthContext } from "../../../services/adminAccess";
+import { getUserContext } from "../../../services/permissionEngine";
 
 export default defineEventHandler(async (event) => {
   try {
-    await guardAdminAction(event, "ban");
+    const auth = getUserAuthContext(event);
+    if (!auth.ok) {
+      setResponseStatus(event, auth.statusCode);
+      return { success: false, message: auth.message };
+    }
+
+    let isAuthorized = false;
+    let isFullModerator = false;
+
+    if (auth.role === "owner" || auth.role === "admin") {
+      isAuthorized = true;
+      isFullModerator = true;
+    } else {
+      const userCtx = await getUserContext(auth.userId);
+      if (
+        userCtx.permissions.has("ban.read") ||
+        userCtx.permissions.has("ban.edit") ||
+        userCtx.permissions.has("ban.all") ||
+        userCtx.permissions.has("admin_bans.read") ||
+        userCtx.permissions.has("admin_bans.all")
+      ) {
+        isAuthorized = true;
+        isFullModerator = true;
+      } else if (
+        userCtx.permissions.has("rooms.read") ||
+        userCtx.permissions.has("rooms.edit") ||
+        userCtx.permissions.has("rooms.all") ||
+        userCtx.permissions.has("admin_rooms.read") ||
+        userCtx.permissions.has("admin_rooms.edit") ||
+        userCtx.permissions.has("admin_rooms.all") ||
+        userCtx.permissions.has("roomowner.read") ||
+        userCtx.permissions.has("roomowner.edit") ||
+        userCtx.permissions.has("roomowner.all") ||
+        userCtx.permissions.has("admin_users.read") ||
+        userCtx.permissions.has("admin_users.all")
+      ) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "لا تملك صلاحية البحث عن الأعضاء" };
+    }
 
     const query = getQuery(event);
     const search = String(query.q || "").trim();
@@ -46,9 +90,9 @@ export default defineEventHandler(async (event) => {
       username: row.username,
       displayName: row.displayName || row.username,
       power: row.power,
-      ip: row.ip || "",
-      fingerprint: row.fingerprint || "",
-      deviceSignature: row.deviceSignature || "",
+      ip: isFullModerator ? (row.ip || "") : "",
+      fingerprint: isFullModerator ? (row.fingerprint || "") : "",
+      deviceSignature: isFullModerator ? (row.deviceSignature || "") : "",
       countryCode: row.countryCode || "SA",
       avatar: row.avatar || "/pic.png",
       idreg: row.idreg,

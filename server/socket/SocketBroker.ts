@@ -18,30 +18,31 @@ export function initializeSocketBroker(io: Server): void {
 
   subClient = createRedisClient();
 
-  // الاشتراك في قنوات الغرف العامة
-  subClient.psubscribe("pubsub:room:*").catch((err: any) => {
+  subClient.psubscribe("pubsub:room:*", "pubsub:user:*").catch((err: any) => {
     console.error("[SocketBroker] Redis psubscribe failed:", err);
   });
 
   subClient.on("pmessage", (pattern: string, channel: string, dataStr: string) => {
     try {
-      const match = channel.match(/^pubsub:room:(.+)$/);
-      if (!match) return;
-      const roomId = match[1];
-
+      const roomMatch = channel.match(/^pubsub:room:(.+)$/);
+      const userMatch = channel.match(/^pubsub:user:(.+)$/);
+      if (!roomMatch && !userMatch) return;
       const { event, payload, excludeSocketId } = JSON.parse(dataStr);
 
       let target: any;
-      if (roomId === "__global__") {
+      if (userMatch) {
+        target = io.to(`user:${userMatch[1]}`);
+      } else if (roomMatch![1] === "__global__") {
         target = io;
       } else {
-        target = io.to(`room:${roomId}`);
+        target = io.to(`room:${roomMatch![1]}`);
       }
 
       if (excludeSocketId) {
         target = target.except(excludeSocketId) as any;
       }
 
+      console.log(`[SOCKET_BROKER_TRACE] RECV pubsub target=${userMatch ? "user" : roomMatch![1] === "__global__" ? "GLOBAL" : "room"} event=${event} excludeSocketId=${excludeSocketId || "none"}`);
       target.emit(event, payload);
     } catch (err) {
       console.error("[SocketBroker] Error processing pubsub message:", err);
@@ -55,18 +56,16 @@ export async function publishSocketEvent(roomId: string, event: string, payload:
   const redisModule = await import("../services/redis");
   
   if (!redisModule.isRedisEnabled) {
-    // Fallback to local emission if Redis is disabled
     if (localIo) {
       const roomName = `room:${roomId}`;
       const sockets = await localIo.in(roomName).fetchSockets();
       const socketIds = sockets.map((s: any) => s.id);
-      console.log(`[SocketBroker] Publishing to room "${roomName}": ${sockets.length} sockets connected; socketIds=${JSON.stringify(socketIds)}`);
+      console.log(`[SOCKET_BROKER_TRACE] PUBLISH room=${roomId} event=${event} localSockets=${socketIds.length} ids=${JSON.stringify(socketIds)} exclude=${excludeSocketId || "none"}`);
       let target = localIo.to(roomName);
       if (excludeSocketId) {
         target = target.except(excludeSocketId) as any;
       }
       target.emit(event, payload);
-      console.log(`[SocketBroker] Emitted "${event}" to room "${roomName}"`);
     } else {
       console.error("[SocketBroker] localIo is null! Cannot publish event");
     }
@@ -75,7 +74,25 @@ export async function publishSocketEvent(roomId: string, event: string, payload:
 
   const channel = `pubsub:room:${roomId}`;
   const data = JSON.stringify({ event, payload, excludeSocketId });
+  console.log(`[SOCKET_BROKER_TRACE] PUBLISH redis room=${roomId} event=${event} exclude=${excludeSocketId || "none"}`);
   await redisModule.redis.publish(channel, data);
+}
+
+export async function publishUserEvent(userId: string, event: string, payload: unknown, excludeSocketId?: string): Promise<void> {
+  const resolvedUserId = String(userId || "").trim();
+  if (!resolvedUserId) throw new Error("Cannot publish a user event without a user ID");
+
+  const redisModule = await import("../services/redis");
+  if (!redisModule.isRedisEnabled) {
+    if (!localIo) throw new Error("Socket broker is not initialized");
+    let target: any = localIo.to(`user:${resolvedUserId}`);
+    if (excludeSocketId) target = target.except(excludeSocketId);
+    target.emit(event, payload);
+    return;
+  }
+
+  const data = JSON.stringify({ event, payload, excludeSocketId });
+  await redisModule.redis.publish(`pubsub:user:${resolvedUserId}`, data);
 }
 
 export async function publishGlobalEvent(event: string, payload: any, excludeSocketId?: string): Promise<void> {
@@ -87,6 +104,7 @@ export async function publishGlobalEvent(event: string, payload: any, excludeSoc
       if (excludeSocketId) {
         target = target.except(excludeSocketId);
       }
+      console.log(`[SOCKET_BROKER_TRACE] PUBLISH GLOBAL event=${event} (local) roomId=${payload?.roomId || "N/A"}`);
       target.emit(event, payload);
     }
     return;
@@ -94,5 +112,6 @@ export async function publishGlobalEvent(event: string, payload: any, excludeSoc
 
   const channel = `pubsub:room:__global__`;
   const data = JSON.stringify({ event, payload, excludeSocketId });
+  console.log(`[SOCKET_BROKER_TRACE] PUBLISH GLOBAL redis event=${event} roomId=${payload?.roomId || "N/A"} memberCount=${payload?.memberCount ?? "N/A"}`);
   await redisModule.redis.publish(channel, data);
 }

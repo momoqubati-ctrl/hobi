@@ -17,7 +17,8 @@
     "db:migrate": "node scripts/apply-distributed-schema.cjs",
     "db:verify": "node scripts/verify-db.cjs",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -64,6 +65,8 @@
     "input-otp": "^1.2.4",
     "ioredis": "^5.10.1",
     "jiti": "^2.7.0",
+    "livekit-client": "^2.23.0",
+    "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^0.462.0",
     "minio": "^8.0.7",
     "next-themes": "^0.3.0",
@@ -94,6 +97,7 @@
     "@types/node": "^22.5.5",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
     "dotenv": "^17.4.2",

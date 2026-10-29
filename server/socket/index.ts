@@ -12,9 +12,12 @@ import { registerStoryHandlers } from "./storyHandlers";
 import { registerWallHandlers } from "./wallHandlers";
 import { registerNotificationHandlers } from "./notificationHandlers";
 import { registerMailHandlers } from "./mailHandlers";
+import { registerVoiceStageHandlers } from "./voiceStageHandlers";
+import { registerCallHandlers } from "./callHandlers";
 import { configureSocketGateway, registerSocketConnection } from "./SocketGateway";
 import { initializeSocketBroker } from "./SocketBroker";
-import { normalizeMinioUrl } from "../services/minioClient";
+import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "../services/minioClient";
+import { setFilterAlertCallback } from "../services/filterService";
 
 let io: SocketIOServer | null = null;
 
@@ -46,8 +49,15 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   configureSocketGateway(io, { shardId: process.env.SOCKET_SHARD_ID ?? "local" });
   initializeSocketBroker(io);
 
-  // Store io in global for cross-context access (Vite sandbox workaround)
+  setFilterAlertCallback((data) => {
+    if (io) {
+      io.to("moderators_alerts").emit("filter_alert", data);
+    }
+  });
+
+  // Store io in global and process for cross-context access (Vite sandbox workaround)
   (global as any).__socket_io_instance__ = io;
+  (process as any).__socket_io_instance__ = io;
 
   io.on("connection", async (socket) => {
     // Debug: log incoming handshake auth for tracing (avoid logging secrets)
@@ -56,9 +66,17 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       console.debug("[socket] connection handshake", socket.id, authSnapshot);
     } catch (e) {}
 
+    // رفض الاتصال إذا لم يكن هناك معرّف مستخدم موثق (لا يسمح بالاتصال قبل الدخول)
+    const rawUserId = socket.handshake.auth?.userId;
+    if (!rawUserId || typeof rawUserId !== "string" || !rawUserId.trim()) {
+      console.debug("[socket] connection rejected: missing authenticated userId in handshake", socket.id);
+      socket.disconnect(true);
+      return;
+    }
+
     const username = socket.handshake.auth?.username || "زائر";
     const role = socket.handshake.auth?.role || "guest";
-    const userId = socket.handshake.auth?.userId || socket.id;
+    const userId = rawUserId.trim();
     const handshakeProfileMsg = typeof socket.handshake.auth?.statusMsg === "string" && socket.handshake.auth.statusMsg.trim()
       ? socket.handshake.auth.statusMsg.trim()
       : (typeof socket.handshake.auth?.profileMsg === "string" && socket.handshake.auth.profileMsg.trim()
@@ -99,6 +117,19 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       console.error("Error checking ban on socket connection:", e);
     }
 
+    // التحقق من تكرار اسم الزائر في الدردشة
+    if (role === "guest") {
+      try {
+        const { isUsernameOnline } = await import("./presenceManager");
+        const isOnline = await isUsernameOnline(username, socket.id);
+        if (isOnline) {
+          socket.emit("system_alert", { title: "تنبيه", message: "هذا الاسم موجود من سابق قم بادخال اسم اخر" });
+          socket.disconnect(true);
+          return;
+        }
+      } catch (_) {}
+    }
+
     // حفظ بيانات المستخدم على الـ socket
     socket.data.user = {
       id: userId,
@@ -106,8 +137,8 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       role,
       avatar: normalizeMinioUrl(socket.handshake.auth?.avatar || "/pic.png"),
       countryCode: detectedCountry,
-      avatarFrameUrl: socket.handshake.auth?.avatarFrameUrl || "",
-      giftIconUrl: socket.handshake.auth?.giftIconUrl || "",
+      avatarFrameUrl: normalizeOptionalMinioUrl(socket.handshake.auth?.avatarFrameUrl),
+      giftIconUrl: normalizeOptionalMinioUrl(socket.handshake.auth?.giftIconUrl),
       memberCardBgUrl: socket.handshake.auth?.memberCardBgUrl || "",
       nameColor: socket.handshake.auth?.nameColor || "",
       messageColor: socket.handshake.auth?.messageColor || "",
@@ -129,7 +160,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
         `SELECT 
            u.idreg, u.uid, u.msg, u.pic, u.pich, u.ucol, u.mcol, u.scol, u.muted,
            up.profile_msg, up.avatar_url, up.banner_url, up.avatar_frame_url, up.member_card_bg_url, up.name_color, up.message_color, up.status_font_color,
-           up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url, up.muted as profile_muted
+           up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url, up.muted as profile_muted, up.level, up.exp
          FROM users u
          LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
          WHERE CAST(u.id AS text) = $1 LIMIT 1`,
@@ -153,19 +184,21 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
         const cover = row.banner_url || row.pich;
         if (cover) socket.data.user.cover = normalizeMinioUrl(cover);
         
-        socket.data.user.avatarFrameUrl = String(row.avatar_frame_url || "").trim();
+        socket.data.user.avatarFrameUrl = normalizeOptionalMinioUrl(String(row.avatar_frame_url || "").trim());
         socket.data.user.memberCardBgUrl = String(row.member_card_bg_url || "").trim();
         
         socket.data.user.nameColor = String(row.name_color || row.ucol || "").trim();
         socket.data.user.messageColor = String(row.message_color || row.mcol || "").trim();
         socket.data.user.statusFontColor = String(row.status_font_color || row.scol || "").trim();
         
-        (socket.data.user as any).giftedBannerUrl = String(row.gifted_banner_url || "").trim();
-        (socket.data.user as any).giftedGiftIconUrl = String(row.gifted_gift_icon_url || "").trim();
-        (socket.data.user as any).giftedPromotionIconUrl = String(row.gifted_promotion_icon_url || "").trim();
+        (socket.data.user as any).giftedBannerUrl = normalizeOptionalMinioUrl(String(row.gifted_banner_url || "").trim());
+        (socket.data.user as any).giftedGiftIconUrl = normalizeOptionalMinioUrl(String(row.gifted_gift_icon_url || "").trim());
+        (socket.data.user as any).giftedPromotionIconUrl = normalizeOptionalMinioUrl(String(row.gifted_promotion_icon_url || "").trim());
 
         const mutedValue = row.profile_muted !== undefined ? row.profile_muted : row.muted;
         (socket.data.user as any).muted = Boolean(mutedValue && mutedValue !== 0 && mutedValue !== "0");
+        (socket.data.user as any).level = Number(row.level) || 1;
+        (socket.data.user as any).exp = Number(row.exp) || 0;
 
         try {
           const roleResult = await dbPool.query(
@@ -178,7 +211,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
             [userId]
           );
           if (roleResult.rows[0]?.role_icon_url) {
-            (socket.data.user as any).roleIconUrl = String(roleResult.rows[0].role_icon_url).trim();
+            (socket.data.user as any).roleIconUrl = normalizeOptionalMinioUrl(String(roleResult.rows[0].role_icon_url).trim());
           } else {
             (socket.data.user as any).roleIconUrl = "";
           }
@@ -216,6 +249,10 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     registerNotificationHandlers(io!, socket);
     // تسجيل أحداث البريد الداخلي لحظياً
     registerMailHandlers(io!, socket);
+    // تسجيل أحداث المنصة الصوتية والمقاعد لحظياً
+    registerVoiceStageHandlers(io!, socket);
+    // تسجيل أحداث المكالمات الصوتية الخاصة لحظياً (WebRTC 1-on-1)
+    registerCallHandlers(io!, socket);
 
     // إرسال تأكيد الاتصال
     socket.emit("connected", {
@@ -240,10 +277,6 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       role: socket.data.user.role,
       countryCode: detectedCountry,
     });
-
-    socket.on("disconnect", () => {
-      // سيتم التعامل مع هذا في presenceHandlers
-    });
   });
 
   return io;
@@ -254,5 +287,5 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
  * يتحقق أولاً من المتغير المحلي ثم من المخزن العام (لكسر عزلة Vite sandbox)
  */
 export function getIO(): SocketIOServer | null {
-  return io || (global as any).__socket_io_instance__ || null;
+  return io || (global as any).__socket_io_instance__ || (process as any).__socket_io_instance__ || (globalThis as any).__socket_io_instance__ || null;
 }

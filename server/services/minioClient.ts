@@ -38,7 +38,11 @@ export const getMinioClient = (): Client | null => {
 
 export const getMinioBucket = () => MINIO_BUCKET;
 
-export const getMinioPublicUrl = (key: string) => `${MINIO_PUBLIC_URL}/${key}`;
+export const getMinioPublicUrl = (key: string) => {
+  const baseUrl = MINIO_PUBLIC_URL.replace(/\/+$/, "");
+  const safeKey = key.replace(/^\/+/, "");
+  return normalizeMinioUrl(`${baseUrl}/${safeKey}`);
+};
 
 export const initMinio = async () => {
   const c = getMinioClient();
@@ -87,15 +91,39 @@ export const normalizeMinioUrl = (url: string): string => {
   if (!url) return "/pic.png";
   const trimmed = url.trim();
   if (!trimmed) return "/pic.png";
-  // Data URIs — pass through as-is
   if (trimmed.startsWith("data:")) return trimmed;
-  // Already has leading slash — pass through (e.g. /pic.png, /uploads/xxx.jpg)
-  if (trimmed.startsWith("/")) return trimmed;
-  // Relative path without leading slash (e.g. "pic.png") — add it
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    return `/${trimmed}`;
+
+  const toProxyUrl = (pathname: string, hasMinioPrefix: boolean) => {
+    const segments = pathname.split("/").filter(Boolean);
+    if (hasMinioPrefix && segments[0] === "minio") segments.shift();
+    if (segments[0] === MINIO_BUCKET) segments.shift();
+    return segments.length ? `/minio/${segments.join("/")}` : "/pic.png";
+  };
+
+  if (trimmed.startsWith("/minio/")) {
+    return toProxyUrl(trimmed, true);
   }
-  // HTTP URL — keep as-is (MinIO has public access, direct URL works from localhost)
-  // If needed for production, the MINIO_PUBLIC_URL should be set to the public hostname
-  return trimmed;
+
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    try {
+      const parsed = new URL(trimmed);
+      const internalHosts = new Set([MINIO_ENDPOINT.toLowerCase(), "localhost", "127.0.0.1", "::1"]);
+      const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+      if (internalHosts.has(parsed.hostname.toLowerCase()) && port === MINIO_PORT) {
+        return toProxyUrl(parsed.pathname, false);
+      }
+    } catch {
+      return trimmed;
+    }
+    return trimmed;
+  }
+
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+};
+
+export const normalizeOptionalMinioUrl = (url: unknown): string => {
+  if (typeof url !== "string") return "";
+  const trimmed = url.trim();
+  if (!trimmed || /^(undefined|null)$/i.test(trimmed)) return "";
+  return normalizeMinioUrl(trimmed);
 };

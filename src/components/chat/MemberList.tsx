@@ -1,9 +1,67 @@
+
+// ===== Level Tier Styling Helper =====
+export const getLevelBadgeClass = (level: number = 1): string => {
+  if (level >= 100) return "bg-gradient-to-r from-red-600 via-amber-500 to-purple-600 text-white font-black border border-amber-300 shadow-sm";
+  if (level >= 75) return "bg-purple-900/80 text-purple-200 border border-purple-400/60 font-black";
+  if (level >= 50) return "bg-cyan-950/80 text-cyan-300 border border-cyan-400/60 font-bold shadow-xs";
+  if (level >= 25) return "bg-amber-500/20 text-amber-400 border border-amber-400/50 font-bold";
+  if (level >= 10) return "bg-slate-700/80 text-slate-200 border border-slate-400/40 font-semibold";
+  return "bg-amber-900/40 text-amber-300/90 border border-amber-800/40 font-medium";
+};
+
+export const getRoomRoleBadgeInfo = (role: string = "") => {
+  switch (role?.toLowerCase()) {
+    case "owner":
+      return { icon: "👑", name: "مالك", cls: "bg-amber-500/20 text-amber-400 border border-amber-500/50 font-black" };
+    case "co_owner":
+      return { icon: "⭐", name: "نائب", cls: "bg-amber-400/20 text-amber-300 border border-amber-400/40 font-bold" };
+    case "super_admin":
+    case "admin":
+      return { icon: "🛡️", name: "إدارة", cls: "bg-blue-500/20 text-blue-400 border border-blue-500/40 font-bold" };
+    case "moderator":
+      return { icon: "⚔️", name: "مشرف", cls: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold" };
+    case "vip":
+      return { icon: "💎", name: "VIP", cls: "bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold" };
+    default:
+      return null;
+  }
+};
+
+export const getMemberSortScore = (member: any): number => {
+  let score = 0;
+  const role = String(member.role || "").toLowerCase();
+  const roomRole = String(member.roomRole || "").toLowerCase();
+
+  // 1. صلاحيات الموقع والإدارة العامة
+  if (role === "owner") score += 100_000_000;
+  else if (role === "admin") score += 50_000_000;
+
+  // 2. صلاحيات الغرفة المحلية
+  if (roomRole === "owner") score += 30_000_000;
+  else if (roomRole === "co_owner") score += 20_000_000;
+  else if (roomRole === "super_admin") score += 15_000_000;
+  else if (roomRole === "moderator") score += 10_000_000;
+  else if (roomRole === "vip") score += 5_000_000;
+
+  // 3. متحدث على المايك
+  if (member.isOnStage) score += 500_000;
+
+  // 4. ترقية مستوى العضو (كل مستوى = 1,000 نقطة)
+  const lvl = Number(member.level) || (role === "guest" ? 0 : 1);
+  score += lvl * 1000;
+
+  // 5. نقاط الخبرة لفض التساوي
+  const exp = Number(member.exp) || 0;
+  score += Math.min(exp / 10000, 99);
+
+  return score;
+};
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, X, Wifi, WifiOff } from 'lucide-react';
+import { Search, X, Wifi, WifiOff, Youtube } from 'lucide-react';
 import { ProfileModal } from '../profile/ProfileModal';
 import { Input } from "@/components/ui/input";
 import StoriesBar from './StoriesBar';
@@ -42,6 +100,7 @@ type OnlineMember = {
   giftedGiftIconUrl?: string;
   giftedPromotionIconUrl?: string;
   roleIconUrl?: string;
+  youtubeUrl?: string;
 };
 
 const getPresenceKey = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
@@ -50,7 +109,7 @@ const getPresenceKey = (member: { id?: string; socketId?: string; username?: str
   if (member.socketId) return `socket:${member.socketId}`;
   const name = String(member.username || member.name || "").trim().toLowerCase();
   if (name && member.role !== "guest") return `username:${name}`;
-  return `guest:${name || "anonymous"}`;
+  return `guest:${member.socketId || (id && id !== "0" ? id : "") || name || "anonymous"}`;
 };
 
 // ===== Status Utilities =====
@@ -68,14 +127,15 @@ const getStatusConfig = (status?: string) => {
   return STATUS_CONFIG.online;
 };
 
-const getMemberIdentity = (member: { id?: string; username?: string; name?: string; role?: string }) => {
+const getMemberIdentity = (member: { id?: string; socketId?: string; username?: string; name?: string; role?: string }) => {
   const id = String(member.id || "").trim();
   if (id && id !== "0") return `id:${id}`;
+  if (member.socketId) return `socket:${member.socketId}`;
 
   const name = String(member.username || member.name || "").trim().toLowerCase();
   if (name && member.role !== "guest") return `username:${name}`;
 
-  return `guest:${name}`;
+  return `guest:${member.socketId || (id && id !== "0" ? id : "") || name || "anonymous"}`;
 };
 
 const isHexColor = (v: string) => /^#?[0-9a-fA-F]{3,8}$/.test(v.replace(/^\//, ""));
@@ -145,6 +205,7 @@ const getCurrentMember = () => {
       giftedGiftIconUrl: typeof user.giftedGiftIconUrl === "string" ? user.giftedGiftIconUrl : "",
       giftedPromotionIconUrl: typeof user.giftedPromotionIconUrl === "string" ? user.giftedPromotionIconUrl : "",
       roleIconUrl: typeof user.roleIconUrl === "string" ? user.roleIconUrl : "",
+      youtubeUrl: typeof user.youtubeUrl === "string" ? user.youtubeUrl : "",
     };
   } catch {
     return null;
@@ -174,6 +235,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
   const manualStatusRef = useRef<string | null>(null);
 
   const [profileTrigger, setProfileTrigger] = useState(0);
+  const [ytPopupMember, setYtPopupMember] = useState<any>(null);
   const currentMember = useMemo(() => getCurrentMember(), [profileTrigger]);
 
   useEffect(() => {
@@ -186,6 +248,9 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
   useEffect(() => {
     const socket = getSocket();
     setIsConnected(socket.connected);
+    if (!socket.connected) {
+      socket.connect();
+    }
 
     const onConnect = () => setIsConnected(true);
     const onDisconnect = () => setIsConnected(false);
@@ -303,7 +368,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         roleIconUrl: onlineMatch?.roleIconUrl || currentMember.roleIconUrl || "",
       });
       if (currentMember.id && currentMember.id !== "0") seenIds.add(String(currentMember.id));
-      if (currentMember.name) seenNames.add(String(currentMember.name).trim().toLowerCase());
+      if (currentMember.name && currentMember.role !== "guest") seenNames.add(String(currentMember.name).trim().toLowerCase());
     }
 
     // المستخدمون المتصلون (بدون تكرار الحالي)
@@ -311,11 +376,22 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
       // تحقق مزدوج: بالـ id وبالاسم لتفادي التكرار أو الـ swap
       const userId = String(user.id || "").trim();
       const userName = String(user.username || "").trim().toLowerCase();
-      if (userId && userId !== "0" && seenIds.has(userId)) continue;
-      if (userName && seenNames.has(userName)) continue;
+      const isGuest = user.role === "guest";
 
-      if (userId && userId !== "0") seenIds.add(userId);
-      if (userName) seenNames.add(userName);
+      if (!isGuest) {
+        if (userId && userId !== "0" && seenIds.has(userId)) continue;
+        if (userName && seenNames.has(userName)) continue;
+
+        if (userId && userId !== "0") seenIds.add(userId);
+        if (userName) seenNames.add(userName);
+      } else {
+        const guestKey = userId && userId !== "0" ? userId : (user.socketId ? `socket:${user.socketId}` : "");
+        if (guestKey && seenIds.has(guestKey)) continue;
+        if (userName && seenNames.has(userName)) continue;
+
+        if (guestKey) seenIds.add(guestKey);
+        if (userName) seenNames.add(userName);
+      }
 
       const presenceKey = getPresenceKey(user);
       const resolvedStatus = userStatuses.get(presenceKey) || user.status || "online";
@@ -363,6 +439,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         giftedGiftIconUrl: (user as any).giftedGiftIconUrl || "",
         giftedPromotionIconUrl: (user as any).giftedPromotionIconUrl || "",
         roleIconUrl: (user as any).roleIconUrl || "",
+        youtubeUrl: (user as any).youtubeUrl || "",
       });
     }
 
@@ -466,6 +543,36 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                   {member.giftedBannerUrl && (
                     <img src={member.giftedBannerUrl} alt="banner" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" title="بنر مُهدى" />
                   )}
+                  {member.youtubeUrl && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setYtPopupMember(member); }}
+                      className="shrink-0 p-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                      title="تشغيل الأغنية المفضلة"
+                    >
+                      <Youtube size={14} className="text-red-500" />
+                    </button>
+                  )}
+                  
+                  {/* شارة المستوى */}
+                  <span 
+                    className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[8px] font-black tracking-tight leading-none ${getLevelBadgeClass(member.level || 1)}`}
+                    title={`المستوى ${member.level || 1}`}
+                  >
+                    Lv.{member.level || 1}
+                  </span>
+
+                  {/* شارة رتبة الغرفة */}
+                  {(() => {
+                    const roomBadgeInfo = getRoomRoleBadgeInfo(member.roomRole);
+                    if (!roomBadgeInfo) return null;
+                    return (
+                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] leading-none ${roomBadgeInfo.cls}`}>
+                        <span>{roomBadgeInfo.icon}</span>
+                        <span>{roomBadgeInfo.name}</span>
+                      </span>
+                    );
+                  })()}
+
                   <span className={`font-bold text-xs truncate ${member.color === 'text-foreground' ? 'text-foreground' : member.color}`} style={{ direction: 'rtl', ...(member.nameColor && member.nameColor !== "#000000" ? { color: member.nameColor } : {}) }}>{member.name}</span>
                   {member.siteBadge && (
                     <Badge className="h-3.5 text-[8px] px-1 bg-blue-600 text-white border-none rounded-sm font-black">
@@ -509,9 +616,102 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
         )}
       </div>
 
+      {/* YouTube Popup */}
+      {ytPopupMember && <YouTubeMemberPopup member={ytPopupMember} onClose={() => setYtPopupMember(null)} />}
+
       <StoryCreator open={storyCreatorOpen} onClose={() => setStoryCreatorOpen(false)} />
     </div>
   );
 };
 
 export default MemberList;
+
+/* ─── YouTube Member Popup ──────────────────────────────────── */
+const YouTubeMemberPopup: React.FC<{ member: any; onClose: () => void }> = ({ member, onClose }) => {
+  const videoId = React.useMemo(() => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const url = member.youtubeUrl || "";
+    const match = url.match(regExp);
+    return match && match[2].length === 11 ? match[2] : null;
+  }, [member.youtubeUrl]);
+
+  const [position, setPosition] = useState({ x: 20, y: 100 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest("a") || target.closest("iframe")) return;
+    isDraggingRef.current = true;
+    dragStartRef.current = { x: e.clientX - position.x, y: e.clientY - position.y };
+    document.body.style.userSelect = "none";
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const w = isMobile ? 240 : 340;
+      const h = isMobile ? 180 : 250;
+      const newX = Math.max(0, Math.min(window.innerWidth - w, e.clientX - dragStartRef.current.x));
+      const newY = Math.max(0, Math.min(window.innerHeight - h, e.clientY - dragStartRef.current.y));
+      setPosition({ x: newX, y: newY });
+    };
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isMobile]);
+
+  if (!videoId) return null;
+
+  const width = isMobile ? 260 : 360;
+  const videoHeight = width * 0.5625;
+  const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+
+  return (
+    <div
+      className="fixed z-[9999] rounded-2xl overflow-hidden bg-slate-900/95 backdrop-blur border border-slate-700/50 shadow-2xl shadow-black/80 flex flex-col transition-all cursor-grab active:cursor-grabbing duration-75 select-none animate-in zoom-in-95 duration-100"
+      style={{ left: position.x, top: position.y, width, touchAction: "none" }}
+      onMouseDown={handleMouseDown}
+    >
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-950/60 border-b border-slate-800 shrink-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Youtube size={12} className="text-red-500 shrink-0 animate-pulse" />
+          <span className="text-[10px] font-black text-slate-200 truncate max-w-[180px]" dir="rtl">
+            {member.name}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="w-5 h-5 rounded-full bg-slate-800 hover:bg-red-600 text-slate-300 hover:text-white flex items-center justify-center transition-colors shrink-0"
+        >
+          <X size={10} />
+        </button>
+      </div>
+      <div className="relative w-full bg-black" style={{ height: videoHeight }}>
+        <iframe
+          src={`${embedUrl}?autoplay=1&rel=0`}
+          className="w-full h-full border-none"
+          allow="autoplay; fullscreen; encrypted-media"
+          allowFullScreen
+          title={member.name}
+        />
+      </div>
+    </div>
+  );
+};

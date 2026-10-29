@@ -19,12 +19,22 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
   const userData = socket.data?.user || {};
   const userId = userData.id;
 
-  socket.on("stories:get", async (callback) => {
+  socket.on("stories:get", async (dataOrCallback?: any, maybeCallback?: any) => {
     try {
+      const callback = typeof dataOrCallback === "function" ? dataOrCallback : maybeCallback;
+      const data = typeof dataOrCallback === "object" ? dataOrCallback : {};
+
       const enabled = await isStoriesEnabled();
       if (!enabled) return callback?.({ success: true, stories: [] });
 
-      const stories = await getActiveStories(userId);
+      const currentViewerId =
+        data?.viewerId ||
+        socket.data?.user?.id ||
+        (socket.handshake?.auth as any)?.userId ||
+        userId ||
+        "";
+
+      const stories = await getActiveStories(currentViewerId);
       callback?.({ success: true, stories });
     } catch (err) {
       console.error("[Stories] get error:", err);
@@ -99,18 +109,30 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on("stories:view", async (data: { storyId: string }, callback) => {
+  socket.on("stories:view", async (data: { storyId: string; viewerId?: string }, callback) => {
     try {
-      if (!userId) return callback?.({ error: "Unauthorized" });
+      const currentViewerId =
+        data?.viewerId ||
+        socket.data?.user?.id ||
+        (socket.handshake?.auth as any)?.userId ||
+        userId;
+
+      if (!currentViewerId) return callback?.({ error: "Unauthorized" });
       if (!data?.storyId) return callback?.({ error: "Story ID required" });
 
-      await markStoryViewed(data.storyId, userId, userData.username);
+      const currentViewerName =
+        socket.data?.user?.username ||
+        (socket.handshake?.auth as any)?.username ||
+        userData.username ||
+        "عضو";
+
+      await markStoryViewed(data.storyId, currentViewerId, currentViewerName);
 
       const viewers = await getStoryViewers(data.storyId);
 
       io.emit("stories:viewed", {
         storyId: data.storyId,
-        viewerId: userId,
+        viewerId: currentViewerId,
         viewCount: viewers.length,
         viewers,
       });

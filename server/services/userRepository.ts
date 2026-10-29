@@ -26,10 +26,11 @@ type CreateUserInput = {
 let databaseAvailable: boolean | undefined;
 
 const normalizeRole = (power: string, username: string): AuthRole => {
-  const value = String(power || "").toLowerCase();
-  const user = String(username || "").toLowerCase();
-  if (user === "admin" || user === "safarihost" || ["owner", "ispower", "hide", "chatmaster"].includes(value)) return "owner";
-  if (["admin", "moderator"].includes(value)) return value as AuthRole;
+  const value = String(power || "").toLowerCase().trim();
+  const user = String(username || "").toLowerCase().trim();
+  if (user === "admin" || user === "safarihost" || ["owner", "ispower", "hide", "chatmaster", "مالك"].includes(value)) return "owner";
+  if (["admin", "ادمن", "أدمن"].includes(value)) return "admin";
+  if (["moderator", "سوبر", "مشرف"].includes(value)) return "moderator";
   return "member";
 };
 
@@ -122,6 +123,7 @@ const syncProfileToCanonicalStore = async (
     nameColor?: string;
     messageColor?: string;
     statusFontColor?: string;
+    youtubeUrl?: string;
   },
 ) => {
   const actualUserId = await resolveUserId(userId);
@@ -170,6 +172,9 @@ const syncProfileToCanonicalStore = async (
   if (updates.statusFontColor !== undefined) {
     addProfileField("status_font_color", updates.statusFontColor);
     addLegacyField("scol", String(updates.statusFontColor).slice(0, 20));
+  }
+  if (updates.youtubeUrl !== undefined) {
+    addProfileField("youtube_url", updates.youtubeUrl);
   }
 
   if (profileFields.length > 0) {
@@ -262,6 +267,7 @@ export const updatePersistedUserProfile = async (
     nameColor?: string;
     messageColor?: string;
     statusFontColor?: string;
+    youtubeUrl?: string;
   }
 ): Promise<boolean> => {
   if (databaseAvailable === false) return false;
@@ -310,6 +316,7 @@ export const updatePersistedUserProfile = async (
       nameColor: profileUpdates.nameColor,
       messageColor: profileUpdates.messageColor,
       statusFontColor: profileUpdates.statusFontColor,
+      youtubeUrl: profileUpdates.youtubeUrl,
     });
 
     databaseAvailable = true;

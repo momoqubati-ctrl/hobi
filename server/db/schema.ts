@@ -158,6 +158,7 @@ export const userProfiles = pgTable("user_profiles", {
   bannerUrl: text("banner_url"),
   themeId: varchar("theme_id", { length: 80 }),
   avatarFrameUrl: text("avatar_frame_url"),
+  seatFrameUrl: text("seat_frame_url"),
   giftIconUrl: text("gift_icon_url"),
   memberCardBgUrl: text("member_card_bg_url"),
   profileIconUrl: text("profile_icon_url"),
@@ -192,6 +193,8 @@ export const userProfiles = pgTable("user_profiles", {
   giftedGiftIconUrl: text("gifted_gift_icon_url"),
   giftedPromotionIconUrl: text("gifted_promotion_icon_url"),
   joinuser: bigint("joinuser", { mode: "number" }),
+  level: integer("level").default(1).notNull(),
+  exp: integer("exp").default(0).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -673,3 +676,23 @@ export const roomKicks = pgTable("room_kicks", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+
+
+export const roomMembers = pgTable(
+  "room_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id").references(() => rooms.id, { onDelete: "cascade" }).notNull(),
+    userId: varchar("user_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
+    role: varchar("role", { length: 40 }).default("member").notNull(),
+    power: integer("power").default(1000).notNull(),
+    customTitle: varchar("custom_title", { length: 120 }),
+    badgeId: uuid("badge_id").references(() => roomBadges.id, { onDelete: "set null" }),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("room_members_room_user_idx").on(table.roomId, table.userId),
+    index("room_members_user_idx").on(table.userId),
+    index("room_members_room_idx").on(table.roomId),
+  ]
+);
