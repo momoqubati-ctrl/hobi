@@ -1,6 +1,6 @@
 # خطة التنفيذ: إدارة مزوّد الصوت (`provider-admin`)
 
-**الحالة:** بانتظار مراجعة المستخدم
+**الحالة:** معتمدة؛ التنفيذ جارٍ
 **المواصفة المعتمدة:** [SPEC-provider-admin.md](../SPEC-provider-admin.md)
 **خريطة القدرات:** [CAPABILITY-MAP.md](../CAPABILITY-MAP.md)
 
