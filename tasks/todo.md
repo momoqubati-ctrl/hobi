@@ -17,6 +17,7 @@
   - الملفات: `server/db/schema.ts`, `server/db/migrate.ts`, `server/services/voiceProviderStore.ts`, `tests/voiceProviderStore.test.ts`
   - الاعتماديات: `voice-provider-encryption`.
   - **بوابة:** لا يبدأ تعديل المخطط أو الترحيل قبل موافقة المستخدم الصريحة.
+  - **حالة التحقق:** تنفيذ المخزن والمخطط واختبارات الوحدة مكتمل؛ اختبار PostgreSQL المعزول معلّق. لم تُشغّل أوامر على قاعدة غير معروفة.
 
 ## نقطة تحقق: الأساس
 

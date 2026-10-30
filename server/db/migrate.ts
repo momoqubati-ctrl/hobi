@@ -425,6 +425,42 @@ export async function runAutoMigrations() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS "voice_provider_accounts" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" varchar(120) NOT NULL,
+        "url" text NOT NULL,
+        "api_key_encrypted" jsonb NOT NULL,
+        "api_secret_encrypted" jsonb NOT NULL,
+        "created_at" timestamptz DEFAULT now() NOT NULL,
+        "updated_at" timestamptz DEFAULT now() NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "voice_provider_selection" (
+        "id" integer PRIMARY KEY DEFAULT 1,
+        "provider" varchar(16) DEFAULT 'webrtc' NOT NULL,
+        "livekit_account_id" uuid
+          REFERENCES "voice_provider_accounts"("id") ON DELETE RESTRICT,
+        "updated_at" timestamptz DEFAULT now() NOT NULL,
+        CONSTRAINT "voice_provider_selection_singleton_check" CHECK ("id" = 1),
+        CONSTRAINT "voice_provider_selection_provider_check"
+          CHECK ("provider" IN ('webrtc', 'livekit')),
+        CONSTRAINT "voice_provider_selection_account_check"
+          CHECK (
+            ("provider" = 'webrtc' AND "livekit_account_id" IS NULL)
+            OR ("provider" = 'livekit' AND "livekit_account_id" IS NOT NULL)
+          )
+      );
+    `);
+
+    await client.query(`
+      INSERT INTO "voice_provider_selection" ("id", "provider", "livekit_account_id")
+      VALUES (1, 'webrtc', NULL)
+      ON CONFLICT ("id") DO NOTHING;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS "chat_bots" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "bot_key" varchar(80) NOT NULL,
@@ -1098,6 +1134,8 @@ export async function verifyDatabaseSchema() {
     "moderation_bans",
     "moderation_events",
     "site_settings",
+    "voice_provider_accounts",
+    "voice_provider_selection",
     "chat_bots",
     "moderation_filters",
     "admin_audit_logs",

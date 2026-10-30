@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -14,7 +15,8 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
+import type { EncryptedVoiceProviderSecret } from "../services/voiceProviderEncryption";
 
 export const accountRole = pgEnum("account_role", ["guest", "member", "moderator", "owner", "admin", "agent"]);
 export const accountStatus = pgEnum("account_status", ["active", "muted", "banned", "suspended", "deleted"]);
@@ -256,6 +258,41 @@ export const siteSettings = pgTable("site_settings", {
   updatedBy: varchar("updated_by", { length: 255 }).references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const voiceProviderAccounts = pgTable("voice_provider_accounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  url: text("url").notNull(),
+  apiKeyEncrypted: jsonb("api_key_encrypted").$type<EncryptedVoiceProviderSecret>().notNull(),
+  apiSecretEncrypted: jsonb("api_secret_encrypted").$type<EncryptedVoiceProviderSecret>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const voiceProviderSelection = pgTable(
+  "voice_provider_selection",
+  {
+    id: integer("id").default(1).primaryKey(),
+    provider: varchar("provider", { length: 16 }).default("webrtc").notNull(),
+    livekitAccountId: uuid("livekit_account_id").references(
+      () => voiceProviderAccounts.id,
+      { onDelete: "restrict" },
+    ),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("voice_provider_selection_singleton_check", sql`${table.id} = 1`),
+    check(
+      "voice_provider_selection_provider_check",
+      sql`${table.provider} IN ('webrtc', 'livekit')`,
+    ),
+    check(
+      "voice_provider_selection_account_check",
+      sql`(${table.provider} = 'webrtc' AND ${table.livekitAccountId} IS NULL)
+          OR (${table.provider} = 'livekit' AND ${table.livekitAccountId} IS NOT NULL)`,
+    ),
+  ],
+);
 
 export const chatBots = pgTable("chat_bots", {
   id: uuid("id").defaultRandom().primaryKey(),
