@@ -18,6 +18,8 @@ const requiredTables = [
   "rooms",
   "moderation_events",
   "site_settings",
+  "voice_provider_accounts",
+  "voice_provider_selection",
   "chat_bots",
   "moderation_filters",
   "admin_audit_logs",

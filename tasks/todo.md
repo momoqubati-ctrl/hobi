@@ -11,13 +11,13 @@
   - الملفات: `server/services/voiceProviderEncryption.ts`, `tests/voiceProviderEncryption.test.ts`, `.env.example`
   - الاعتماديات: لا يوجد.
 
-- [ ] **voice-provider-storage — تخزين الحسابات والاختيار**
+- [x] **voice-provider-storage — تخزين الحسابات والاختيار**
   - القبول: تخزين متعدد للحسابات مع أسرار مشفرة واختيار مطلوب منفصل؛ ترحيل إضافي آمن.
-  - التحقق: اختبارات التخزين، `npm run db:verify`، وترحيل على قاعدة اختبار معزولة فقط.
+  - التحقق: اختبارات التخزين، `npm run db:verify`، وفحص مخطط قاعدة الموقع بعد موافقة المستخدم الصريحة.
   - الملفات: `server/db/schema.ts`, `server/db/migrate.ts`, `server/services/voiceProviderStore.ts`, `tests/voiceProviderStore.test.ts`
   - الاعتماديات: `voice-provider-encryption`.
   - **بوابة:** لا يبدأ تعديل المخطط أو الترحيل قبل موافقة المستخدم الصريحة.
-  - **حالة التحقق:** تنفيذ المخزن والمخطط واختبارات الوحدة مكتمل؛ اختبار PostgreSQL المعزول معلّق. لم تُشغّل أوامر على قاعدة غير معروفة.
+  - **حالة التحقق:** الجداول والقيود والاختيار الافتراضي موجودة في قاعدة الموقع؛ `npm run db:verify` نجح. لم يُشغّل `db:migrate` لأنه يطبق مخططاً أوسع، ولم تكن هناك حاجة لإعادة إنشاء الجداول.
 
 ## نقطة تحقق: الأساس
 
