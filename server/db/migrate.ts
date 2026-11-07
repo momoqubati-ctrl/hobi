@@ -1,4 +1,5 @@
 import { dbPool } from "./index";
+import type { PoolClient } from "pg";
 
 /**
  * Auto-migration: يُنشئ الجداول الناقصة تلقائياً عند تشغيل السيرفر.
@@ -1265,9 +1266,56 @@ export async function ensureRoomAndMemberFeatures() {
     await client.query('CREATE UNIQUE INDEX IF NOT EXISTS "room_members_room_user_idx" ON "room_members" ("room_id", "user_id");');
     await client.query('CREATE INDEX IF NOT EXISTS "room_members_user_idx" ON "room_members" ("user_id");');
     await client.query('CREATE INDEX IF NOT EXISTS "room_members_room_idx" ON "room_members" ("room_id");');
+    await ensureRoomCustomRolesSchema(client);
   } catch (err) {
     console.error("[DB] ensureRoomAndMemberFeatures error:", err);
   } finally {
     client.release();
   }
+}
+
+export async function ensureRoomCustomRolesSchema(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "room_custom_roles" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "room_id" uuid NOT NULL REFERENCES "rooms"("id") ON DELETE CASCADE,
+      "name" varchar(64) NOT NULL,
+      "color" varchar(7) DEFAULT '#64748b' NOT NULL,
+      "power_level" integer DEFAULT 1000 NOT NULL,
+      "permissions" jsonb DEFAULT
+        '{"canKick":false,"canMute":false,"canManageMics":false,"canPin":false,"canClearMessages":false,"canBan":false}'::jsonb
+        NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "room_custom_roles_name_check"
+        CHECK (length(trim("name")) BETWEEN 1 AND 64),
+      CONSTRAINT "room_custom_roles_color_check"
+        CHECK ("color" ~ '^#[0-9A-Fa-f]{6}$'),
+      CONSTRAINT "room_custom_roles_power_check"
+        CHECK ("power_level" BETWEEN 1 AND 99999),
+      CONSTRAINT "room_custom_roles_permissions_check"
+        CHECK (
+          jsonb_typeof("permissions") = 'object'
+          AND jsonb_object_length("permissions") = 6
+          AND jsonb_typeof("permissions"->'canKick') = 'boolean'
+          AND jsonb_typeof("permissions"->'canMute') = 'boolean'
+          AND jsonb_typeof("permissions"->'canManageMics') = 'boolean'
+          AND jsonb_typeof("permissions"->'canPin') = 'boolean'
+          AND jsonb_typeof("permissions"->'canClearMessages') = 'boolean'
+          AND jsonb_typeof("permissions"->'canBan') = 'boolean'
+        )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "room_custom_roles_room_name_idx"
+      ON "room_custom_roles" ("room_id", lower("name"));
+    CREATE INDEX IF NOT EXISTS "room_custom_roles_room_power_idx"
+      ON "room_custom_roles" ("room_id", "power_level");
+  `);
+  await client.query(`
+    ALTER TABLE "room_members"
+    ADD COLUMN IF NOT EXISTS "custom_role_id" uuid
+      REFERENCES "room_custom_roles"("id") ON DELETE SET NULL
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS "room_members_custom_role_idx"
+      ON "room_members" ("custom_role_id")
+  `);
 }

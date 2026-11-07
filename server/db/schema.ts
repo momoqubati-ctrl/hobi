@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type { EncryptedVoiceProviderSecret } from "../services/voiceProviderEncryption";
+import type { RoomCustomRolePermissions } from "../services/roomCustomRoleService";
 
 export const accountRole = pgEnum("account_role", ["guest", "member", "moderator", "owner", "admin", "agent"]);
 export const accountStatus = pgEnum("account_status", ["active", "muted", "banned", "suspended", "deleted"]);
@@ -715,6 +716,46 @@ export const roomKicks = pgTable("room_kicks", {
 
 
 
+export const roomCustomRoles = pgTable(
+  "room_custom_roles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id").references(() => rooms.id, { onDelete: "cascade" }).notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    color: varchar("color", { length: 7 }).default("#64748b").notNull(),
+    powerLevel: integer("power_level").default(1000).notNull(),
+    permissions: jsonb("permissions").$type<RoomCustomRolePermissions>().default({
+      canKick: false,
+      canMute: false,
+      canManageMics: false,
+      canPin: false,
+      canClearMessages: false,
+      canBan: false,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("room_custom_roles_room_name_idx").on(table.roomId, sql`lower(${table.name})`),
+    index("room_custom_roles_room_power_idx").on(table.roomId, table.powerLevel),
+    check("room_custom_roles_name_check", sql`length(trim(${table.name})) BETWEEN 1 AND 64`),
+    check("room_custom_roles_color_check", sql`${table.color} ~ '^#[0-9A-Fa-f]{6}$'`),
+    check("room_custom_roles_power_check", sql`${table.powerLevel} BETWEEN 1 AND 99999`),
+    check(
+      "room_custom_roles_permissions_check",
+      sql`
+        jsonb_typeof(${table.permissions}) = 'object'
+        AND jsonb_object_length(${table.permissions}) = 6
+        AND jsonb_typeof(${table.permissions}->'canKick') = 'boolean'
+        AND jsonb_typeof(${table.permissions}->'canMute') = 'boolean'
+        AND jsonb_typeof(${table.permissions}->'canManageMics') = 'boolean'
+        AND jsonb_typeof(${table.permissions}->'canPin') = 'boolean'
+        AND jsonb_typeof(${table.permissions}->'canClearMessages') = 'boolean'
+        AND jsonb_typeof(${table.permissions}->'canBan') = 'boolean'
+      `,
+    ),
+  ],
+);
+
 export const roomMembers = pgTable(
   "room_members",
   {
@@ -723,6 +764,7 @@ export const roomMembers = pgTable(
     userId: varchar("user_id", { length: 255 }).references(() => users.id, { onDelete: "cascade" }).notNull(),
     role: varchar("role", { length: 40 }).default("member").notNull(),
     power: integer("power").default(1000).notNull(),
+    customRoleId: uuid("custom_role_id").references(() => roomCustomRoles.id, { onDelete: "set null" }),
     customTitle: varchar("custom_title", { length: 120 }),
     badgeId: uuid("badge_id").references(() => roomBadges.id, { onDelete: "set null" }),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
