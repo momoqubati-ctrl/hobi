@@ -23,34 +23,36 @@ import { getSocketAuthClaims } from "./socketAuthentication";
 let io: SocketIOServer | null = null;
 
 export const getSocketCorsOrigin = () => {
-  const configured = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || "")
+  const configured = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (configured.length > 0) {
-    return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      // السماح بالطلبات التي لا تحمل origin (مثل تطبيقات الجوال و curl)
-      if (!origin) return callback(null, true);
-      if (configured.includes(origin)) return callback(null, true);
-      // السماح بـ localhost في بيئات التطوير والاختبار
-      if (process.env.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+  return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // السماح بالطلبات التي لا تحمل origin (مثل تطبيقات الجوال و curl)
+    if (!origin) return callback(null, true);
+    if (configured.includes(origin) || configured.includes("*")) return callback(null, true);
+
+    try {
+      const url = new URL(origin);
+      // السماح التلقائي لنطاقات الاستضافة مثل onrender.com
+      if (url.hostname.endsWith(".onrender.com") || url.hostname.endsWith(".vercel.app")) {
         return callback(null, true);
       }
-      return callback(new Error("CORS origin not allowed"), false);
-    };
-  }
+    } catch {}
 
-  if (process.env.NODE_ENV === "production") {
-    // في الإنتاج عند عدم تحديد أصول، يُمنع الاتصال من أي أصل خارجي عشوائي
-    return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      if (!origin) return callback(null, true);
-      return callback(new Error("CORS origin not allowed"), false);
-    };
-  }
+    // السماح بـ localhost في بيئات التطوير والاختبار
+    if (process.env.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
 
-  // في بيئة التطوير المحلية
-  return true;
+    if (configured.length > 0) {
+      return callback(new Error("CORS origin not allowed"), false);
+    }
+
+    // إذا لم يتم تحديد نطاقات وكان الإنتاج على نفس السيرفر
+    return callback(null, true);
+  };
 };
 
 /**

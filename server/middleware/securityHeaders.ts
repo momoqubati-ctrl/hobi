@@ -46,13 +46,22 @@ export default defineEventHandler((event: H3Event) => {
   // 7. CORS handling for REST requests
   const origin = getRequestHeader(event, "origin");
   if (origin) {
-    const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || "")
+    const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
 
+    let isHostingDomain = false;
+    try {
+      const parsed = new URL(origin);
+      isHostingDomain = parsed.hostname.endsWith(".onrender.com") || parsed.hostname.endsWith(".vercel.app");
+    } catch {}
+
     const isAllowed =
       configuredOrigins.includes(origin) ||
+      configuredOrigins.includes("*") ||
+      isHostingDomain ||
+      configuredOrigins.length === 0 ||
       (process.env.NODE_ENV !== "production" &&
         /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
 
