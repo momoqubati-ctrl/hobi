@@ -1,4 +1,4 @@
-import { config } from "dotenv";
+﻿import { config } from "dotenv";
 config();
 
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -18,6 +18,12 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL?.includes("supabase.com")
     ? { rejectUnauthorized: false }
     : undefined,
+  // Keep each application instance within a conservative database connection budget.
+  max: Number(process.env.DB_POOL_MAX ?? 5),
+  min: Number(process.env.DB_POOL_MIN ?? 0),
+  idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? 30_000),
+  connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS ?? 3_000),
+  allowExitOnIdle: false,
 });
 
 export const db = drizzle(pool, { schema });

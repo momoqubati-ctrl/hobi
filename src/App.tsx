@@ -1,3 +1,4 @@
+﻿import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
@@ -8,10 +9,14 @@ import { ConfirmProvider } from "@/hooks/use-confirm";
 import { AuthProvider, useAuthContext } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { GlobalCallOverlay } from "@/components/chat/call";
-import Index from "./pages/Index";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import AuthCallback from "./pages/AuthCallback";
+
+// Lazy-loaded pages — يُقلّل الـ initial bundle ويُسرّع First Load
+const Index = lazy(() => import("./pages/Index"));
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AuthCallback = lazy(() => import("./pages/AuthCallback"));
+const AgentPortal = lazy(() => import("./pages/AgentPortal"));
+const HostingOwnerPortal = lazy(() => import("./pages/HostingOwnerPortal"));
 
 const AuthenticatedCallOverlay = () => {
   const { user } = useAuthContext();
@@ -38,10 +43,13 @@ const App = () => {
               <Toaster />
               <Sonner position="top-center" richColors />
               <AuthenticatedCallOverlay />
+              <Suspense fallback={null}>
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
+                <Route path="/agent/:portalKey" element={<AgentPortal />} />
+                <Route path="/hosting-owner/:portalKey" element={<HostingOwnerPortal />} />
                 <Route 
                   path="/dashboard/*" 
                   element={
@@ -52,6 +60,7 @@ const App = () => {
                 />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
+              </Suspense>
             </AuthProvider>
           </TooltipProvider>
         </ConfirmProvider>

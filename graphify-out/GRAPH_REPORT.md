@@ -1,22 +1,22 @@
-# Graph Report - hobi  (2026-10-23)
+# Graph Report - hobi  (2026-10-31)
 
 ## Corpus Check
-- 511 files · ~1,155,478 words
+- 660 files · ~1,248,979 words
 - Verdict: corpus is large enough that graph structure adds value.
-- Unclassified: 166 file(s) not represented in the graph (top: .meta 91, .bkp 37, .1 20)
+- Unclassified: 209 file(s) not represented in the graph (top: .meta 123, .bkp 37, .1 31)
 
 ## Summary
-- 3048 nodes · 6915 edges · 168 communities (146 shown, 22 thin omitted)
-- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 27 edges (avg confidence: 0.88)
+- 3899 nodes · 9309 edges · 212 communities (189 shown, 23 thin omitted)
+- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 41 edges (avg confidence: 0.89)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `475cfff6`
+- Built from commit: `054fef4e`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- Input
+- lucide-react
 - getSocket
 - db/index.ts
 - WallFeed.tsx
@@ -32,8 +32,8 @@
 - schema.ts
 - sidebar.tsx
 - lib/utils.ts
-- roomHandlers.ts
-- vite-socket-io.ts
+- socket/presenceManager.ts
+- privateHandlers.ts
 - Code Review and Quality
 - Test-Driven Development
 - api/package.json
@@ -44,12 +44,12 @@
 - legacy-import-dry-run.cjs
 - Git Workflow and Versioning
 - Optimization Patterns
-- wallService.ts
+- chatFeaturePermissions.ts
 - Shipping and Launch
 - API and Interface Design
 - Browser Testing with DevTools
 - Frontend UI Engineering
-- dotenv
+- siteWalletFundingService.ts
 - legacy-normalize-performance.cjs
 - CI/CD and Automation
 - Constraint-Driven Development
@@ -61,17 +61,17 @@
 - compilerOptions
 - form.tsx
 - chatStore.ts
-- adminPermissions.ts
+- voiceProviderAdminApi.ts
 - authService.ts
 - constants.ts
 - Debugging and Error Recovery
-- ref_node_crypto
+- socket/index.ts
 - uploadStorage.ts
 - profileService.ts
 - app.module.ts
 - devDependencies
 - EventEnvelope.ts
-- profileHandlers.ts
+- roomMemberService.ts
 - fileService.ts
 - compilerOptions
 - EventBus.ts
@@ -89,8 +89,8 @@
 - Distributed Realtime Social Infrastructure
 - adminConfigService.ts
 - legacyAdminService.ts
-- requestCountry.ts
-- PermissionsMatrix.tsx
+- h3
+- GlobalCallOverlay.tsx
 - Doubt-Driven Development
 - Process
 - stories-store.ts
@@ -99,21 +99,21 @@
 - Using Agent Skills
 - web/package.json
 - خطة بناء منصة دردشة عالمية
-- scripts
+- ref_node_assert
 - class-variance-authority
 - carousel.tsx
-- socket/index.ts
+- خطة التنفيذ: صلاحيات الإعلانات (`announcement-permissions`)
 - Spec-Driven Development
 - Source-Driven Development
 - scripts
-- command.tsx
+- sheet.tsx
 - services/presenceManager.ts
 - voiceStageHandlers.ts
 - presenceManager
 - Refinement & Evaluation Criteria
-- pg
+- coinLedgerService.ts
 - chart.tsx
-- notificationService.ts
+- wallService.ts
 - privateMessageService.ts
 - userRepository.ts
 - compilerOptions
@@ -123,18 +123,18 @@
 - db-server.cjs
 - تقرير خطة الترحيل الفعلي
 - giftService.ts
-- pagination.tsx
+- MemberList.tsx
 - The Simplification Process
 - Ideation Frameworks Reference
 - jest
 - devDependencies
 - الاستفادة من قاعدة Safari القديمة
-- minioClient.ts
+- LegacyCpSection.tsx
 - navigation-menu.tsx
 - إصلاحات أمنية مقترحة
-- userProfileDefaults.ts
-- YouTubeSearch.tsx
-- sheet.tsx
+- خارطة طريق الجاهزية للإنتاج والتوسع (Production Readiness Roadmap)
+- Input
+- agentAuthService.ts
 - realtimeEventEngine
 - eslint.config.js
 - تقرير الترحيل التجريبي
@@ -142,91 +142,133 @@
 - idempotencyManager
 - server.ts
 - سياسة رسائل الغرف والخاص
-- backfill-users.cjs
-- getDeviceSignature
+- voiceStageStore
+- ref_react
 - Nitro Server Layer
 - nest-cli.json
 - dependencies
 - dependencies
-- CQRS Flow
+- WallFeed.tsx
 - مصفوفة مطابقة قاعدة Safari القديمة
-- input-otp.tsx
+- مواصفة: إدارة مزوّد الصوت (`provider-admin`)
 - migrate.ts
-- wall/upload.post.ts
-- sharedUserStore.ts
+- Spec: Site Wallet Funding
+- announcementDeliveryPolicy.ts
 - scripts
 - تغطية أعمدة قاعدة Safari القديمة
-- ref_node_path
-- accordion.tsx
+- pg
+- useAuth.ts
 - tsconfig.build.json
 - web/eslint.config.mjs
 - web/README.md
 - layout.tsx
 - Legacy normalization report
 - Legacy schema rebuild
-- cleanup-orphaned-rows.cjs
-- create-safarihost-admin.cjs
+- profile/ProfileModal.tsx
+- ref_node_crypto
 - legacy-import-reconcile.cjs
+- gift-send-idempotency.ts
 - src/utils/supabase/client.ts
-- create-admin-user.cjs
-- legacy-db-status.cjs
-- batch-stats.get.ts
+- drizzle-orm
+- Spec: Wallet Ledger
+- walletAgentAccess.ts
 - vercel.json
 - idea-refine.sh
 - AGENTS.md
 - postcss.config.mjs
 - README.md
+- SPEC-site-wallet-funding.md
+- drawer.tsx
+- viteSocketIO
+- voiceProviderStore.ts
+- hostingOwnerAuthRoutes.test.ts
+- giftCommissionService.ts
+- ActiveCallView.tsx
+- voiceProviderEncryption.ts
+- Task List
+- Implementation Plan: Wallet Ledger
+- Task List
+- Task List: Wallet Ledger
+- المهام
+- تفاصيل المهام
+- قائمة مهام: provider-admin
+- Implementation Plan: Site Wallet Funding
+- خطة التنفيذ: إدارة مزوّد الصوت (`provider-admin`)
+- خريطة القدرات: إدارة مزوّدي الصوت والفيديو
+- Task List: Site Wallet Funding
+- showError
+- خطة التنفيذ: تسليم الإعلانات (`announcement-delivery`)
+- profile-check.get.ts
+- النطاق
+- المرحلة 1: الأساس
+- مواصفة: تسليم الإعلانات (`announcement-delivery`)
+- مواصفة: صلاحيات الإعلانات
+- pagination.tsx
+- coinLedgerMigration.test.ts
+- hasPermissionAccess
+- CAPABILITY-MAP-announcements.md
+- voiceStageRedisWorker.mjs
+- قائمة مهام: صلاحيات الإعلانات (`announcement-permissions`)
+- FileManager.tsx
+- NotificationsPanel.tsx
+- IconPickerPopover.tsx
+- visualProfilePermissions.ts
+- CQRS Flow
+- SoundEffectsManager
+- siteWalletFundingIntent.test.ts
+- عقد الواجهة
+- cleanup-orphaned-rows.cjs
+- create-safarihost-admin.cjs
+- minio.ts
 
 ## God Nodes (most connected - your core abstractions)
-1. `cn()` - 233 edges
-2. `h3` - 142 edges
-3. `dbPool` - 127 edges
-4. `lucide-react` - 94 edges
-5. `Button` - 93 edges
-6. `Input` - 69 edges
-7. `getSocket()` - 66 edges
-8. `getAdminContext()` - 53 edges
-9. `Card` - 47 edges
-10. `CardContent` - 47 edges
+1. `cn()` - 234 edges
+2. `h3` - 171 edges
+3. `dbPool` - 142 edges
+4. `Button` - 108 edges
+5. `lucide-react` - 107 edges
+6. `Input` - 83 edges
+7. `getSocket()` - 74 edges
+8. `useRealtimeStore` - 61 edges
+9. `Card` - 59 edges
+10. `CardContent` - 59 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `CQRS Flow` --references--> `JoinRoomCommand`  [INFERRED]
   docs/distributed-social-infrastructure.md → server/commands/JoinRoomCommand.ts
 - `Event Flow Architecture` --references--> `EventEnvelope`  [INFERRED]
   docs/distributed-social-infrastructure.md → server/core/events/EventEnvelope.ts
-- `CQRS Flow` --references--> `FollowUserCommand`  [INFERRED]
-  docs/distributed-social-infrastructure.md → server/commands/FollowUserCommand.ts
-- `CQRS Flow` --references--> `SendMessageCommand`  [INFERRED]
-  docs/distributed-social-infrastructure.md → server/commands/SendMessageCommand.ts
-- `Distributed Scaling Plan` --references--> `workerRuntime`  [INFERRED]
-  docs/distributed-social-infrastructure.md → server/workers/WorkerRuntime.ts
+- `المهمة 5: توفير API إرسال الإعلان` --references--> `getUserAuthContext()`  [INFERRED]
+  tasks/announcements/delivery-todo.md → server/services/adminAccess.ts
+- `المخاطر والتخفيف` --references--> `guardAdminAction()`  [INFERRED]
+  tasks/plan.md → server/services/adminPermissions.ts
+- `المخاطر والتخفيف` --references--> `resolveRoomId()`  [INFERRED]
+  tasks/announcements/delivery-plan.md → server/socket/roomAccess.ts
 
 ## Import Cycles
-- 3-file cycle: `server/services/filterService.ts -> server/socket/index.ts -> server/socket/roomHandlers.ts -> server/services/filterService.ts`
-- 3-file cycle: `server/services/filterService.ts -> server/socket/index.ts -> server/socket/wallHandlers.ts -> server/services/filterService.ts`
-- 3-file cycle: `server/services/filterService.ts -> server/socket/index.ts -> server/socket/privateHandlers.ts -> server/services/filterService.ts`
+- None detected.
 
-## Communities (168 total, 22 thin omitted)
+## Communities (212 total, 23 thin omitted)
 
-### Community 0 - "Input"
-Cohesion: 0.09
-Nodes (62): BanCreateModal(), BanCreateModalProps, SearchedUser, BansSection(), AddFilterDialog(), AddFilterDialogProps, LegacyCpSection(), LegacyCpSectionProps (+54 more)
+### Community 0 - "lucide-react"
+Cohesion: 0.06
+Nodes (70): lucide-react, sonner, BanCreateModal(), BanCreateModalProps, SearchedUser, GiftCategory, GiftItem, RoomBadge (+62 more)
 
 ### Community 1 - "getSocket"
 Cohesion: 0.08
-Nodes (56): DashboardMembers(), MemberStats, OnlineMember, STATUS_COLORS, DashboardRooms(), LAYOUT_ICONS, Room, Frame (+48 more)
+Nodes (51): canAccessControlPanel(), DashboardMembers(), MemberStats, OnlineMember, STATUS_COLORS, DashboardRooms(), LAYOUT_ICONS, Room (+43 more)
 
 ### Community 2 - "db/index.ts"
-Cohesion: 0.10
-Nodes (7): h3, DeadLetterEntry, checkDatabaseConnection(), dbPool, pool, ADMIN_ROLES, getAdminContext()
+Cohesion: 0.07
+Nodes (8): dotenv, dbPool, pool, ADMIN_ROLES, getAdminContext(), getSecret(), verifySignature(), invalidateRoomCache()
 
 ### Community 3 - "WallFeed.tsx"
-Cohesion: 0.07
-Nodes (57): EMOJI_CATEGORIES, EMOJI_KEYWORDS, EmojiPanel(), EmojiPanelProps, EmojiPickerPopover(), EmojiPickerPopoverProps, normalizePrivateMessage(), PendingMedia (+49 more)
+Cohesion: 0.09
+Nodes (37): ChatCallLog(), normalizePrivateMessage(), PendingMedia, PMMessage, PrivateChat(), PrivateChatProps, REACTIONS_CONFIG, ReactionType (+29 more)
 
 ### Community 4 - "Avatar"
-Cohesion: 0.07
-Nodes (58): BotsList(), getStoredUser(), Gift, GiftStore(), TopGift, ComposeForm(), getStoredUser(), InternalMail() (+50 more)
+Cohesion: 0.28
+Nodes (15): BotsList(), GlobalCallOverlay(), IncomingCallModal(), MiniCallWidget(), OutgoingCallView(), VoiceCallManager(), MOCK_NOTIFICATIONS, NotificationCenter() (+7 more)
 
 ### Community 5 - "dependencies"
 Cohesion: 0.03
@@ -234,23 +276,23 @@ Nodes (69): dependencies, class-variance-authority, clsx, cmdk, date-fns, drizzl
 
 ### Community 6 - "cn"
 Cohesion: 0.06
-Nodes (51): @radix-ui/react-context-menu, @radix-ui/react-dropdown-menu, @radix-ui/react-menubar, vaul, CardDescription, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem (+43 more)
+Nodes (53): cmdk, @radix-ui/react-accordion, @radix-ui/react-context-menu, @radix-ui/react-dropdown-menu, AccordionContent, AccordionItem, AccordionTrigger, Command (+45 more)
 
 ### Community 7 - "Button"
-Cohesion: 0.18
-Nodes (36): AccessLogsSection(), AuditLogsSection(), BanStatCard(), ModerationSection(), RoleRow, RolesSection(), BotsAdminSection(), DatabaseSection() (+28 more)
+Cohesion: 0.16
+Nodes (48): AccessLogsSection(), AdminDashboard(), AdminDashboardProps, AuditLogsSection(), BansSection(), BanStatCard(), getSectionTranslation(), ModerationSection() (+40 more)
 
 ### Community 8 - "package.json"
 Cohesion: 0.04
 Nodes (48): sql, eslint, @eslint/js, globals, react, react-dom, @supabase/ssr, @supabase/supabase-js (+40 more)
 
 ### Community 9 - "App.tsx"
-Cohesion: 0.07
-Nodes (36): next-themes, @radix-ui/react-toast, react-router-dom, @tanstack/react-query, App(), queryClient, ProtectedRoute(), ProtectedRouteProps (+28 more)
+Cohesion: 0.12
+Nodes (25): @radix-ui/react-toast, Toast, ToastAction, ToastActionElement, ToastClose, ToastDescription, ToastProps, ToastTitle (+17 more)
 
 ### Community 10 - "ref_react"
 Cohesion: 0.08
-Nodes (35): lucide-react, sonner, AdminDashboard(), AdminDashboardProps, getSectionTranslation(), AnimatedFace, AnimatedFacesSection(), GiftCategory (+27 more)
+Nodes (33): ACTION_LABELS, ADMIN_SECTION_PERMISSION_BY_ID, BASIC_GROUPS, canManageAdminSection(), getActionsForResource(), IMPLEMENTED_PERMISSION_ACTIONS, isPermissionActionImplemented(), PermissionGroup (+25 more)
 
 ### Community 11 - "legacy-import-apply.cjs"
 Cohesion: 0.08
@@ -261,24 +303,24 @@ Cohesion: 0.05
 Nodes (42): Broken Access Control, Broken Authentication, Cross-Site Scripting (XSS), Data Classification, Dependency Audit Triage, Destructive Operations on Derived Paths, File Upload Safety, Hardening Patterns (+34 more)
 
 ### Community 13 - "schema.ts"
-Cohesion: 0.05
-Nodes (42): accountRole, accountStatus, animatedFaces, behaviorScores, edgeType, eventReplays, eventSnapshots, eventStore (+34 more)
+Cohesion: 0.04
+Nodes (52): accountRole, accountStatus, animatedFaces, announcementDailyUsage, announcementIdempotency, announcementRecipients, announcements, behaviorScores (+44 more)
 
 ### Community 14 - "sidebar.tsx"
 Cohesion: 0.07
-Nodes (32): @radix-ui/react-separator, @radix-ui/react-tooltip, Separator, Sidebar, SidebarContent, SidebarContext, SidebarFooter, SidebarGroup (+24 more)
+Nodes (31): @radix-ui/react-separator, @radix-ui/react-tooltip, Separator, SidebarContent, SidebarContext, SidebarFooter, SidebarGroup, SidebarGroupAction (+23 more)
 
 ### Community 15 - "lib/utils.ts"
 Cohesion: 0.06
-Nodes (25): clsx, @radix-ui/react-checkbox, @radix-ui/react-hover-card, @radix-ui/react-progress, @radix-ui/react-radio-group, @radix-ui/react-scroll-area, @radix-ui/react-slider, react-day-picker (+17 more)
+Nodes (25): clsx, input-otp, @radix-ui/react-hover-card, @radix-ui/react-progress, @radix-ui/react-radio-group, @radix-ui/react-scroll-area, @radix-ui/react-slider, react-day-picker (+17 more)
 
-### Community 16 - "roomHandlers.ts"
+### Community 16 - "socket/presenceManager.ts"
+Cohesion: 0.21
+Nodes (16): addConnectedUser(), getAllOnlineUsers(), getConnectedUser(), getDedupedOnlineUsers(), getPresenceIdentity(), getSocketKey(), getTotalOnlineCount(), isUsernameOnline() (+8 more)
+
+### Community 17 - "privateHandlers.ts"
 Cohesion: 0.13
-Nodes (28): createRoomInDatabase(), getRoomMessage(), updateRoomMessageReactions(), getConnectedUser(), getDedupedOnlineUsers(), getIOInstance(), getPresenceIdentity(), getRoomKey() (+20 more)
-
-### Community 17 - "vite-socket-io.ts"
-Cohesion: 0.12
-Nodes (24): socket.io, clearFilterCache(), FilterAction, FilterResult, getRules(), logDetection(), processText(), applyShortcuts() (+16 more)
+Nodes (21): AlertCallback, clearFilterCache(), FilterAction, FilterResult, getRules(), logDetection(), processText(), setFilterAlertCallback() (+13 more)
 
 ### Community 18 - "Code Review and Quality"
 Cohesion: 0.07
@@ -297,8 +339,8 @@ Cohesion: 0.07
 Nodes (28): Anti-Patterns, Common Rationalizations, Compress before dropping, Confusion Management, Context Budget Management, Context Engineering, Context Packing Strategies, Level 1: Rules Files (+20 more)
 
 ### Community 22 - "redis.ts"
-Cohesion: 0.11
-Nodes (13): ioredis, EventHandler, traceEvent(), metrics, MetricTags, tagSuffix(), RealtimeSecurityDecision, createNoopRedis() (+5 more)
+Cohesion: 0.08
+Nodes (17): EventHandler, checkDatabaseConnection(), cleanupTimer, getRouteCategory(), LIMITS, memoryStore, RateLimitConfig, traceEvent() (+9 more)
 
 ### Community 23 - "legacy-rebuild-from-dump.cjs"
 Cohesion: 0.15
@@ -320,9 +362,9 @@ Nodes (26): 1. Commit Early, Commit Often, 2. Atomic Commits, 3. Descriptive Mes
 Cohesion: 0.07
 Nodes (25): Connection Pool Exhaustion, Large Bundle Size, Missing Caching (Backend), Missing Image Optimization (Frontend), N+1 Queries (Backend), Optimization Patterns, Queries That Ignore Their Index, Unbounded Data Fetching (+17 more)
 
-### Community 28 - "wallService.ts"
-Cohesion: 0.17
-Nodes (21): enrichCommentsWithLikes(), getSocketIp(), createWallComment(), createWallPost(), deleteWallComment(), getCommentCounts(), getCommentLikeCounts(), getLikeCounts() (+13 more)
+### Community 28 - "chatFeaturePermissions.ts"
+Cohesion: 0.11
+Nodes (21): ALLOWED_AUDIO, ALLOWED_IMAGE, ALLOWED_VIDEO, ALLOWED_AUDIO, ALLOWED_IMAGE, ALLOWED_VIDEO, getUserAuthContext(), guestPermissions (+13 more)
 
 ### Community 29 - "Shipping and Launch"
 Cohesion: 0.08
@@ -340,9 +382,9 @@ Nodes (24): Accessibility Verification with DevTools, Available Tools, Browser T
 Cohesion: 0.08
 Nodes (24): Accessibility (WCAG 2.1 AA), ARIA Labels, Avoid the AI Aesthetic, Color, Common Rationalizations, Component Architecture, Component Patterns, Design System Adherence (+16 more)
 
-### Community 33 - "dotenv"
+### Community 33 - "siteWalletFundingService.ts"
 Cohesion: 0.10
-Nodes (4): dotenv, drizzle-orm, db, rooms
+Nodes (24): createHostingOwnerSessionHandler(), createSiteWalletBalanceHandler(), createSiteWalletFundingHandler(), requireHostingOwner(), createRequestFingerprint(), defaultPersistence, ExistingOperationRow, fundSiteWallet() (+16 more)
 
 ### Community 34 - "legacy-normalize-performance.cjs"
 Cohesion: 0.17
@@ -365,8 +407,8 @@ Cohesion: 0.08
 Nodes (24): devDependencies, eslint, eslint-config-prettier, @eslint/eslintrc, @eslint/js, eslint-plugin-prettier, globals, jest (+16 more)
 
 ### Community 39 - "permissionEngine.ts"
-Cohesion: 0.14
-Nodes (18): getSecret(), verifySignature(), getSecret(), getUserAuthContext(), verifySignature(), invalidateRoomCache(), ALL_CHILDREN, BasicResource (+10 more)
+Cohesion: 0.11
+Nodes (26): getSecret(), verifySignature(), AdminPermission, resolvePermissionKeys(), ALL_CHILDREN, BasicResource, canModerate(), expandAllPermissions() (+18 more)
 
 ### Community 40 - "Documentation and ADRs"
 Cohesion: 0.09
@@ -385,56 +427,56 @@ Cohesion: 0.10
 Nodes (20): @radix-ui/react-label, @radix-ui/react-slot, react-hook-form, Breadcrumb, BreadcrumbEllipsis(), BreadcrumbItem, BreadcrumbLink, BreadcrumbList (+12 more)
 
 ### Community 44 - "chatStore.ts"
-Cohesion: 0.14
-Nodes (18): executeSendMessageCommand(), addMessage(), cacheRoomMessage(), ChatMessage, ChatRoom, cloneRooms(), DEFAULT_ROOMS, getRoomMsgMap() (+10 more)
+Cohesion: 0.11
+Nodes (34): executeSendMessageCommand(), addMessage(), cacheRoomMessage(), ChatMessage, ChatRoom, cloneRooms(), createRoomInDatabase(), DEFAULT_ROOMS (+26 more)
 
-### Community 45 - "adminPermissions.ts"
-Cohesion: 0.21
-Nodes (6): AdminPermission, guardAdminAction(), hasPermission(), logAdminAudit(), hasPermission(), invalidatePermissionCache()
+### Community 45 - "voiceProviderAdminApi.ts"
+Cohesion: 0.10
+Nodes (25): AccountPutBody, createVoiceProviderAdminHandlers(), errorCode(), errorResponse(), isRecord(), isValidAccountId(), parseAccountBody(), parseSelectionBody() (+17 more)
 
 ### Community 46 - "authService.ts"
-Cohesion: 0.17
-Nodes (21): createGuestSession(), getSecret(), hashPassword(), issueSession(), issueToken(), loginMember(), normalizeUsername(), persistedToStoredUser() (+13 more)
+Cohesion: 0.13
+Nodes (27): logAccess(), LogParams, LogState, AuthTokenClaims, createGuestSession(), hashPassword(), issueSession(), loginMember() (+19 more)
 
 ### Community 47 - "constants.ts"
-Cohesion: 0.13
-Nodes (20): AdminAction(), AdminCP(), AdminCPProps, NavGroup(), currentLang, FIELD_TRANSLATIONS, FIELD_TRANSLATIONS_AR, FIELD_TRANSLATIONS_EN (+12 more)
+Cohesion: 0.12
+Nodes (21): AdminAction(), AdminCP(), AdminCPProps, NavGroup(), currentLang, FIELD_TRANSLATIONS, FIELD_TRANSLATIONS_AR, FIELD_TRANSLATIONS_EN (+13 more)
 
 ### Community 48 - "Debugging and Error Recovery"
 Cohesion: 0.09
 Nodes (21): Build Failure Triage, Common Rationalizations, Debugging and Error Recovery, Error-Specific Patterns, Instrumentation Guidelines, Overview, Red Flags, Runtime Error Triage (+13 more)
 
-### Community 49 - "ref_node_crypto"
-Cohesion: 0.13
-Nodes (13): getSecret(), verifySignature(), getSecret(), verifySignature(), getSecret(), verifySignature(), getSecret(), verifySignature() (+5 more)
+### Community 49 - "socket/index.ts"
+Cohesion: 0.10
+Nodes (35): socket.io, getSecret(), verifySignature(), getSecret(), verifySignature(), getSecret(), verifySignature(), getSecret() (+27 more)
 
 ### Community 50 - "uploadStorage.ts"
-Cohesion: 0.15
-Nodes (17): ALLOWED_IMAGE, ALLOWED_VIDEO, getSecret(), verifySignature(), getSecret(), verifySignature(), allowedExtensions, getContentType() (+9 more)
+Cohesion: 0.12
+Nodes (17): getPool(), main(), SCHEMA_FILE, jiti, testsDir, getSecret(), verifySignature(), allowedExtensions (+9 more)
 
 ### Community 51 - "profileService.ts"
-Cohesion: 0.13
-Nodes (13): profileVisits, socialEdges, addLocalProfileVisit(), createLegacyProfileResult(), findLegacyUserProfile(), getFollowKey(), getLegacyProfileStats(), localFollowEdges (+5 more)
+Cohesion: 0.09
+Nodes (32): profileVisits, socialEdges, userProfiles, users, issueToken(), canExecuteAction(), logModerationEvent(), PowerAction (+24 more)
 
 ### Community 52 - "app.module.ts"
 Cohesion: 0.17
 Nodes (7): AppController, AppModule, AppService, @nestjs/common, @nestjs/core, @nestjs/testing, supertest
 
 ### Community 53 - "devDependencies"
-Cohesion: 0.10
-Nodes (21): devDependencies, autoprefixer, dotenv, drizzle-kit, @dyad-sh/react-vite-component-tagger, eslint, @eslint/js, eslint-plugin-react-hooks (+13 more)
+Cohesion: 0.05
+Nodes (38): devDependencies, autoprefixer, dotenv, drizzle-kit, @dyad-sh/react-vite-component-tagger, eslint, @eslint/js, eslint-plugin-react-hooks (+30 more)
 
 ### Community 54 - "EventEnvelope.ts"
-Cohesion: 0.17
-Nodes (13): deadLetterQueue, eventDispatcher, HandlerRegistration, definitions, EventDefinition, DomainEventPayload, DomainEventType, EventActor (+5 more)
+Cohesion: 0.16
+Nodes (14): DeadLetterEntry, deadLetterQueue, eventDispatcher, HandlerRegistration, definitions, EventDefinition, DomainEventPayload, DomainEventType (+6 more)
 
-### Community 55 - "profileHandlers.ts"
-Cohesion: 0.18
-Nodes (19): moderationEvents, userProfiles, users, canExecuteAction(), getPowerLevel(), logModerationEvent(), PowerAction, POWERS_MAP (+11 more)
+### Community 55 - "roomMemberService.ts"
+Cohesion: 0.29
+Nodes (9): getPowerLevel(), POWERS_MAP, canModerateInRoom(), getRoomMember(), getRoomRolePower(), ROOM_ROLES_CONFIG, RoomRole, RoomRoleDefinition (+1 more)
 
 ### Community 56 - "fileService.ts"
-Cohesion: 0.16
-Nodes (14): ALLOWED_TYPES, createFolder(), deleteFile(), deleteFileFromStorage(), getFilename(), getStorageQuota(), getUploadDir(), listFiles() (+6 more)
+Cohesion: 0.14
+Nodes (17): ALLOWED_TYPES, createFolder(), deleteFile(), deleteFileFromStorage(), getFilename(), getStorageQuota(), getUploadDir(), listFiles() (+9 more)
 
 ### Community 57 - "compilerOptions"
 Cohesion: 0.10
@@ -445,12 +487,12 @@ Cohesion: 0.17
 Nodes (11): JoinRoomCommand, eventBus, REDIS_PUBLISH_RETRIES, REDIS_RETRY_DELAY_MS, REDIS_STREAM_MAXLEN, createEventEnvelope(), EventEnvelope, EventInput (+3 more)
 
 ### Community 59 - "SocketBroker.ts"
-Cohesion: 0.25
-Nodes (9): deleteMail(), getInbox(), getOutbox(), getUnreadCount(), markAsRead(), sendMail(), createNotification(), registerMailHandlers() (+1 more)
+Cohesion: 0.16
+Nodes (15): deleteMail(), getInbox(), getOutbox(), getUnreadCount(), markAsRead(), sendMail(), createNotification(), getNotifications() (+7 more)
 
 ### Community 60 - "storyService.ts"
-Cohesion: 0.26
-Nodes (16): createStory(), deleteStory(), getActiveStories(), getStoryById(), getStoryReactions(), getStoryViewers(), getUserStories(), incrementShareCount() (+8 more)
+Cohesion: 0.22
+Nodes (18): storyReactions, storyViews, createStory(), deleteStory(), getActiveStories(), getStoryById(), getStoryReactions(), getStoryViewers() (+10 more)
 
 ### Community 61 - "Interview Me"
 Cohesion: 0.11
@@ -469,8 +511,8 @@ Cohesion: 0.13
 Nodes (11): executeFollowUserCommand(), activityStream, SystemEvent, clampScore(), DetailedStatus, inferPresenceStatus(), PresenceSignal, setPresenceState() (+3 more)
 
 ### Community 65 - "image-compress.ts"
-Cohesion: 0.18
-Nodes (17): FileIcon(), FileItem, FileManager(), FolderIcon(), formatSize(), formatTime(), getStoredUser(), calculateDimensions() (+9 more)
+Cohesion: 0.27
+Nodes (10): calculateDimensions(), COMPRESS_PRESETS, compressImage(), compressImages(), CompressOptions, CompressResult, formatFileSize(), getCompressionSummary() (+2 more)
 
 ### Community 66 - "ReOrder: Keep Your Regulars Ordering Direct"
 Cohesion: 0.11
@@ -497,16 +539,16 @@ Cohesion: 0.17
 Nodes (14): adminAuditLogs, chatBots, moderationFilters, siteSettings, createChatBot(), createModerationFilter(), DEFAULT_BOTS, DEFAULT_CHAT_SETTINGS (+6 more)
 
 ### Community 72 - "legacyAdminService.ts"
-Cohesion: 0.27
-Nodes (12): AdminColumn, assertSafeTableName(), countTableRows(), deleteTableRow(), getPrimaryKeyColumn(), insertTableRow(), isSafeIdentifier(), listAdminColumns() (+4 more)
+Cohesion: 0.23
+Nodes (15): AdminColumn, assertSafeTableName(), countTableRows(), deleteTableRow(), getPrimaryKeyColumn(), insertTableRow(), isSafeIdentifier(), isWalletFinancialTable() (+7 more)
 
-### Community 73 - "requestCountry.ts"
-Cohesion: 0.24
-Nodes (8): logAccess(), LogParams, LogState, normalizeCountryCode(), SUPPORTED_COUNTRIES, COUNTRY_HEADER_KEYS, detectCountryCode(), lookupCountryCodeByIp()
-
-### Community 74 - "PermissionsMatrix.tsx"
+### Community 73 - "h3"
 Cohesion: 0.16
-Nodes (15): ACTION_LABELS, BASIC_GROUPS, getActionsForResource(), PermissionGroup, ResourceDef, VISUAL_RESOURCES, ACTION_COLORS, ACTION_SHORT (+7 more)
+Nodes (4): h3, guardAdminAction(), hasPermission(), logAdminAudit()
+
+### Community 74 - "GlobalCallOverlay.tsx"
+Cohesion: 0.20
+Nodes (16): ActiveCallViewProps, CallLogMessage, CallMode, CallState, CallUser, NetworkQuality, ChatCallLogProps, DevCallStateSwitcherProps (+8 more)
 
 ### Community 75 - "Doubt-Driven Development"
 Cohesion: 0.12
@@ -517,8 +559,8 @@ Cohesion: 0.12
 Nodes (15): 1. Define "working" before instrumenting, 2. Pick the right signal for each question, 3. Structured logging, 4. Metrics, 5. Distributed tracing, 6. Alerting, 7. Verify the telemetry itself, Common Rationalizations (+7 more)
 
 ### Community 77 - "stories-store.ts"
-Cohesion: 0.23
-Nodes (12): zustand, StoriesBar(), StoriesBarProps, StoriesViewer(), ViewerOverlay(), ViewersOverlayProps, getStoriesByUser(), getStoryUsers() (+4 more)
+Cohesion: 0.24
+Nodes (13): zustand, StoriesBar(), StoriesBarProps, StoriesViewer(), ViewerOverlay(), ViewersOverlayProps, PermissionGate(), getStoriesByUser() (+5 more)
 
 ### Community 78 - "workers/index.ts"
 Cohesion: 0.17
@@ -540,9 +582,9 @@ Nodes (14): eslint, react, react-dom, @supabase/ssr, @supabase/supabase-js, tail
 Cohesion: 0.13
 Nodes (14): القرار المعماري المقترح, المرحلة 1: تثبيت الأساس, المرحلة 2: مصادقة آمنة, المرحلة 3: دردشة حقيقية, المرحلة 4: قابلية التوسع, المرحلة 5: ميزات اجتماعية, الوضع الحالي, حالة التنفيذ الحالية (+6 more)
 
-### Community 83 - "scripts"
-Cohesion: 0.13
-Nodes (15): scripts, build, build:dev, db:migrate, db:verify, dev, legacy:create-admin, legacy:dry-run (+7 more)
+### Community 83 - "ref_node_assert"
+Cohesion: 0.14
+Nodes (9): jiti, jiti, jiti, ApiError, handleApiError(), getNewlyJoinedStagePeers(), VoiceStageSeatIdentity, now (+1 more)
 
 ### Community 84 - "class-variance-authority"
 Cohesion: 0.18
@@ -552,9 +594,9 @@ Nodes (12): class-variance-authority, @radix-ui/react-toggle, @radix-ui/react-to
 Cohesion: 0.17
 Nodes (14): embla-carousel-react, Carousel, CarouselApi, CarouselContent, CarouselContext, CarouselContextProps, CarouselItem, CarouselNext (+6 more)
 
-### Community 86 - "socket/index.ts"
-Cohesion: 0.27
-Nodes (11): findInMemoryUser(), updateUserMessageIdentity(), normalizeMinioUrl(), updateCachedWallAuthorProfile(), createSocketServer(), registerPresenceHandlers(), addConnectedUser(), getTotalOnlineCount() (+3 more)
+### Community 86 - "خطة التنفيذ: صلاحيات الإعلانات (`announcement-permissions`)"
+Cohesion: 0.17
+Nodes (12): أسئلة مفتوحة, القرارات المعمارية, المخاطر والتخفيف, المرحلة 1: قواعد الصلاحيات والتخزين, المرحلة 2: واجهات الإدارة, المهام, حالة التحقق, خطة التنفيذ: صلاحيات الإعلانات (`announcement-permissions`) (+4 more)
 
 ### Community 87 - "Spec-Driven Development"
 Cohesion: 0.14
@@ -568,41 +610,41 @@ Nodes (12): Common Rationalizations, Overview, Red Flags, Retrieval Safety: Trea
 Cohesion: 0.15
 Nodes (13): scripts, build, format, lint, start, start:debug, start:dev, start:prod (+5 more)
 
-### Community 90 - "command.tsx"
-Cohesion: 0.17
-Nodes (12): cmdk, @radix-ui/react-dialog, Command, CommandDialog(), CommandDialogProps, CommandEmpty, CommandGroup, CommandInput (+4 more)
+### Community 90 - "sheet.tsx"
+Cohesion: 0.22
+Nodes (10): @radix-ui/react-dialog, SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle (+2 more)
 
 ### Community 91 - "services/presenceManager.ts"
 Cohesion: 0.17
 Nodes (6): addConnectedUser(), connectedUsers, joinRoom(), leaveRoom(), OnlineUser, roomMembers
 
 ### Community 92 - "voiceStageHandlers.ts"
-Cohesion: 0.26
-Nodes (11): normalizeRoomIdValue(), resolveRoomId(), resolveRoomIdVariants(), publishSocketEvent(), getOrCreateRoomStage(), registerVoiceStageHandlers(), roomStages, RoomVoiceStage (+3 more)
+Cohesion: 0.10
+Nodes (29): livekit-server-sdk, createLiveKitRoomServiceClient(), disconnectParticipant(), LiveKitAdminClient, LiveKitEnvironment, LiveKitReconciliationClient, reconcileConfiguredLiveKitPublishPermissions(), reconcileLiveKitPublishPermissions() (+21 more)
 
 ### Community 94 - "Refinement & Evaluation Criteria"
 Cohesion: 0.17
 Nodes (11): 1. User Value, 2. Feasibility, 3. Differentiation, Assumption Audit, Core Evaluation Dimensions, Decision Framework, Might Be True (Nice to Have), Must Be True (Dealbreakers) (+3 more)
 
-### Community 95 - "pg"
-Cohesion: 0.18
-Nodes (6): pg, getPool(), main(), requiredTables, now, pool
+### Community 95 - "coinLedgerService.ts"
+Cohesion: 0.15
+Nodes (17): defaultPersistence, getExistingGiftResult(), getWalletSummary(), GiftLedgerError, GiftLedgerPersistence, giftRequestFingerprint(), GiftSettlement, isValidCommissionRate() (+9 more)
 
 ### Community 96 - "chart.tsx"
 Cohesion: 0.24
 Nodes (11): recharts, ChartConfig, ChartContainer, ChartContext, ChartContextProps, ChartLegendContent, ChartStyle(), ChartTooltipContent (+3 more)
 
-### Community 97 - "notificationService.ts"
-Cohesion: 0.35
-Nodes (6): getNotifications(), getUnreadCount(), markAllAsRead(), markAsRead(), NotificationType, registerNotificationHandlers()
+### Community 97 - "wallService.ts"
+Cohesion: 0.17
+Nodes (22): enrichCommentsWithLikes(), getSocketIp(), createWallComment(), createWallPost(), deleteWallComment(), getCommentCounts(), getCommentLikeCounts(), getLikeCounts() (+14 more)
 
 ### Community 98 - "privateMessageService.ts"
 Cohesion: 0.32
 Nodes (7): buildConversationId(), getConversations(), getMessages(), getUnreadCount(), markConversationRead(), resolveUserKey(), sendPrivateMessage()
 
 ### Community 99 - "userRepository.ts"
-Cohesion: 0.30
-Nodes (11): AuthRole, createPersistedUser(), CreateUserInput, findPersistedUserByUsername(), mapLegacyUser(), markDbUnavailable(), normalizeRole(), PersistedUser (+3 more)
+Cohesion: 0.16
+Nodes (16): AuthRole, createUserProfileDefaults(), randomDigits(), randomToken(), UserProfileDefaults, DbProfileRow, createPersistedUser(), CreateUserInput (+8 more)
 
 ### Community 100 - "compilerOptions"
 Cohesion: 0.17
@@ -613,8 +655,8 @@ Cohesion: 0.25
 Nodes (6): nextConfig, config, proxy(), getSupabaseConfig(), updateSession(), next
 
 ### Community 102 - "apply-dark-mode.cjs"
-Cohesion: 0.20
-Nodes (3): dir, processDirectory(), replacements
+Cohesion: 0.12
+Nodes (6): dir, processDirectory(), replacements, argv, client, ids
 
 ### Community 103 - "api/README.md"
 Cohesion: 0.20
@@ -629,12 +671,12 @@ Cohesion: 0.20
 Nodes (9): التشخيص, الجداول المشمولة, الصلاحيات, الغرف, المستخدمون, الملخص, تقرير خطة الترحيل الفعلي, عينات مراجعة (+1 more)
 
 ### Community 106 - "giftService.ts"
-Cohesion: 0.29
-Nodes (5): getTopGifts(), getUserCoins(), GiftCatalogItem, listGifts(), sendGift()
+Cohesion: 0.47
+Nodes (3): getTopGifts(), GiftCatalogItem, listGifts()
 
-### Community 107 - "pagination.tsx"
-Cohesion: 0.24
-Nodes (9): ButtonProps, Pagination(), PaginationContent, PaginationEllipsis(), PaginationItem, PaginationLink(), PaginationLinkProps, PaginationNext() (+1 more)
+### Community 107 - "MemberList.tsx"
+Cohesion: 0.17
+Nodes (17): getCurrentMember(), getLevelBadgeClass(), getMemberIdentity(), getPresenceKey(), getRoomRoleBadgeInfo(), getStatusConfig(), isHexColor(), MemberList() (+9 more)
 
 ### Community 108 - "The Simplification Process"
 Cohesion: 0.22
@@ -656,9 +698,9 @@ Nodes (9): devDependencies, eslint, eslint-config-next, tailwindcss, @tailwindcs
 Cohesion: 0.22
 Nodes (8): الاستفادة من قاعدة Safari القديمة, ترتيب الترحيل المقترح, خريطة التحويل, طبقة منع فقدان المتغيرات, قاعدة العمولة, قاعدة ثابتة للتطوير, ما سنأخذه منها, ما لن ننقله كما هو
 
-### Community 113 - "minioClient.ts"
-Cohesion: 0.39
-Nodes (6): minio, deleteFromMinio(), getMinioClient(), getMinioPublicUrl(), initMinio(), uploadToMinio()
+### Community 113 - "LegacyCpSection.tsx"
+Cohesion: 0.17
+Nodes (24): @radix-ui/react-alert-dialog, LegacyCpSection(), LegacyCpSectionProps, emptyForm, Room, RoomForm, RoomsSection(), AlertDialogAction (+16 more)
 
 ### Community 114 - "navigation-menu.tsx"
 Cohesion: 0.28
@@ -668,17 +710,17 @@ Nodes (8): @radix-ui/react-navigation-menu, NavigationMenu, NavigationMenuConten
 Cohesion: 0.22
 Nodes (8): 1. إخفاء Supabase Key (حرج), 2. تحسين escapeHtml و XSS Protection, 3. تحسين showDetails, 4. إضافة Content Security Policy, 5. إضافة Rate Limiting على Client-side, 6. تحسين إدارة التوكن, 7. إضافة Validations على Client, إصلاحات أمنية مقترحة
 
-### Community 116 - "userProfileDefaults.ts"
-Cohesion: 0.31
-Nodes (5): createUserProfileDefaults(), randomDigits(), randomToken(), UserProfileDefaults, DbProfileRow
+### Community 116 - "خارطة طريق الجاهزية للإنتاج والتوسع (Production Readiness Roadmap)"
+Cohesion: 0.10
+Nodes (19): 1. المعمارية والتوسع الأفقي (Stateless Architecture & Scaling) - [أولوية قصوى P0], 2. البنية التحتية للصوت المباشر (WebRTC & Media Streaming) - [أولوية قصوى P0], 3. الأمان الموزع ومكافحة الإساءة (Security & Anti-Abuse) - [أولوية P1], 4. منظومة الاختبارات التلقائية وضمان الجودة (QA & Testing) - [أولوية P1], 5. بيئة النشر والمراقبة اللحظية (DevOps & Observability) - [أولوية P1], 6. تجربة الهواتف وتطبيقات الويب (PWA & Offline Resilience) - [أولوية P2], 7. أرشفة البيانات ودورة الحياة (Data Archival & Retention) - [أولوية P2], الأثر والمخاطر: (+11 more)
 
-### Community 117 - "YouTubeSearch.tsx"
-Cohesion: 0.33
-Nodes (8): formatDate(), QUICK_SEARCHES, ReelCard(), SearchResult, VideoCard(), VideoModal(), YouTubeSearch(), YTVideo
+### Community 117 - "Input"
+Cohesion: 0.11
+Nodes (27): defaultFormState, RoomFormState, RoomSettingsModalProps, formatDate(), QUICK_SEARCHES, ReelCard(), SearchResult, VideoCard() (+19 more)
 
-### Community 118 - "sheet.tsx"
-Cohesion: 0.28
-Nodes (8): SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle, sheetVariants
+### Community 118 - "agentAuthService.ts"
+Cohesion: 0.24
+Nodes (11): AgentAuthError, AgentAuthPersistence, authenticateAgent(), changeAgentPassword(), defaultPersistence, hashAgentPassword(), provisionWalletAgent(), ProvisionWalletAgentPersistence (+3 more)
 
 ### Community 119 - "realtimeEventEngine"
 Cohesion: 0.31
@@ -704,13 +746,13 @@ Nodes (4): createClient(), getSupabaseConfig(), createClient(), getSupabaseConfi
 Cohesion: 0.29
 Nodes (6): الاستثناءات المسموحة, القرار, سياسة رسائل الغرف والخاص, ماذا يعني ذلك؟, مسار الإنتاج المقترح, ملاحظة مهمة
 
-### Community 126 - "backfill-users.cjs"
-Cohesion: 0.29
-Nodes (3): argv, client, ids
+### Community 126 - "voiceStageStore"
+Cohesion: 0.17
+Nodes (8): RedisClient, RoomVoiceStage, SeatChange, SeatLocation, StoreOptions, VoiceSeat, voiceStageStore, createStore()
 
-### Community 127 - "getDeviceSignature"
-Cohesion: 0.52
-Nodes (6): collectBrowserFingerprint(), generateUUID(), getDeviceId(), getDeviceSignature(), simpleHash(), initDeviceCache()
+### Community 127 - "ref_react"
+Cohesion: 0.09
+Nodes (28): next-themes, react-router-dom, @tanstack/react-query, App(), AuthenticatedCallOverlay(), queryClient, AnimatedFace, ProtectedRoute() (+20 more)
 
 ### Community 128 - "Nitro Server Layer"
 Cohesion: 0.33
@@ -728,29 +770,29 @@ Nodes (6): dependencies, @nestjs/common, @nestjs/core, @nestjs/platform-express,
 Cohesion: 0.33
 Nodes (6): dependencies, next, react, react-dom, @supabase/ssr, @supabase/supabase-js
 
-### Community 132 - "CQRS Flow"
-Cohesion: 0.33
-Nodes (4): CQRS Flow, FollowUserCommand, SendMessageCommand, replayEngine
+### Community 132 - "WallFeed.tsx"
+Cohesion: 0.16
+Nodes (20): EMOJI_CATEGORIES, EMOJI_KEYWORDS, EmojiPanel(), EmojiPanelProps, EmojiPickerPopover(), EmojiPickerPopoverProps, ConstrainedImage(), getStoredUser() (+12 more)
 
 ### Community 133 - "مصفوفة مطابقة قاعدة Safari القديمة"
 Cohesion: 0.33
 Nodes (5): تصحيحات منطقية إلزامية, خريطة الجداول, قاعدة عدم وجود نواقص, مصفوفة مطابقة قاعدة Safari القديمة, معيار اكتمال الترحيل
 
-### Community 134 - "input-otp.tsx"
-Cohesion: 0.33
-Nodes (5): input-otp, InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot
+### Community 134 - "مواصفة: إدارة مزوّد الصوت (`provider-admin`)"
+Cohesion: 0.14
+Nodes (14): أسلوب الكود, استراتيجية الاختبار, افتراضات معتمدة, الأسئلة المفتوحة, الأوامر والتحقق, الحدود, السلوك المطلوب, الهدف (+6 more)
 
 ### Community 135 - "migrate.ts"
-Cohesion: 0.60
-Nodes (4): ensureRoomBadgesColumns(), ensureUserProfilesColumns(), runAutoMigrations(), verifyDatabaseSchema()
+Cohesion: 0.14
+Nodes (21): applyDefaultMemberRoleMigration(), ensureAdminGiftTabPermission(), ensureAnnouncementDeliverySchema(), ensureAnnouncementRoleLimitSchema(), ensureChatFeaturePermissions(), ensureDefaultMemberRole(), ensureRoomAndMemberFeatures(), ensureRoomBadgesColumns() (+13 more)
 
-### Community 136 - "wall/upload.post.ts"
-Cohesion: 0.40
-Nodes (5): ALLOWED_AUDIO, ALLOWED_IMAGE, ALLOWED_VIDEO, getSecret(), verifySignature()
+### Community 136 - "Spec: Site Wallet Funding"
+Cohesion: 0.15
+Nodes (13): API and Workflow Contract, Approved Product Decisions, Boundaries, Code Style, Commands, Objective, Open Questions, Project Structure (+5 more)
 
-### Community 137 - "sharedUserStore.ts"
-Cohesion: 0.53
-Nodes (5): addSharedUser(), findSharedUser(), getStore(), removeSharedUser(), SharedUser
+### Community 137 - "announcementDeliveryPolicy.ts"
+Cohesion: 0.13
+Nodes (14): ANNOUNCEMENT_PERMISSION_TYPES, AnnouncementRoleAssignment, AnnouncementSenderPolicy, AnnouncementType, AssignmentRow, getAnnouncementSenderPolicy(), isValidDailyLimit(), resolveAnnouncementSenderPolicy() (+6 more)
 
 ### Community 139 - "scripts"
 Cohesion: 0.40
@@ -760,13 +802,13 @@ Nodes (5): scripts, build, dev, lint, start
 Cohesion: 0.40
 Nodes (4): الاستراتيجيات, تغطية أعمدة قاعدة Safari القديمة, تغطية الجداول والأعمدة, ملاحظات تنفيذية
 
-### Community 141 - "ref_node_path"
-Cohesion: 0.50
-Nodes (3): getPool(), main(), SCHEMA_FILE
+### Community 141 - "pg"
+Cohesion: 0.11
+Nodes (10): pg, hashPassword(), main(), getPool(), main(), getPool(), main(), requiredTables (+2 more)
 
-### Community 142 - "accordion.tsx"
-Cohesion: 0.40
-Nodes (4): @radix-ui/react-accordion, AccordionContent, AccordionItem, AccordionTrigger
+### Community 142 - "useAuth.ts"
+Cohesion: 0.18
+Nodes (18): AuthContext, AuthProvider(), authFetch(), AuthState, AuthUser, buildDeviceHeaders(), decodeTokenPayload(), isTokenValid() (+10 more)
 
 ### Community 143 - "tsconfig.build.json"
 Cohesion: 0.50
@@ -784,33 +826,205 @@ Nodes (3): Legacy normalization report, Operations, Written Rows
 Cohesion: 0.50
 Nodes (3): Legacy schema rebuild, Summary, Tables
 
-### Community 151 - "create-safarihost-admin.cjs"
-Cohesion: 0.83
-Nodes (3): connection(), hashPassword(), main()
+### Community 150 - "profile/ProfileModal.tsx"
+Cohesion: 0.22
+Nodes (15): IconPickerPopover(), ProfileHeader(), ProfileHeaderProps, ProfileModal(), ProfileModalProps, ProfileStats(), ProfileStatsProps, calculateUserLevel() (+7 more)
+
+### Community 151 - "ref_node_crypto"
+Cohesion: 0.15
+Nodes (4): socket.io-client, AckResponse, Worker, workerScript
 
 ### Community 152 - "legacy-import-reconcile.cjs"
 Cohesion: 0.83
 Nodes (3): countTable(), getPool(), main()
 
+### Community 153 - "gift-send-idempotency.ts"
+Cohesion: 0.24
+Nodes (8): clearGiftSendIdempotencyKey(), getGiftSendIdempotencyKey(), getIntentKey(), GiftSendIntent, readPendingIntents(), StorageLike, intent, MemoryStorage
+
+### Community 155 - "drizzle-orm"
+Cohesion: 0.33
+Nodes (4): drizzle-orm, db, moderationEvents, rooms
+
+### Community 156 - "Spec: Wallet Ledger"
+Cohesion: 0.17
+Nodes (12): Boundaries, Code Style, Commands, Objective, Open Questions, Project Structure, Reference, Scope and Rules (+4 more)
+
+### Community 157 - "walletAgentAccess.ts"
+Cohesion: 0.26
+Nodes (9): getAgentPortalPath(), isValidAgentPortalKey(), getSecret(), isRecord(), issueSignedToken(), sign(), verifyAuthToken(), getWalletAgentContext() (+1 more)
+
+### Community 169 - "drawer.tsx"
+Cohesion: 0.25
+Nodes (7): vaul, DrawerContent, DrawerDescription, DrawerFooter(), DrawerHeader(), DrawerOverlay, DrawerTitle
+
+### Community 170 - "viteSocketIO"
+Cohesion: 0.31
+Nodes (5): viteSocketIO(), getRoomCount(), joinUserToRoom(), leaveUserFromRoom(), removeUser()
+
+### Community 171 - "voiceProviderStore.ts"
+Cohesion: 0.16
+Nodes (12): runVoiceProviderTransaction(), CreateVoiceProviderAccountInput, createVoiceProviderStore(), requiredBoolean(), requiredString(), requiredTimestamp(), toPublicAccount(), VoiceProviderCredentialsRequiredError (+4 more)
+
+### Community 172 - "hostingOwnerAuthRoutes.test.ts"
+Cohesion: 0.18
+Nodes (11): issueHostingOwnerToken(), getHostingOwnerContext(), authenticateHostingOwner(), getConfiguredCredentials(), HostingOwnerAuthError, HostingOwnerCredentials, getHostingOwnerPortalPath(), isValidHostingOwnerPortalKey() (+3 more)
+
+### Community 173 - "giftCommissionService.ts"
+Cohesion: 0.24
+Nodes (10): calculateGiftCommissionCoins(), defaultPersistence, getGiftCommissionRateBasisPoints(), getGiftCommissionSettings(), GiftCommissionInputError, GiftCommissionPersistence, GiftCommissionSettings, isValidRateBasisPoints() (+2 more)
+
+### Community 174 - "ActiveCallView.tsx"
+Cohesion: 0.21
+Nodes (13): ActiveCallView(), StudioEffectsConfig, VirtualBackground, VisualFilter, SoundWave(), SoundWaveProps, BACKGROUND_OPTIONS, BackgroundOption (+5 more)
+
+### Community 175 - "voiceProviderEncryption.ts"
+Cohesion: 0.26
+Nodes (9): decodeBase64(), decryptVoiceProviderSecret(), encryptVoiceProviderSecret(), getEncryptionKey(), parseEncryptedSecret(), VoiceProviderEncryptionConfigurationError, VoiceProviderSecretDecryptionError, VALID_KEY (+1 more)
+
+### Community 176 - "Task List"
+Cohesion: 0.29
+Nodes (7): Checkpoint: Complete, Checkpoint: Foundations, Checkpoint: Funding flow, Phase 1: Ledger and portal foundations, Phase 2: Funding transaction, Phase 3: Verification, Task List
+
+### Community 177 - "Implementation Plan: Wallet Ledger"
+Cohesion: 0.29
+Nodes (7): Architecture Decisions, Dependency Graph, Implementation Plan: Wallet Ledger, Open Questions, Overview, Risks and Mitigations, Task List Target
+
+### Community 178 - "Task List"
+Cohesion: 0.29
+Nodes (7): Checkpoint: Complete, Checkpoint: Ledger foundation, Checkpoint: Wallet flow, Phase 1: Ledger foundation, Phase 2: Existing gift flow and wallet read path, Phase 3: Final verification, Task List
+
+### Community 179 - "Task List: Wallet Ledger"
+Cohesion: 0.29
+Nodes (7): Checkpoint: Complete, Checkpoint: Ledger foundation, Checkpoint: Wallet flow, Phase 1: Ledger foundation, Phase 2: Existing gift flow and wallet read path, Phase 3: Final verification, Task List: Wallet Ledger
+
+### Community 180 - "المهام"
+Cohesion: 0.29
+Nodes (7): المرحلة 1: الأساس والتخزين, المرحلة 2: واجهات الإدارة, المرحلة 3: واجهة الإدارة والتحقق, المهام, نقطة تحقق: الأساس, نقطة تحقق: الإكمال, نقطة تحقق: واجهات API
+
+### Community 181 - "تفاصيل المهام"
+Cohesion: 0.29
+Nodes (7): المهمة `voice-provider-account-api`: إدارة حسابات LiveKit عبر API, المهمة `voice-provider-admin-ui`: إدارة المزود من لوحة التحكم, المهمة `voice-provider-encryption`: إنشاء خدمة تشفير الأسرار واختبارها, المهمة `voice-provider-final-verification`: التحقق والتوثيق, المهمة `voice-provider-selection-api`: حفظ المزود والحساب المطلوب, المهمة `voice-provider-storage`: حفظ الحسابات والاختيار المطلوب, تفاصيل المهام
+
+### Community 182 - "قائمة مهام: provider-admin"
+Cohesion: 0.29
+Nodes (7): المرحلة 1: الأساس والتخزين, المرحلة 2: واجهات الإدارة, المرحلة 3: الواجهة والتحقق النهائي, قائمة مهام: provider-admin, نقطة تحقق: الأساس, نقطة تحقق: الإكمال, نقطة تحقق: واجهات API
+
+### Community 183 - "Implementation Plan: Site Wallet Funding"
+Cohesion: 0.33
+Nodes (6): Architecture Decisions, Dependency Graph, Implementation Plan: Site Wallet Funding, Out of Scope, Overview, Risks and Mitigations
+
+### Community 184 - "خطة التنفيذ: إدارة مزوّد الصوت (`provider-admin`)"
+Cohesion: 0.33
+Nodes (6): أسئلة مؤجلة, القرارات المعمارية, المخاطر والتخفيف, خطة التنفيذ: إدارة مزوّد الصوت (`provider-admin`), مخطط الاعتماد, نظرة عامة
+
+### Community 185 - "خريطة القدرات: إدارة مزوّدي الصوت والفيديو"
+Cohesion: 0.40
+Nodes (5): الوحدات, الوضع الحالي, ترتيب البناء, خريطة القدرات: إدارة مزوّدي الصوت والفيديو, قرارات النطاق المعتمدة
+
+### Community 186 - "Task List: Site Wallet Funding"
+Cohesion: 0.40
+Nodes (5): Checkpoint: Complete, Phase 1: Ledger and portal foundations, Phase 2: Funding transaction, Phase 3: Verification, Task List: Site Wallet Funding
+
+### Community 188 - "showError"
+Cohesion: 0.12
+Nodes (31): canUseVisualResource(), AddFilterDialog(), AddFilterDialogProps, RoomDialog(), FrameSelector(), MemberCardBgSelector(), MemberCardBgSelectorProps, PRESET_COLORS (+23 more)
+
+### Community 189 - "خطة التنفيذ: تسليم الإعلانات (`announcement-delivery`)"
+Cohesion: 0.14
+Nodes (14): أسئلة مفتوحة, القرارات المعمارية, المخاطر والتخفيف, المرحلة 1: الأساس, المرحلة 2: الإرسال, المرحلة 3: الاسترجاع والإغلاق, خطة التنفيذ: تسليم الإعلانات (`announcement-delivery`), مخطط الاعتماد (+6 more)
+
+### Community 191 - "النطاق"
+Cohesion: 0.67
+Nodes (3): النطاق, خارج النطاق, داخل النطاق
+
+### Community 192 - "المرحلة 1: الأساس"
+Cohesion: 0.14
+Nodes (14): المرحلة 1: الأساس, المرحلة 2: الإرسال, المرحلة 3: الاسترجاع والإغلاق, المهمة 1: إنشاء مخطط تسليم الإعلانات — مكتملة, المهمة 2: حل سياسة المرسل النشطة, المهمة 3: تحديد جمهور الإعلان المتصل, المهمة 4: تثبيت الإرسال والحصة ذريًا, المهمة 5: توفير API إرسال الإعلان (+6 more)
+
+### Community 193 - "مواصفة: تسليم الإعلانات (`announcement-delivery`)"
+Cohesion: 0.18
+Nodes (11): أسلوب العقود, استراتيجية الاختبار, الأسئلة المفتوحة, الافتراضات المراد اعتمادها مع المواصفة, التقنية والأوامر, الحدود, السلوك والنطاق, الهدف (+3 more)
+
+### Community 194 - "مواصفة: صلاحيات الإعلانات"
+Cohesion: 0.20
+Nodes (10): أسئلة مفتوحة, أسلوب الكود, استراتيجية الاختبار, الأوامر, التقنية, الحدود, الهدف, بنية المشروع (+2 more)
+
+### Community 195 - "pagination.tsx"
+Cohesion: 0.24
+Nodes (9): ButtonProps, Pagination(), PaginationContent, PaginationEllipsis(), PaginationItem, PaginationLink(), PaginationLinkProps, PaginationNext() (+1 more)
+
+### Community 196 - "coinLedgerMigration.test.ts"
+Cohesion: 0.25
+Nodes (5): LEGACY_OPENING_FINGERPRINT, LEGACY_WALLET_OPENING_KEY, LegacyWalletBackfillResult, runLegacyWalletBackfill(), FakeOptions
+
+### Community 197 - "hasPermissionAccess"
+Cohesion: 0.36
+Nodes (5): PermissionGateProps, hasAllPermissionAccess(), hasPermissionAccess(), PROFILE_ADMIN_ACTION_PERMISSION, ProfileAdminAction
+
+### Community 198 - "CAPABILITY-MAP-announcements.md"
+Cohesion: 0.32
+Nodes (4): الوحدات, ترتيب البناء, خريطة القدرات: الإعلانات, قرارات النطاق المعتمدة
+
+### Community 199 - "voiceStageRedisWorker.mjs"
+Cohesion: 0.25
+Nodes (3): httpServer, io, jiti
+
+### Community 200 - "قائمة مهام: صلاحيات الإعلانات (`announcement-permissions`)"
+Cohesion: 0.29
+Nodes (5): المرحلة 1: قواعد الصلاحيات والتخزين, المرحلة 2: واجهات الإدارة, قائمة مهام: صلاحيات الإعلانات (`announcement-permissions`), نقطة تحقق: إكمال الوحدة, نقطة تحقق: الأساس
+
+### Community 201 - "FileManager.tsx"
+Cohesion: 0.46
+Nodes (7): FileIcon(), FileItem, FileManager(), FolderIcon(), formatSize(), formatTime(), getStoredUser()
+
+### Community 202 - "NotificationsPanel.tsx"
+Cohesion: 0.39
+Nodes (7): formatTime(), getNotificationText(), getStoredUser(), NotificationIcon(), NotificationItem, NotificationsList(), NotificationsListProps
+
+### Community 203 - "IconPickerPopover.tsx"
+Cohesion: 0.29
+Nodes (4): IconItem, IconPickerPopoverProps, TYPE_CONFIG, PopoverContent
+
+### Community 204 - "visualProfilePermissions.ts"
+Cohesion: 0.43
+Nodes (5): filterProfileUpdatesByPermissions(), getRequiredPermission(), hasPermission(), PermissionCollection, VisualProfileField
+
+### Community 205 - "CQRS Flow"
+Cohesion: 0.33
+Nodes (4): CQRS Flow, FollowUserCommand, SendMessageCommand, replayEngine
+
+### Community 207 - "siteWalletFundingIntent.test.ts"
+Cohesion: 0.47
+Nodes (4): getSiteWalletFundingAttempt(), SiteWalletFundingAttempt, SiteWalletFundingIntent, intent
+
+### Community 208 - "عقد الواجهة"
+Cohesion: 0.40
+Nodes (5): إغلاق إعلان, إنشاء إعلان, الأخطاء والأحداث, عقد الواجهة, قائمة الإعلانات المعلقة
+
+### Community 210 - "create-safarihost-admin.cjs"
+Cohesion: 0.83
+Nodes (3): connection(), hashPassword(), main()
+
 ## Knowledge Gaps
-- **59 isolated node(s):** `@nestjs/platform-express`, `reflect-metadata`, `rxjs`, `@eslint/eslintrc`, `@eslint/js` (+54 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1435 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **22 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **58 isolated node(s):** `@nestjs/platform-express`, `reflect-metadata`, `rxjs`, `@eslint/eslintrc`, `@eslint/js` (+53 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1783 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **23 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `lucide-react` connect `ref_react` to `Input`, `getSocket`, `WallFeed.tsx`, `Avatar`, `cn`, `Button`, `package.json`, `input-otp.tsx`, `App.tsx`, `accordion.tsx`, `lib/utils.ts`, `sidebar.tsx`, `global-media.ts`, `form.tsx`, `constants.ts`, `image-compress.ts`, `PermissionsMatrix.tsx`, `stories-store.ts`, `carousel.tsx`, `command.tsx`, `pagination.tsx`, `navigation-menu.tsx`, `YouTubeSearch.tsx`, `sheet.tsx`?**
-  _High betweenness centrality (0.155) - this node is a cross-community bridge._
+- **Why does `h3` connect `h3` to `db/index.ts`, `package.json`, `announcementDeliveryPolicy.ts`, `socket/presenceManager.ts`, `redis.ts`, `drizzle-orm`, `chatFeaturePermissions.ts`, `walletAgentAccess.ts`, `siteWalletFundingService.ts`, `permissionEngine.ts`, `hostingOwnerAuthRoutes.test.ts`, `giftCommissionService.ts`, `authService.ts`, `chatStore.ts`, `voiceProviderAdminApi.ts`, `socket/index.ts`, `uploadStorage.ts`, `fileService.ts`, `SocketBroker.ts`, `storyService.ts`, `profile-check.get.ts`, `adminConfigService.ts`, `legacyAdminService.ts`, `voiceStageRedisWorker.mjs`, `minio.ts`, `ref_node_assert`, `voiceStageHandlers.ts`, `wallService.ts`, `privateMessageService.ts`, `giftService.ts`, `agentAuthService.ts`?**
+  _High betweenness centrality (0.116) - this node is a cross-community bridge._
 - **What connects `@nestjs/platform-express`, `reflect-metadata`, `rxjs` to the rest of the system?**
-  _59 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Input` be split into smaller, more focused modules?**
-  _Cohesion score 0.0853625170998632 - nodes in this community are weakly interconnected._
-- **Why does `h3` connect `db/index.ts` to `package.json`, `wall/upload.post.ts`, `vite-socket-io.ts`, `wallService.ts`, `batch-stats.get.ts`, `dotenv`, `permissionEngine.ts`, `chatStore.ts`, `adminPermissions.ts`, `ref_node_crypto`, `uploadStorage.ts`, `fileService.ts`, `SocketBroker.ts`, `storyService.ts`, `adminConfigService.ts`, `legacyAdminService.ts`, `requestCountry.ts`, `notificationService.ts`, `privateMessageService.ts`, `giftService.ts`, `minioClient.ts`?**
-  _High betweenness centrality (0.091) - this node is a cross-community bridge._
+  _58 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `lucide-react` be split into smaller, more focused modules?**
+  _Cohesion score 0.0577324973876698 - nodes in this community are weakly interconnected._
+- **Why does `lucide-react` connect `lucide-react` to `getSocket`, `WallFeed.tsx`, `Avatar`, `WallFeed.tsx`, `cn`, `Button`, `package.json`, `App.tsx`, `ref_react`, `sidebar.tsx`, `lib/utils.ts`, `profile/ProfileModal.tsx`, `global-media.ts`, `form.tsx`, `ActiveCallView.tsx`, `constants.ts`, `showError`, `pagination.tsx`, `FileManager.tsx`, `GlobalCallOverlay.tsx`, `NotificationsPanel.tsx`, `IconPickerPopover.tsx`, `stories-store.ts`, `carousel.tsx`, `sheet.tsx`, `MemberList.tsx`, `LegacyCpSection.tsx`, `navigation-menu.tsx`, `Input`, `ref_react`?**
+  _High betweenness centrality (0.094) - this node is a cross-community bridge._
 - **Should `getSocket` be split into smaller, more focused modules?**
-  _Cohesion score 0.07792207792207792 - nodes in this community are weakly interconnected._
-- **Why does `pg` connect `pg` to `legacy-normalize-performance.cjs`, `db/index.ts`, `db-server.cjs`, `package.json`, `legacy-import-apply.cjs`, `ref_node_path`, `legacy-rebuild-from-dump.cjs`, `cleanup-orphaned-rows.cjs`, `create-safarihost-admin.cjs`, `legacy-import-reconcile.cjs`, `debug-auth.cjs`, `legacy-import-prepare-schema.cjs`, `create-admin-user.cjs`, `legacy-db-status.cjs`, `backfill-users.cjs`?**
-  _High betweenness centrality (0.053) - this node is a cross-community bridge._
+  _Cohesion score 0.0777928539122569 - nodes in this community are weakly interconnected._
+- **Why does `pg` connect `pg` to `db/index.ts`, `migrate.ts`, `package.json`, `announcementDeliveryPolicy.ts`, `legacy-import-apply.cjs`, `schema.ts`, `legacy-rebuild-from-dump.cjs`, `legacy-import-reconcile.cjs`, `siteWalletFundingService.ts`, `legacy-normalize-performance.cjs`, `giftCommissionService.ts`, `uploadStorage.ts`, `coinLedgerMigration.test.ts`, `h3`, `cleanup-orphaned-rows.cjs`, `create-safarihost-admin.cjs`, `coinLedgerService.ts`, `apply-dark-mode.cjs`, `db-server.cjs`, `agentAuthService.ts`, `legacy-import-prepare-schema.cjs`?**
+  _High betweenness centrality (0.062) - this node is a cross-community bridge._
 - **Should `db/index.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.10388127853881278 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0745814307458143 - nodes in this community are weakly interconnected._

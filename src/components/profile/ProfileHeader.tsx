@@ -26,8 +26,8 @@ export function ProfileHeader({
   const rawDisplayName = user?.displayName || user?.username || profile?.displayName;
   const displayName = rawDisplayName && String(rawDisplayName).trim() ? String(rawDisplayName).trim() : null;
 
-  const rawHandle = user?.username || user?.id;
-  const handle = rawHandle && String(rawHandle).trim() ? String(rawHandle).trim().replace(/\s+/g, "") : null;
+  const rawHandle = user?.mentionName || profile?.mentionName;
+  const handle = rawHandle && String(rawHandle).trim() ? String(rawHandle).trim().replace(/^@/, "").replace(/\s+/g, "") : null;
 
   const isOnline = user?.presence === "online" || user?.status === "active";
   const coverUrl = profile?.bannerUrl || user?.coverUrl || profile?.giftedBannerUrl || user?.pich;
@@ -181,13 +181,13 @@ export function ProfileHeader({
           </div>
 
           {/* السطر الثاني: المعرف @Handle */}
-          <div className="mt-1 flex items-center gap-1">
-            {handle ? (
+          {handle && (
+            <div className="mt-1 flex items-center gap-1">
               <button
                 type="button"
                 onClick={handleCopyHandle}
                 className="font-mono text-sm font-semibold text-muted-foreground hover:text-foreground dark:text-slate-400 dark:hover:text-slate-200 transition flex items-center gap-1 cursor-pointer"
-                title="انقر لنسخ اسم المستخدم"
+                title="انقر لنسخ اسم الإشارة"
               >
                 <span dir="ltr">@{handle}</span>
                 {copied ? (
@@ -196,10 +196,8 @@ export function ProfileHeader({
                   <Copy className="h-3 w-3 opacity-50" />
                 )}
               </button>
-            ) : (
-              <span className="text-xs text-muted-foreground dark:text-slate-500">لا توجد بيانات حالياً</span>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* السطر الثالث: البايو / الحالة النصية */}
           <div className="mt-1.5">

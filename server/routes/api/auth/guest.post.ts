@@ -2,13 +2,14 @@ import { defineEventHandler, readBody, getRequestHeader, setResponseStatus } fro
 import { createGuestSession } from "../../../services/authService";
 import { detectCountryCode } from "../../../services/requestCountry";
 import { logAccess } from "../../../services/accessLogger";
+import { getClientIp } from "../../../middleware/rateLimiter";
 
 export default defineEventHandler(async (event) => {
   try {
-    const body = await readBody(event);
+    const body = await readBody(event).catch(() => ({}));
     const username = typeof body?.username === "string" ? body.username : undefined;
     const countryCode = detectCountryCode(event);
-    const clientIp = getRequestHeader(event, "x-forwarded-for") || getRequestHeader(event, "x-real-ip") || "";
+    const clientIp = getClientIp(event);
     const deviceFingerprint = getRequestHeader(event, "x-device-fingerprint") || "";
     const deviceSignature = getRequestHeader(event, "x-device-signature") || "";
 

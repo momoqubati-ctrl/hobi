@@ -2,11 +2,12 @@ import { defineEventHandler, readBody, setResponseStatus, getRequestHeader } fro
 import { loginMember } from "../../../services/authService";
 import { logAccess } from "../../../services/accessLogger";
 import { detectCountryCode } from "../../../services/requestCountry";
+import { getClientIp } from "../../../middleware/rateLimiter";
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
-    const { username, password } = body;
+    const { username, password } = body || {};
 
     if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password.trim()) {
       setResponseStatus(event, 400);
@@ -18,7 +19,7 @@ export default defineEventHandler(async (event) => {
     }
 
     const countryCode = detectCountryCode(event);
-    const clientIp = getRequestHeader(event, "x-forwarded-for") || getRequestHeader(event, "x-real-ip") || "";
+    const clientIp = getClientIp(event);
     const deviceFingerprint = getRequestHeader(event, "x-device-fingerprint") || "";
     const deviceSignature = getRequestHeader(event, "x-device-signature") || "";
     const result = await loginMember({ username, password, countryCode, clientIp, deviceFingerprint, deviceSignature });

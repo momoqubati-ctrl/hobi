@@ -1,0 +1,42 @@
+{
+  "longTasks": [
+    {
+      "duration": 420,
+      "name": "gallery-init",
+      "route": "/",
+      "attribution": "https://example.com/_next/static/chunks/gallery.js"
+    }
+  ],
+  "inp": {
+    "value": 340,
+    "target": "button#add-to-cart",
+    "route": "/",
+    "phases": {
+      "inputDelay": 40,
+      "processingDuration": 250,
+      "presentationDelay": 50
+    }
+  },
+  "routeTransitions": [
+    {
+      "from": "/",
+      "to": "/products",
+      "durationMs": 1800,
+      "note": "data fetched after chunk load"
+    }
+  ],
+  "memory": {
+    "growthBytes": 18000000,
+    "note": "5 navigations"
+  },
+  "network": [
+    {
+      "url": "https://example.com/api/search?q=x",
+      "resourceType": "Fetch",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 1200,
+      "size": 42000
+    }
+  ]
+}

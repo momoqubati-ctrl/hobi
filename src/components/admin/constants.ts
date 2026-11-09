@@ -205,6 +205,7 @@ export const setFieldLanguage = (lang: "ar" | "en") => {
   currentLang = lang;
   if (typeof window !== "undefined") {
     localStorage.setItem("admin_lang", lang);
+    window.dispatchEvent(new CustomEvent("admin_lang_changed", { detail: lang }));
   }
 };
 
@@ -613,6 +614,11 @@ export const PERMISSION_TRANSLATIONS: Record<string, string> = {
   "admin_agentwallets.delete": "حذف معاملة",
   "admin_agentwallets.all": "الكل - شحن الوكلاء",
 
+  "admin_giftcommission.read": "رؤية إعدادات عمولة الهدايا",
+  "admin_giftcommission.edit": "تعديل عمولة الهدايا",
+  "admin_giftcommission.delete": "إعادة تعيين عمولة الهدايا",
+  "admin_giftcommission.all": "الكل - عمولة الهدايا",
+
   "admin_evaluationpoints.read": "رؤية تبويب احتساب النقاط",
   "admin_evaluationpoints.edit": "إدارة النقاط من اللوحة",
   "admin_evaluationpoints.delete": "مسح السجل",
@@ -824,6 +830,7 @@ const MENU_AR: Record<string, string> = {
   subs: "الإشتراكات",
   giftsgit: "هدايا git",
   agentwallets: "شحن الوكلاء",
+  giftcommission: "عمولة الهدايا",
   evaluationpoints: "احتساب النقاط",
   settings: "إداره الموقع",
   database: "قاعدة البيانات",
@@ -861,6 +868,7 @@ const MENU_EN: Record<string, string> = {
   subs: "Subscriptions",
   giftsgit: "Gift Store",
   agentwallets: "Agent Top-up",
+  giftcommission: "Gift Commission",
   evaluationpoints: "Points & Coins",
   settings: "Site Settings",
   database: "Database",

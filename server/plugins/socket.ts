@@ -7,7 +7,9 @@ export default (nitroApp: any) => {
     if (initialized) return;
 
     // في وضع التطوير (Vite)، الـ Socket.io مُدار بواسطة Vite plugin — لا ننشئ خادماً جديداً
-    if ((process as any).__VITE_SOCKET_IO_CREATED__ || (globalThis as any).__VITE_SOCKET_IO_CREATED__) {
+    const viteFlag = (process as any).__VITE_SOCKET_IO_CREATED__ || (globalThis as any).__VITE_SOCKET_IO_CREATED__;
+    console.log(`[SOCKET_TRACE_NITRO] hook: pid=${process.pid} viteFlag=${!!viteFlag} socketServer=${!!(event.node.req.socket?.server)}`);
+    if (viteFlag) {
       initialized = true;
       console.log("[Socket.io] Skipping Nitro Socket.io init (Vite plugin owns it)");
       return;
@@ -18,8 +20,11 @@ export default (nitroApp: any) => {
     
     if (httpServer) {
       try {
+        (httpServer as any).__NITRO_PID__ = process.pid;
+        console.log(`[SOCKET_TRACE_NITRO] will attach: upgradeListeners(before)=${(httpServer as any).listenerCount?.("upgrade") ?? "?"} listening=${(httpServer as any).listening} addr=${JSON.stringify((httpServer as any).address?.())}`);
         createSocketServer(httpServer);
         initialized = true;
+        console.log(`[SOCKET_TRACE_NITRO] attached: upgradeListeners(after)=${(httpServer as any).listenerCount?.("upgrade") ?? "?"} requestListeners=${(httpServer as any).listenerCount?.("request") ?? "?"}`);
         console.log("[Socket.io] Successfully initialized Socket.io server on Nitro HTTP server");
       } catch (error) {
         console.error("[Socket.io] Error initializing Socket.io server:", error);

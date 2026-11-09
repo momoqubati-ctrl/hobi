@@ -1,14 +1,18 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Coins, Trophy, Loader2, Search, X, Check } from 'lucide-react';
+import { Coins, Trophy, Loader2, Search, X, Check, RefreshCw } from 'lucide-react';
 import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import {
+  clearGiftSendIdempotencyKey,
+  getGiftSendIdempotencyKey,
+} from "@/lib/gift-send-idempotency";
 
 interface Gift {
   id: string;
@@ -24,32 +28,90 @@ interface TopGift {
   count: number;
 }
 
-const getStoredUser = () => {
+interface StoredUser {
+  id?: string;
+}
+
+interface GiftRecipient {
+  id: string;
+  name?: string;
+  username?: string;
+  avatar?: string;
+  pic?: string;
+  nameColor?: string;
+  socketId?: string;
+  role?: string;
+}
+
+interface CoinPackage {
+  agentId: string;
+  agentUsername: string;
+  agentName: string;
+  packageId: string;
+  coinAmount: string;
+  priceMinorUnits: string;
+  currencyCode: string;
+  paymentInstructions: string;
+}
+
+interface CoinPurchase {
+  id: string;
+  agentId: string;
+  agentName: string;
+  coinAmount: string;
+  priceMinorUnits: string;
+  currencyCode: string;
+  paymentInstructions: string;
+  paymentReference: string | null;
+  status: "awaiting_payment" | "submitted" | "approved" | "rejected";
+  rejectionReason: string | null;
+}
+
+const getStoredUser = (): StoredUser | null => {
   try {
-    return JSON.parse(localStorage.getItem("user") || "null");
+    const user: unknown = JSON.parse(localStorage.getItem("user") || "null");
+    return user && typeof user === "object" ? user as StoredUser : null;
   } catch {
     return null;
   }
 };
 
+const getAuthHeaders = () => {
+  const token = localStorage.getItem("authToken") || localStorage.getItem("auth_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+const formatCoins = (value: string) => BigInt(value).toLocaleString();
+
 const GiftStore = () => {
   const { onlineUsers } = useRealtimeStore();
 
   const [gifts, setGifts] = useState<Gift[]>([]);
-  const [coins, setCoins] = useState(0);
+  const [coins, setCoins] = useState("0");
+  const [cashableCoins, setCashableCoins] = useState("0");
   const [topGifts, setTopGifts] = useState<TopGift[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState<string | null>(null);
+  const [purchaseDialogOpen, setPurchaseDialogOpen] = useState(false);
+  const [coinPackages, setCoinPackages] = useState<CoinPackage[]>([]);
+  const [coinPurchases, setCoinPurchases] = useState<CoinPurchase[]>([]);
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const [purchaseSaving, setPurchaseSaving] = useState(false);
+  const [purchaseError, setPurchaseError] = useState("");
+  const [activePurchase, setActivePurchase] = useState<CoinPurchase | null>(null);
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentReceipt, setPaymentReceipt] = useState<File | null>(null);
+  const pendingPurchaseAttempt = useRef<{ packageId: string; key: string } | null>(null);
 
   // Send dialog
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<Gift | null>(null);
   const [recipientSearch, setRecipientSearch] = useState("");
-  const [selectedRecipient, setSelectedRecipient] = useState<any>(null);
+  const [selectedRecipient, setSelectedRecipient] = useState<GiftRecipient | null>(null);
 
   const currentUser = getStoredUser();
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [giftsRes, topRes] = await Promise.all([
@@ -62,21 +124,145 @@ const GiftStore = () => {
       if (giftsData.success) setGifts(giftsData.gifts);
       if (topData.success) setTopGifts(topData.topGifts);
 
-      if (currentUser) {
-        const coinsRes = await fetch(`/api/gifts/coins?userId=${currentUser.id}`);
+      if (currentUser?.id) {
+        const coinsRes = await fetch("/api/gifts/coins", { headers: getAuthHeaders() });
         const coinsData = await coinsRes.json();
-        if (coinsData.success) setCoins(coinsData.coins);
+        if (coinsData.success) {
+          setCoins(coinsData.coins);
+          setCashableCoins(coinsData.cashableCoins);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch gift store data", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  const refreshCoinPurchases = useCallback(async () => {
+    if (!currentUser?.id) return;
+    setPurchaseLoading(true);
+    setPurchaseError("");
+    try {
+      const [packagesResponse, purchasesResponse] = await Promise.all([
+        fetch("/api/coin-purchases/agents", { headers: getAuthHeaders(), cache: "no-store" }),
+        fetch("/api/coin-purchases", { headers: getAuthHeaders(), cache: "no-store" }),
+      ]);
+      const [packagesData, purchasesData] = await Promise.all([
+        packagesResponse.json(),
+        purchasesResponse.json(),
+      ]);
+      if (!packagesResponse.ok || !packagesData.success) {
+        throw new Error(packagesData.message || "تعذر تحميل باقات العملات");
+      }
+      if (!purchasesResponse.ok || !purchasesData.success) {
+        throw new Error(purchasesData.message || "تعذر تحميل سجل الشراء");
+      }
+      setCoinPackages(packagesData.packages);
+      setCoinPurchases(purchasesData.purchases);
+
+      const walletResponse = await fetch("/api/gifts/coins", { headers: getAuthHeaders(), cache: "no-store" });
+      const walletData = await walletResponse.json();
+      if (walletData.success) {
+        setCoins(walletData.coins);
+        setCashableCoins(walletData.cashableCoins);
+      }
+    } catch (error) {
+      setPurchaseError(error instanceof Error ? error.message : "تعذر تحميل معلومات شراء العملات");
+    } finally {
+      setPurchaseLoading(false);
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (purchaseDialogOpen) void refreshCoinPurchases();
+  }, [purchaseDialogOpen, refreshCoinPurchases]);
+
+  const beginCoinPurchase = async (item: CoinPackage) => {
+    setPurchaseSaving(true);
+    setPurchaseError("");
+    if (pendingPurchaseAttempt.current?.packageId !== item.packageId) {
+      pendingPurchaseAttempt.current = { packageId: item.packageId, key: crypto.randomUUID() };
+    }
+    try {
+      const response = await fetch("/api/coin-purchases", {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json",
+          "Idempotency-Key": pendingPurchaseAttempt.current.key,
+        },
+        body: JSON.stringify({ agentId: item.agentId, packageId: item.packageId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.purchase) {
+        throw new Error(data.message || "تعذر بدء طلب الشراء");
+      }
+      pendingPurchaseAttempt.current = null;
+      setActivePurchase({
+        id: data.purchase.id,
+        agentId: data.purchase.agentId,
+        agentName: item.agentName,
+        coinAmount: data.purchase.coinAmount,
+        priceMinorUnits: data.purchase.priceMinorUnits,
+        currencyCode: data.purchase.currencyCode,
+        paymentInstructions: data.purchase.paymentInstructions,
+        paymentReference: null,
+        status: data.purchase.status,
+        rejectionReason: null,
+      });
+      setPaymentReference("");
+      setPaymentReceipt(null);
+    } catch (error) {
+      setPurchaseError(error instanceof Error ? error.message : "تعذر بدء طلب الشراء");
+    } finally {
+      setPurchaseSaving(false);
+    }
+  };
+
+  const submitCoinPurchasePayment = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activePurchase || !paymentReceipt) {
+      setPurchaseError("أرفق صورة إيصال الدفع.");
+      return;
+    }
+    setPurchaseSaving(true);
+    setPurchaseError("");
+    try {
+      const formData = new FormData();
+      formData.set("paymentReference", paymentReference);
+      formData.set("receipt", paymentReceipt);
+      const response = await fetch(`/api/coin-purchases/${encodeURIComponent(activePurchase.id)}/payment`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "تعذر إرسال إثبات الدفع");
+      }
+      showSuccess("تم إرسال إثبات الدفع إلى الوكيل للمراجعة.");
+      setActivePurchase(null);
+      setPaymentReceipt(null);
+      setPaymentReference("");
+      await refreshCoinPurchases();
+    } catch (error) {
+      setPurchaseError(error instanceof Error ? error.message : "تعذر إرسال إثبات الدفع");
+    } finally {
+      setPurchaseSaving(false);
+    }
+  };
+
+  const purchaseStatusLabel: Record<CoinPurchase["status"], string> = {
+    awaiting_payment: "بانتظار التحويل",
+    submitted: "قيد مراجعة الوكيل",
+    approved: "تمت إضافة العملات",
+    rejected: "مرفوض",
+  };
 
   const openSendDialog = (gift: Gift) => {
     setSelectedGift(gift);
@@ -88,12 +274,21 @@ const GiftStore = () => {
   const handleSend = async () => {
     if (!selectedGift || !selectedRecipient || !currentUser) return;
     setSending(selectedGift.id);
+    const intent = {
+      giftId: selectedGift.id,
+      receiverId: selectedRecipient.id,
+      quantity: 1,
+    };
     try {
+      const requestKey = getGiftSendIdempotencyKey(intent, localStorage);
       const res = await fetch("/api/gifts/send", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json",
+          "Idempotency-Key": requestKey,
+        },
         body: JSON.stringify({
-          senderId: currentUser.id,
           receiverId: selectedRecipient.id,
           giftId: selectedGift.id,
           quantity: 1,
@@ -101,25 +296,45 @@ const GiftStore = () => {
       });
       const data = await res.json();
       if (data.success) {
+        clearGiftSendIdempotencyKey(intent, requestKey, localStorage);
         setCoins(data.newBalance);
         showSuccess(`تم إرسال ${selectedGift.icon} ${selectedGift.name} إلى ${selectedRecipient.name || selectedRecipient.username}`);
         setSendDialogOpen(false);
-        const topRes = await fetch("/api/gifts/top");
-        const topData = await topRes.json();
-        if (topData.success) setTopGifts(topData.topGifts);
+        try {
+          const walletRes = await fetch("/api/gifts/coins", { headers: getAuthHeaders() });
+          const walletData = await walletRes.json();
+          if (walletData.success) {
+            setCoins(walletData.coins);
+            setCashableCoins(walletData.cashableCoins);
+          }
+        } catch (refreshError) {
+          console.error("Gift was sent but the wallet balance could not be refreshed", refreshError);
+        }
+        try {
+          const topRes = await fetch("/api/gifts/top");
+          const topData = await topRes.json();
+          if (topData.success) setTopGifts(topData.topGifts);
+        } catch (refreshError) {
+          console.error("Gift was sent but the top gifts could not be refreshed", refreshError);
+        }
       } else {
-        showError(data.message);
+        showError(data.message || "تعذر إرسال الهدية");
       }
-    } catch {
+    } catch (error) {
+      console.error("Gift sending failed", error);
       showError("حدث خطأ أثناء إرسال الهدية");
     } finally {
       setSending(null);
     }
   };
 
-  const filteredUsers = onlineUsers.filter((u: any) => {
-    const name = (u.name || u.username || "").toLowerCase();
-    return name.includes(recipientSearch.toLowerCase()) && u.id !== currentUser?.id;
+  const filteredUsers = onlineUsers.filter((user: GiftRecipient) => {
+    const name = (user.name || user.username || "").toLowerCase();
+    return (
+      Boolean(user.id && user.id !== "0" && user.role?.toLowerCase() !== "guest") &&
+      name.includes(recipientSearch.toLowerCase()) &&
+      user.id !== currentUser?.id
+    );
   });
 
   if (loading) {
@@ -140,9 +355,22 @@ const GiftStore = () => {
           </div>
           <div className="bg-card/20 px-4 py-2 rounded-2xl backdrop-blur-sm flex items-center gap-2">
             <Coins size={20} className="text-yellow-200" />
-            <span className="font-bold">{coins.toLocaleString()}</span>
+            <span className="font-bold">{formatCoins(coins)}</span>
           </div>
         </div>
+        <p className="mt-3 text-xs text-white/85">
+          رصيد قابل للسحب: {formatCoins(cashableCoins)}
+        </p>
+        <Button
+          type="button"
+          variant="secondary"
+          className="mt-4 rounded-xl"
+          onClick={() => setPurchaseDialogOpen(true)}
+          disabled={!currentUser}
+        >
+          <Coins size={16} className="ml-2" />
+          شراء عملات من وكيل
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -224,7 +452,7 @@ const GiftStore = () => {
               {filteredUsers.length === 0 ? (
                 <p className="text-center text-xs text-muted-foreground py-4">لا يوجد مستخدمون</p>
               ) : (
-                filteredUsers.map((user: any) => (
+                filteredUsers.map((user: GiftRecipient) => (
                   <button
                     key={user.id || user.socketId}
                     className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${
@@ -232,7 +460,9 @@ const GiftStore = () => {
                         ? "bg-primary/10 border border-primary/30"
                         : "hover:bg-slate-50 dark:hover:bg-slate-800"
                     }`}
-                    onClick={() => setSelectedRecipient(user)}
+                    onClick={() => {
+                      setSelectedRecipient(user);
+                    }}
                   >
                     <Avatar className="w-11 h-11 rounded-lg">
                       <AvatarImage src={user.avatar || user.pic || "/pic.png"} />
@@ -254,6 +484,120 @@ const GiftStore = () => {
             >
               {sending ? <Loader2 className="animate-spin" size={16} /> : `إرسال إلى ${selectedRecipient?.name || selectedRecipient?.username || ""}`}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={purchaseDialogOpen}
+        onOpenChange={(open) => {
+          setPurchaseDialogOpen(open);
+          if (!open) {
+            setActivePurchase(null);
+            setPurchaseError("");
+          }
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-center">شراء عملات من وكيل</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              اختر الباقة، حوّل المبلغ إلى الوكيل، ثم أرسل مرجع التحويل وصورة الإيصال. تُضاف العملات بعد تحقق الوكيل من وصول المبلغ.
+            </p>
+            {activePurchase ? (
+              <form onSubmit={submitCoinPurchasePayment} className="space-y-4 rounded-xl border p-4">
+                <div>
+                  <p className="font-semibold">{activePurchase.agentName}</p>
+                  <p className="text-sm">
+                    {BigInt(activePurchase.coinAmount).toLocaleString()} عملة —{" "}
+                    {BigInt(activePurchase.priceMinorUnits).toLocaleString()} {activePurchase.currencyCode}
+                  </p>
+                </div>
+                <p className="whitespace-pre-wrap rounded-lg bg-muted p-3 text-sm">
+                  {activePurchase.paymentInstructions}
+                </p>
+                <div className="space-y-2">
+                  <label htmlFor="coin-purchase-reference" className="text-sm font-medium">مرجع التحويل</label>
+                  <Input
+                    id="coin-purchase-reference"
+                    value={paymentReference}
+                    onChange={(event) => setPaymentReference(event.target.value)}
+                    maxLength={255}
+                    required
+                    dir="ltr"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="coin-purchase-receipt" className="text-sm font-medium">صورة الإيصال (حتى 5 ميغابايت)</label>
+                  <Input
+                    id="coin-purchase-receipt"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(event) => setPaymentReceipt(event.target.files?.[0] || null)}
+                    required
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={purchaseSaving}>
+                    {purchaseSaving ? <Loader2 className="animate-spin" size={16} /> : "إرسال إثبات الدفع"}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setActivePurchase(null)} disabled={purchaseSaving}>
+                    رجوع للباقات
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">الباقات المتاحة</h3>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void refreshCoinPurchases()} disabled={purchaseLoading}>
+                    <RefreshCw size={14} className="ml-1" />
+                    تحديث
+                  </Button>
+                </div>
+                {purchaseLoading ? (
+                  <div className="flex justify-center p-4"><Loader2 className="animate-spin" /></div>
+                ) : coinPackages.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">لا توجد باقات متاحة حاليًا.</p>
+                ) : coinPackages.map((item) => (
+                  <article key={item.packageId} className="space-y-2 rounded-xl border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-semibold">{item.agentName}</p>
+                        <p className="text-sm text-muted-foreground">@{item.agentUsername}</p>
+                      </div>
+                      <p className="font-semibold">
+                        {BigInt(item.coinAmount).toLocaleString()} عملة —{" "}
+                        {BigInt(item.priceMinorUnits).toLocaleString()} {item.currencyCode}
+                      </p>
+                    </div>
+                    <p className="whitespace-pre-wrap text-sm">{item.paymentInstructions}</p>
+                    <Button type="button" size="sm" onClick={() => void beginCoinPurchase(item)} disabled={purchaseSaving}>
+                      اختيار الباقة
+                    </Button>
+                  </article>
+                ))}
+                <div className="space-y-2 border-t pt-3">
+                  <h3 className="font-semibold">سجل طلبات الشراء</h3>
+                  {coinPurchases.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">لا توجد طلبات شراء.</p>
+                  ) : coinPurchases.map((purchase) => (
+                    <div key={purchase.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm">
+                      <span>
+                        {purchase.agentName} · {BigInt(purchase.coinAmount).toLocaleString()} عملة
+                      </span>
+                      <span>{purchaseStatusLabel[purchase.status]}</span>
+                      {purchase.rejectionReason && (
+                        <p className="w-full text-destructive">سبب الرفض: {purchase.rejectionReason}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            {purchaseError && <p role="alert" className="text-sm text-destructive">{purchaseError}</p>}
           </div>
         </DialogContent>
       </Dialog>

@@ -1,14 +1,14 @@
-import { defineEventHandler, getRouterParam, getQuery, setResponseStatus } from "h3";
+import { getRouterParam, setResponseStatus } from "h3";
 import { deleteFile } from "../../../services/fileService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const id = getRouterParam(event, "id");
-  const query = getQuery(event);
-  const userId = query.userId as string;
+  const userId = auth.userId;
 
-  if (!id || !userId) {
+  if (!id) {
     setResponseStatus(event, 400);
-    return { success: false, message: "id, userId مطلوبان" };
+    return { success: false, message: "معرف الملف مطلوب" };
   }
 
   try {

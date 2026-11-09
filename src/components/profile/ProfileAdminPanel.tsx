@@ -28,6 +28,8 @@ import { getSocket } from "@/lib/socket";
 import { toast } from "sonner";
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { useRealtimeStore } from "@/lib/realtime-store";
+import { canRunProfileAdminAction, ProfileAdminAction } from "@/lib/profileAdminPermissions";
 
 export interface ProfileAdminPanelProps {
   profileId: string;
@@ -158,6 +160,9 @@ export function ProfileAdminMenuItems({
   runAction,
   askText,
 }: ProfileAdminMenuItemsProps) {
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const can = (action: ProfileAdminAction) => canRunProfileAdminAction(permissions, action);
+
   return (
     <>
       <DropdownMenuSeparator className="bg-border/60 dark:bg-red-500/20 my-1.5" />
@@ -174,16 +179,16 @@ export function ProfileAdminMenuItems({
       </div>
 
       {/* 1. تعديل البيانات */}
-      <DropdownMenuItem
+      {can("nick") && <DropdownMenuItem
         onClick={onOpenEdit}
         className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-sky-600 hover:text-sky-700 focus:text-sky-700 hover:bg-sky-50 focus:bg-sky-50 dark:text-sky-400 dark:hover:text-sky-300 dark:focus:text-sky-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
       >
         <Edit2 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
         <span>تعديل البيانات</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 2. الصلاحيات والترقية - تظهر فقط للمصرح لهم ولغير النفس */}
-      {canManageRoles && !isSelf && (
+      {canManageRoles && !isSelf && can("power") && (
         <DropdownMenuItem
           onClick={onOpenPower}
           className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-amber-600 hover:text-amber-700 focus:text-amber-700 hover:bg-amber-50 focus:bg-amber-50 dark:text-amber-400 dark:hover:text-amber-300 dark:focus:text-amber-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
@@ -194,17 +199,17 @@ export function ProfileAdminMenuItems({
       )}
 
       {/* 3. سحب إلى غرفة */}
-      <DropdownMenuItem
+      {can("pull_to_room") && <DropdownMenuItem
         onClick={onOpenRoom}
         className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-emerald-600 hover:text-emerald-700 focus:text-emerald-700 hover:bg-emerald-50 focus:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:focus:text-emerald-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
       >
         <DoorOpen className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
         <span>سحب إلى غرفة</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
-      {/* 4. اسكات عام / فك الاسكات */}
-      <DropdownMenuItem
-        onClick={() => (isMuted ? runAction("room_unmute", 0) : runAction("global_mute", 1, "إسكات عام من البروفايل"))}
+      {/* 4. اسكات عام / فك الاسكات (فك الايسكات العام لا يمس الكتم الغرفي) */}
+      {can(isMuted ? "global_unmute" : "global_mute") && <DropdownMenuItem
+        onClick={() => (isMuted ? runAction("global_unmute", 0) : runAction("global_mute", 1, "إسكات عام من البروفايل"))}
         className={cn(
           "flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer font-bold text-xs transition-colors",
           isMuted
@@ -218,28 +223,28 @@ export function ProfileAdminMenuItems({
           <MicOff className="h-4 w-4 text-orange-600 dark:text-orange-400" />
         )}
         <span>{isMuted ? "إلغاء الإسكات العام" : "إسكات عام"}</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 5. كتم بالروم */}
-      <DropdownMenuItem
+      {can("room_mute") && <DropdownMenuItem
         onClick={() => runAction("room_mute", 1)}
         className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-cyan-600 hover:text-cyan-700 focus:text-cyan-700 hover:bg-cyan-50 focus:bg-cyan-50 dark:text-cyan-400 dark:hover:text-cyan-300 dark:focus:text-cyan-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
       >
         <MicOff className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
         <span>كتم بالروم</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 6. فك الكتم */}
-      <DropdownMenuItem
+      {can("room_unmute") && <DropdownMenuItem
         onClick={() => runAction("room_unmute", 0)}
         className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-cyan-600 hover:text-cyan-700 focus:text-cyan-700 hover:bg-cyan-50 focus:bg-cyan-50 dark:text-cyan-400 dark:hover:text-cyan-300 dark:focus:text-cyan-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
       >
         <Mic className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
         <span>فك كتم الروم</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 7. طرد من الغرفة */}
-      <DropdownMenuItem
+      {can("room_kick") && <DropdownMenuItem
         onClick={() => {
           setTimeout(() => {
             const minutesStr = window.prompt("أدخل مدة حظر العضو من دخول الغرفة بالدقائق:");
@@ -256,10 +261,10 @@ export function ProfileAdminMenuItems({
       >
         <DoorOpen className="h-4 w-4 text-purple-600 dark:text-purple-400" />
         <span>طرد من الغرفة</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 8. طرد من الموقع */}
-      <DropdownMenuItem
+      {can("kick") && <DropdownMenuItem
         onClick={() => {
           setTimeout(() => {
             if (window.confirm("هل تريد طرد هذا العضو من الموقع؟")) {
@@ -271,10 +276,10 @@ export function ProfileAdminMenuItems({
       >
         <UserMinus className="h-4 w-4 text-rose-600 dark:text-rose-400" />
         <span>طرد من الموقع</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 9. وسام الموقع */}
-      <DropdownMenuItem
+      {can("site_badge") && <DropdownMenuItem
         onClick={() => {
           setTimeout(() => {
             const value = askText("وسام الموقع");
@@ -285,19 +290,19 @@ export function ProfileAdminMenuItems({
       >
         <Award className="h-4 w-4 text-amber-600 dark:text-yellow-400" />
         <span>وسام الموقع</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 10. كشف النكات */}
-      <DropdownMenuItem
+      {can("history") && <DropdownMenuItem
         onClick={() => runAction("history")}
         className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-indigo-600 hover:text-indigo-700 focus:text-indigo-700 hover:bg-indigo-50 focus:bg-indigo-50 dark:text-indigo-400 dark:hover:text-indigo-300 dark:focus:text-indigo-300 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 font-bold text-xs transition-colors"
       >
         <History className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
         <span>كشف النكات</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 11. مسح الصورة */}
-      <DropdownMenuItem
+      {can("delete_pic") && <DropdownMenuItem
         onClick={() => {
           setTimeout(() => {
             if (window.confirm("هل تريد حذف صورة هذا العضو وإعادتها للافتراضية؟")) {
@@ -309,10 +314,10 @@ export function ProfileAdminMenuItems({
       >
         <Trash2 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
         <span>مسح الصورة</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
 
       {/* 12. حظر نهائي */}
-      <DropdownMenuItem
+      {can("ban") && <DropdownMenuItem
         onClick={() => {
           setTimeout(() => {
             if (window.confirm("هل تريد حظر هذا العضو نهائياً؟")) {
@@ -324,7 +329,7 @@ export function ProfileAdminMenuItems({
       >
         <ShieldAlert className="h-4 w-4 text-red-600 dark:text-red-500" />
         <span>حظر نهائي</span>
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
     </>
   );
 }
@@ -359,6 +364,12 @@ export function ProfileAdminDialogs({
   onProfilePatch,
 }: ProfileAdminDialogsProps) {
   const socket = getSocket();
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canEditProfile = canRunProfileAdminAction(permissions, "nick") ||
+    canRunProfileAdminAction(permissions, "message");
+  const canEditLikes = canRunProfileAdminAction(permissions, "likes");
+  const canAssignPower = canRunProfileAdminAction(permissions, "power");
+  const canPullToRoom = canRunProfileAdminAction(permissions, "pull_to_room");
 
   // Edit details states
   const [nickValue, setNickValue] = useState("");
@@ -392,7 +403,7 @@ export function ProfileAdminDialogs({
 
   // جلب قائمة الرتب عند فتح نافذة الصلاحيات والترقية
   useEffect(() => {
-    if (!powerDialogOpen) return;
+    if (!powerDialogOpen || !canAssignPower) return;
 
     setSelectedRoleLegacyName("");
     setSelectedRoleDisplayName("");
@@ -458,11 +469,11 @@ export function ProfileAdminDialogs({
         toast.error(msg);
       })
       .finally(() => setRoleListLoading(false));
-  }, [powerDialogOpen]);
+  }, [powerDialogOpen, canAssignPower]);
 
   // جلب قائمة الغرف عند فتح نافذة السحب إلى غرفة
   useEffect(() => {
-    if (!roomDialogOpen) return;
+    if (!roomDialogOpen || !canPullToRoom) return;
 
     setRoomsLoading(true);
     setRooms([]);
@@ -473,21 +484,21 @@ export function ProfileAdminDialogs({
       })
       .catch(() => toast.error("تعذر تحميل الغرف"))
       .finally(() => setRoomsLoading(false));
-  }, [roomDialogOpen]);
+  }, [roomDialogOpen, canPullToRoom]);
 
   return (
     <>
       {/* 1. دايلوج تعديل البيانات */}
       <Dialog
-        open={editDialogOpen}
-        onOpenChange={setEditDialogOpen}
+        open={editDialogOpen && (canEditProfile || canEditLikes)}
+        onOpenChange={(open) => setEditDialogOpen(open && (canEditProfile || canEditLikes))}
       >
         <DialogContent className="sm:max-w-md bg-card border-border text-card-foreground shadow-2xl dark:bg-[#0b1226] dark:border-blue-900/50 dark:text-white" dir="rtl">
           <DialogHeader>
             <DialogTitle className="text-base font-black text-foreground dark:text-white">تعديل بيانات العضو</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
-            <div>
+            {canEditProfile && <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-muted-foreground dark:text-slate-300">
                 <User className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400" />
                 الاسم المستعار
@@ -499,8 +510,8 @@ export function ProfileAdminDialogs({
                 placeholder="أدخل الاسم الجديد"
                 className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary dark:border-blue-900/40 dark:bg-slate-900/80 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-500"
               />
-            </div>
-            <div>
+            </div>}
+            {canEditProfile && <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-muted-foreground dark:text-slate-300">
                 <MessageSquare className="h-3.5 w-3.5 text-cyan-500 dark:text-cyan-400" />
                 رسالة الحالة
@@ -512,8 +523,8 @@ export function ProfileAdminDialogs({
                 placeholder="أدخل رسالة الحالة الجديدة"
                 className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary dark:border-blue-900/40 dark:bg-slate-900/80 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-500"
               />
-            </div>
-            <div>
+            </div>}
+            {canEditLikes && <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-muted-foreground dark:text-slate-300">
                 <Heart className="h-3.5 w-3.5 text-rose-500 dark:text-rose-400" />
                 عدد الإعجابات
@@ -526,7 +537,7 @@ export function ProfileAdminDialogs({
                 min="0"
                 className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary dark:border-blue-900/40 dark:bg-slate-900/80 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-500"
               />
-            </div>
+            </div>}
           </div>
           <div className="flex gap-2 mt-2">
             <Button
@@ -535,11 +546,17 @@ export function ProfileAdminDialogs({
               size="sm"
               disabled={editLoading}
               onClick={async () => {
+                if (!canEditProfile && !canEditLikes) return;
                 setEditLoading(true);
                 let errors: string[] = [];
 
                 const doEmit = (act: string, val: any) =>
                   new Promise<void>((resolve) => {
+                    if (!canRunProfileAdminAction(permissions, act)) {
+                      errors.push(`لا تملك صلاحية تنفيذ ${act}`);
+                      resolve();
+                      return;
+                    }
                     socket.emit(
                       "profile:adminAction",
                       { profileId, action: act, value: val, reason: "" },
@@ -557,9 +574,9 @@ export function ProfileAdminDialogs({
                   });
 
                 const tasks: Promise<void>[] = [];
-                if (nickValue.trim()) tasks.push(doEmit("nick", nickValue.trim()));
-                if (msgValue.trim()) tasks.push(doEmit("message", msgValue.trim()));
-                if (likesValue) tasks.push(doEmit("likes", Number(likesValue) || 0));
+                if (canEditProfile && nickValue.trim()) tasks.push(doEmit("nick", nickValue.trim()));
+                if (canEditProfile && msgValue.trim()) tasks.push(doEmit("message", msgValue.trim()));
+                if (canEditLikes && likesValue) tasks.push(doEmit("likes", Number(likesValue) || 0));
 
                 if (tasks.length === 0) {
                   toast.error("يرجى إدخال قيمة واحدة على الأقل");
@@ -588,8 +605,8 @@ export function ProfileAdminDialogs({
 
       {/* 2. دايلوج الصلاحيات والترقية */}
       <Dialog
-        open={powerDialogOpen}
-        onOpenChange={setPowerDialogOpen}
+        open={powerDialogOpen && canAssignPower}
+        onOpenChange={(open) => setPowerDialogOpen(open && canAssignPower)}
       >
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md bg-card border-border text-card-foreground shadow-2xl dark:bg-[#0b1226] dark:border-blue-900/50 dark:text-white" dir="rtl">
           <DialogHeader>
@@ -696,6 +713,7 @@ export function ProfileAdminDialogs({
                   variant="default"
                   size="sm"
                   onClick={() => {
+                    if (!canAssignPower) return;
                     const powerVal = selectedRoleLegacyName || "";
                     socket.emit(
                       "profile:adminAction",
@@ -746,8 +764,8 @@ export function ProfileAdminDialogs({
 
       {/* 3. دايلوج سحب إلى غرفة */}
       <Dialog
-        open={roomDialogOpen}
-        onOpenChange={setRoomDialogOpen}
+        open={roomDialogOpen && canPullToRoom}
+        onOpenChange={(open) => setRoomDialogOpen(open && canPullToRoom)}
       >
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md bg-card border-border text-card-foreground shadow-2xl dark:bg-[#0b1226] dark:border-blue-900/50 dark:text-white" dir="rtl">
           <DialogHeader>
@@ -769,6 +787,7 @@ export function ProfileAdminDialogs({
                   size="sm"
                   disabled={pullingRoomId === (room.id || room.slug)}
                   onClick={async () => {
+                    if (!canPullToRoom) return;
                     const roomId = room.id || room.slug;
                     if (!roomId) return;
                     setPullingRoomId(roomId);
@@ -813,6 +832,7 @@ export function ProfileAdminDialogs({
 
 // التصدير القديم للتوافق في حال تم استدعاؤه كلوحة كاملة
 export function ProfileAdminPanel(props: ProfileAdminPanelProps) {
+  const permissions = useRealtimeStore((state) => state.userPermissions);
   const admin = useProfileAdmin({
     profileId: props.profileId,
     isMuted: props.isMuted,
@@ -833,6 +853,7 @@ export function ProfileAdminPanel(props: ProfileAdminPanelProps) {
         </div>
 
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          {(canRunProfileAdminAction(permissions, "nick") || canRunProfileAdminAction(permissions, "message") || canRunProfileAdminAction(permissions, "likes")) && <>
           <Button
             type="button"
             variant="outline"
@@ -843,6 +864,8 @@ export function ProfileAdminPanel(props: ProfileAdminPanelProps) {
             <Edit2 className="ml-1.5 h-3.5 w-3.5" />
             تعديل البيانات
           </Button>
+          </>}
+          {canRunProfileAdminAction(permissions, "power") && <>
           <Button
             type="button"
             variant="outline"
@@ -853,16 +876,22 @@ export function ProfileAdminPanel(props: ProfileAdminPanelProps) {
             <Settings className="ml-1.5 h-3.5 w-3.5" />
             الصلاحيات
           </Button>
+          </>}
+          {(admin.isMuted
+            ? canRunProfileAdminAction(permissions, "global_unmute")
+            : canRunProfileAdminAction(permissions, "global_mute")) && <>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => (admin.isMuted ? admin.runAction("room_unmute", 0) : admin.runAction("global_mute", 1))}
+            onClick={() => (admin.isMuted ? admin.runAction("global_unmute", 0) : admin.runAction("global_mute", 1))}
             className="h-10 rounded-xl border-border bg-card text-xs font-bold text-foreground hover:bg-muted dark:border-red-500/20 dark:bg-slate-900/60 dark:text-red-300 dark:hover:bg-slate-800"
           >
             {admin.isMuted ? <Mic className="ml-1.5 h-3.5 w-3.5" /> : <MicOff className="ml-1.5 h-3.5 w-3.5" />}
             {admin.isMuted ? "الغاء الاسكات" : "اسكات عام"}
           </Button>
+          </>}
+          {canRunProfileAdminAction(permissions, "kick") && <>
           <Button
             type="button"
             variant="outline"
@@ -875,6 +904,7 @@ export function ProfileAdminPanel(props: ProfileAdminPanelProps) {
             <UserMinus className="ml-1.5 h-3.5 w-3.5" />
             طرد من الموقع
           </Button>
+          </>}
         </div>
       </section>
 

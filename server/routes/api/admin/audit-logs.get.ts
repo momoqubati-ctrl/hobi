@@ -1,6 +1,7 @@
 import { defineEventHandler, getQuery } from "h3";
 import { dbPool } from "../../../db";
 import { guardAdminAction } from "../../../services/adminPermissions";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -18,7 +19,7 @@ export default defineEventHandler(async (event) => {
         al.target_id as "targetId",
         al.metadata,
         al.created_at as "createdAt",
-        u.topic as "actorName",
+        COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), u.username) as "actorName",
         u.power as "actorRole"
        FROM admin_audit_logs al
        LEFT JOIN users u ON al.actor_id = u.id
@@ -29,6 +30,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, logs: result.rows };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

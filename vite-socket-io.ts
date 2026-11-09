@@ -8,7 +8,17 @@ import { initializeSocketBroker } from "./server/socket/SocketBroker";
 import { joinUserChannels } from "./server/socket/SocketChannels";
 import { addConnectedUser, removeConnectedUser, joinRoom, leaveRoom } from "./server/socket/presenceManager";
 import { registerCallHandlers } from "./server/socket/callHandlers";
+import { registerPrivateHandlers } from "./server/socket/privateHandlers";
+import { registerProfileHandlers } from "./server/socket/profileHandlers";
+import { registerStoryHandlers } from "./server/socket/storyHandlers";
+import { registerWallHandlers } from "./server/socket/wallHandlers";
+import { registerNotificationHandlers } from "./server/socket/notificationHandlers";
+import { registerMailHandlers } from "./server/socket/mailHandlers";
+import { registerVoiceStageHandlers } from "./server/socket/voiceStageHandlers";
+import { isPresenceBridgeAuthorized } from "./server/socket/presenceBridge";
+import { privateMessageStore, registerPrivateMessageSession } from "./server/services/privateMessageService";
 import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "./server/services/minioClient";
+import { getSocketAuthClaims } from "./server/socket/socketAuthentication";
 
 export function viteSocketIO(): Plugin {
   let io: SocketIOServer | null = null;
@@ -18,6 +28,7 @@ export function viteSocketIO(): Plugin {
     configureServer(server) {
       if (!server.httpServer) return;
 
+      console.log(`[SOCKET_TRACE_VITE] configuring pid=${process.pid}`);
       (globalThis as any).__VITE_SOCKET_IO_CREATED__ = true;
       (process as any).__VITE_SOCKET_IO_CREATED__ = true;
 
@@ -26,8 +37,8 @@ export function viteSocketIO(): Plugin {
         serveClient: false,
         transports: ["websocket", "polling"],
         allowUpgrades: true,
-        pingInterval: 20000,
-        pingTimeout: 180000,
+        pingInterval: 25000,     // ping كل 25 ثانية (يتناسب مع keepalive العميل 25s)
+        pingTimeout: 300000,     // 5 دقائق — يحمي المستخدمين الذين يتركون الهاتف فترة طويلة
         maxHttpBufferSize: 5e6,
         cors: {
           origin: "*",
@@ -39,41 +50,216 @@ export function viteSocketIO(): Plugin {
           zlibInflateOptions: { chunkSize: 1024 * 16 },
         },
       });
+      console.log(`[SOCKET_TRACE_VITE] attached: upgradeListeners=${(server.httpServer as any).listenerCount("upgrade")}`);
+
+      // ===== تتبّع مؤقت: اعتراض engine.io close لكل سوكت مع سبب الاستدعاء =====
+      (io.engine as any).on("connection", (engineSocket: any) => {
+        const originalClose = engineSocket.close.bind(engineSocket);
+        engineSocket.close = function (discard?: boolean) {
+          const stack = (new Error().stack || "").split("\n").slice(2, 8).join(" | ");
+          console.log(`[SOCKET_TRACE_ENGINE_CLOSE] sid=${engineSocket.id} discard=${discard} path=${engineSocket.request?.url || ""} stack=${stack}`);
+          return originalClose(discard);
+        } as typeof engineSocket.close;
+        engineSocket.on("close", (reason: string) => {
+          console.log(`[SOCKET_TRACE_ENGINE_EVENT] sid=${engineSocket.id} engineCloseReason=${reason}`);
+        });
+      });
 
       // Initialize the SocketBroker with this io instance
-      initializeSocketBroker(io);
+      void initializeSocketBroker(io).catch((error) => {
+        console.error("[SocketBroker] Initialization failed:", error);
+      });
       (globalThis as any).__socket_io_instance__ = io;
       (process as any).__socket_io_instance__ = io;
 
+      if (io) {
+        for (const [_, s] of io.sockets.sockets) {
+          try {
+            registerPrivateHandlers(io, s);
+          } catch (_) {}
+        }
+      }
+
       // Expose room member counts as JSON endpoint for Nitro to consume
       server.middlewares.use((req: any, res: any, next: any) => {
-        if (req.url === '/__terminate_user_sessions__' && req.method === 'POST') {
-          let body = '';
-          req.on('data', (chunk: any) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const { userId } = JSON.parse(body || '{}');
-              if (userId) {
-                const targetId = String(userId).trim();
-                for (const [sid, u] of Array.from(connectedUsers.entries())) {
-                  if (String(u.id) === targetId || String(u.username).toLowerCase() === targetId.toLowerCase()) {
-                    removeUser(sid);
-                    removeConnectedUser(sid).catch(() => {});
-                    io?.to(sid).emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
-                    io?.sockets.sockets.get(sid)?.disconnect(true);
-                  }
-                }
-                const count = connectedUsers.size;
-                io?.emit("online_count", { count });
-                io?.emit("user_disconnected", { userId: targetId, count });
-              }
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ success: true }));
-            } catch {
-              res.setHeader('Content-Type', 'application/json');
+        if (req.url === "/__presence_users__" && req.method === "GET") {
+          if (!isPresenceBridgeAuthorized(req.headers["x-internal-presence-token"])) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false }));
+            return;
+          }
+
+          const users = Array.from(connectedUsers.values(), (user) => ({
+            id: String(user.id),
+            role: String(user.role),
+            roomId: String(user.roomId || ""),
+          }));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(users));
+          return;
+        }
+
+        if (req.url === "/__publish_user_event__" && req.method === "POST") {
+          if (!isPresenceBridgeAuthorized(req.headers["x-internal-presence-token"])) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false }));
+            return;
+          }
+
+          let body = "";
+          let bodyTooLarge = false;
+          req.on("data", (chunk: Buffer | string) => {
+            if (bodyTooLarge) return;
+            body += chunk.toString();
+            if (Buffer.byteLength(body) > 1_000_000) {
+              bodyTooLarge = true;
+              res.writeHead(413, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ success: false }));
             }
           });
+          req.on("end", () => {
+            if (bodyTooLarge) return;
+            try {
+              const payload = JSON.parse(body || "{}");
+              const allowedEvents = new Set([
+                "announcement:created",
+                "voice_stage:signal",
+                "voice_stage:kicked_from_seat",
+              ]);
+              if (
+                typeof payload.userId !== "string" ||
+                !payload.userId.trim() ||
+                typeof payload.event !== "string" ||
+                !allowedEvents.has(payload.event)
+              ) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: false }));
+                return;
+              }
+
+              const userId = payload.userId.trim();
+              const roomSocketIds = io!.sockets.adapter.rooms.get(`user:${userId}`);
+              const matchingSocketIds = Array.from(connectedUsers.entries())
+                .filter(([, user]) => String(user.id) === userId)
+                .map(([socketId]) => socketId);
+              const targetSocketIds = new Set([
+                ...(roomSocketIds ?? []),
+                ...matchingSocketIds,
+              ]);
+              if (typeof payload.excludeSocketId === "string") {
+                targetSocketIds.delete(payload.excludeSocketId);
+              }
+              for (const socketId of targetSocketIds) {
+                io!.to(socketId).emit(payload.event, payload.payload);
+              }
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: true, emittedTo: targetSocketIds.size }));
+            } catch (error) {
+              console.error("[vite-socket] Internal user event bridge failed:", error);
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false }));
+            }
+          });
+          return;
+        }
+
+        if (req.url === "/__pm_stage_media__" && req.method === "POST") {
+          if (!isPresenceBridgeAuthorized(req.headers["x-internal-presence-token"])) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "جلسة غير صالحة" }));
+            return;
+          }
+
+          const sessionIdStage = String(req.headers["x-pm-session-id"] || "").trim();
+          const sessionExpiresAtStage = Number(req.headers["x-pm-session-expires-at"]);
+          const userIdStage = String(req.headers["x-pm-user-id"] || "").trim();
+          const recipientIdStage = String(req.headers["x-pm-recipient-id"] || "").trim();
+          const contentTypeStage = String(req.headers["x-pm-content-type"] || "").trim();
+          const mediaTypeStage = String(req.headers["x-pm-media-type"] || "").trim();
+          const isStageMediaType = ["image", "video", "audio", "file"].includes(mediaTypeStage);
+          if (!sessionIdStage || !userIdStage || !recipientIdStage || !contentTypeStage ||
+              !isStageMediaType || !Number.isFinite(sessionExpiresAtStage)) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "بيانات الوسيط غير صالحة" }));
+            return;
+          }
+
+          const stageChunks: Buffer[] = [];
+          let stagedBytes = 0;
+          let stageTooLarge = false;
+          req.on("data", (chunk: Buffer) => {
+            if (stageTooLarge) return;
+            stagedBytes += chunk.length;
+            if (stagedBytes > 64 * 1024 * 1024) {
+              stageTooLarge = true;
+              res.writeHead(413, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "حجم الملف يتجاوز الحد المسموح" }));
+              return;
+            }
+            stageChunks.push(chunk);
+          });
+          req.on("end", () => {
+            if (stageTooLarge) return;
+            try {
+              const bytes = Buffer.concat(stageChunks);
+              registerPrivateMessageSession({
+                sessionId: sessionIdStage,
+                userId: userIdStage,
+                expiresAt: sessionExpiresAtStage,
+              });
+              const stageResult = privateMessageStore.stageMedia({
+                sessionId: sessionIdStage,
+                receiverId: recipientIdStage,
+                contentType: contentTypeStage,
+                mediaType: mediaTypeStage as "image" | "video" | "audio" | "file",
+                bytes,
+              });
+              if (!stageResult) {
+                res.writeHead(409, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "تعذر إرسال الوسيط؛ يرجى التحقق من الملف وحالة الاتصال والمحاولة مرة أخرى" }));
+                return;
+              }
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ bridge: "pm-media", success: true, mediaId: stageResult }));
+            } catch (error) {
+              console.error("[vite-socket] Internal PM media staging failed:", error);
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "تعذر إرسال الوسيط" }));
+            }
+          });
+          return;
+        }
+
+        const pmMediaMatch = /^\/__pm_media__\/([A-Za-z0-9_-]{8,128})$/.exec(req.url || "");
+        if (pmMediaMatch && req.method === "GET") {
+          if (!isPresenceBridgeAuthorized(req.headers["x-internal-presence-token"])) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "جلسة غير صالحة" }));
+            return;
+          }
+          const mediaSessionId = String(req.headers["x-pm-session-id"] || "").trim();
+          if (!mediaSessionId) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "جلسة غير صالحة" }));
+            return;
+          }
+          try {
+            const media = privateMessageStore.getMedia(mediaSessionId, pmMediaMatch[1]);
+            if (!media) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "الوسيط غير موجود أو انتهت صلاحيته" }));
+              return;
+            }
+            res.writeHead(200, {
+              "Content-Type": media.contentType,
+              "Content-Length": String(media.bytes.length),
+            });
+            res.end(media.bytes);
+          } catch (error) {
+            console.error("[vite-socket] Internal PM media fetch failed:", error);
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ bridge: "pm-media", success: false, message: "تعذر تحميل الوسيط" }));
+          }
           return;
         }
 
@@ -101,27 +287,6 @@ export function viteSocketIO(): Plugin {
         next();
       });
 
-      // Profile handlers
-      let profileHandlers: any;
-      import("./server/socket/profileHandlers").then(m => { profileHandlers = m; });
-      // Story handlers
-      let storyHandlers: any;
-      import("./server/socket/storyHandlers").then(m => { storyHandlers = m; });
-      // Wall handlers (create, like, comment)
-      let wallHandlers: any;
-      import("./server/socket/wallHandlers").then(m => { wallHandlers = m; });
-      // Notification handlers
-      let notificationHandlers: any;
-      import("./server/socket/notificationHandlers").then(m => { notificationHandlers = m; });
-      // Mail handlers
-      let mailHandlers: any;
-      import("./server/socket/mailHandlers").then(m => { mailHandlers = m; });
-      // Private message handlers
-      let privateHandlers: any;
-      import("./server/socket/privateHandlers").then(m => { privateHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load privateHandlers:", e));
-      // Voice Stage handlers
-      let voiceStageHandlers: any;
-      import("./server/socket/voiceStageHandlers").then(m => { voiceStageHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load voiceStageHandlers:", e));
       // Room Handlers (profile, roles)
       let roomHandlers: any;
       import("./server/socket/roomHandlers").then(m => { roomHandlers = m; }).catch(e => console.error("[vite-socket] Failed to load roomHandlers:", e));
@@ -130,6 +295,8 @@ export function viteSocketIO(): Plugin {
       type OnlineUser = {
         id: string;
         socketId: string;
+        sessionId?: string;
+        sessionExpiresAt?: number;
         username: string;
         role: string;
         avatar: string;
@@ -156,8 +323,39 @@ export function viteSocketIO(): Plugin {
       const connectedUsers = new Map<string, OnlineUser>();
       const roomMembersMap = new Map<string, Set<string>>();
       const pendingLeaves = new Map<string, { roomId: string; timeout: NodeJS.Timeout }>();
-      const pendingDisconnects = new Map<string, { roomId: string; timeout: NodeJS.Timeout; socketId: string }>();
-      console.log("[VITE_TRACE_PRESENCE] Exposed connectedUsers and roomMembersMap on globalThis");
+      const pendingDisconnects = new Map<string, { roomId: string; timeout: NodeJS.Timeout; socketId: string; userId: string }>();
+      const runtimeGlobal = globalThis as typeof globalThis & {
+        __vite_connected_users__?: Map<string, OnlineUser>;
+        __vite_room_members_map__?: Map<string, Set<string>>;
+      };
+      const runtimeProcess = process as NodeJS.Process & {
+        __vite_connected_users__?: Map<string, OnlineUser>;
+        __vite_room_members_map__?: Map<string, Set<string>>;
+      };
+      runtimeGlobal.__vite_connected_users__ = connectedUsers;
+      runtimeGlobal.__vite_room_members_map__ = roomMembersMap;
+      runtimeProcess.__vite_connected_users__ = connectedUsers;
+      runtimeProcess.__vite_room_members_map__ = roomMembersMap;
+      console.log("[VITE_TRACE_PRESENCE] Exposed connectedUsers and roomMembersMap on runtime globals");
+
+      // عدّاد فريد: يحسب الأشخاص الفعليين لا الجلسات (يمنع تضخم "متصل الآن" عند تعدد الجلسات أو بقاياها)
+      function computeUniqueOnlineCount(): number {
+        const seen = new Set<string>();
+        for (const u of connectedUsers.values()) {
+          const id = String(u.id || "").trim();
+          if (id && id !== "0") {
+            seen.add(`id:${id}`);
+            continue;
+          }
+          const name = String(u.username || "").trim().toLowerCase();
+          if (name && u.role !== "guest") {
+            seen.add(`username:${name}`);
+          } else {
+            seen.add(`socket:${u.socketId}`);
+          }
+        }
+        return seen.size;
+      }
 
       const normalizeOnlineUserAssets = (user: OnlineUser): OnlineUser => ({
         ...user,
@@ -181,6 +379,9 @@ export function viteSocketIO(): Plugin {
           socketId: user.socketId,
           userId: user.id,
           username: user.username,
+          displayName: user.displayName || user.username,
+          mentionName: user.mentionName || "",
+          publicUserId: user.publicUserId || "",
           role: user.role,
           countryCode: user.countryCode,
           avatar: assets.avatar,
@@ -198,7 +399,7 @@ export function viteSocketIO(): Plugin {
           giftedGiftIconUrl: assets.giftedGiftIconUrl,
           giftedPromotionIconUrl: assets.giftedPromotionIconUrl,
           roleIconUrl: assets.roleIconUrl,
-          count: connectedUsers.size,
+          count: computeUniqueOnlineCount(),
         });
       }
 
@@ -208,7 +409,7 @@ export function viteSocketIO(): Plugin {
           userId: user.id,
           username: user.username,
           role: user.role,
-          count: connectedUsers.size,
+          count: computeUniqueOnlineCount(),
         });
       }
 
@@ -311,26 +512,27 @@ export function viteSocketIO(): Plugin {
       // ========== Socket.io Connection Handler ==========
       io.on("connection", (socket) => {
         const auth = socket.handshake.auth || {};
+        const claims = getSocketAuthClaims(auth);
 
-        // رفض الاتصال غير الموثق لضمان عدم ظهور الزوار على شاشة الدخول كمتصلين
-        if (!auth.userId || typeof auth.userId !== "string" || !auth.userId.trim()) {
+        if (!claims) {
           console.debug("[vite-socket] rejecting unauthenticated socket connection:", socket.id);
           socket.disconnect(true);
           return;
         }
 
-        let username = auth.username || "زائر";
-        const role = auth.role || "guest";
-        const userId = auth.userId.trim();
+        let username = claims.username;
+        const role = claims.role;
+        const userId = claims.sub;
 
-        const handshakeProfileMsg = typeof auth.statusMsg === "string" && auth.statusMsg.trim()
-          ? auth.statusMsg.trim()
-          : (typeof auth.profileMsg === "string" && auth.profileMsg.trim()
-            ? auth.profileMsg.trim()
-            : "");
-        const userData: Omit<OnlineUser, "socketId"> = {
+        // Synchronously initialize socket.data.user so handlers like profileHandlers capture a valid user
+        const initialUserData: Omit<OnlineUser, "socketId"> = {
           id: userId,
+          sessionId: claims.sessionId,
+          sessionExpiresAt: claims.exp,
           username,
+          displayName: (typeof auth.displayName === "string" && auth.displayName.trim()) || (typeof auth.name === "string" && auth.name.trim()) || username,
+          mentionName: (typeof auth.mentionName === "string" && auth.mentionName.trim()) || "",
+          publicUserId: (typeof auth.publicUserId === "string" && auth.publicUserId.trim()) || "",
           role,
           avatar: auth.avatar || "/pic.png",
           countryCode: auth.countryCode || "SA",
@@ -346,61 +548,61 @@ export function viteSocketIO(): Plugin {
           status: "online",
           idreg: auth.idreg || "",
           siteBadge: auth.siteBadge || "",
-          statusMsg: handshakeProfileMsg,
+          statusMsg: (typeof auth.statusMsg === "string" && auth.statusMsg.trim()) || (typeof auth.profileMsg === "string" && auth.profileMsg.trim()) || "",
           giftedBannerUrl: auth.giftedBannerUrl || "",
           giftedGiftIconUrl: auth.giftedGiftIconUrl || "",
           giftedPromotionIconUrl: auth.giftedPromotionIconUrl || "",
           roleIconUrl: auth.roleIconUrl || "",
         };
+        socket.data.user = initialUserData;
+        let userData: Omit<OnlineUser, "socketId"> = initialUserData;
+        addUser(socket.id, initialUserData);
 
-        socket.data.user = userData;
-        console.log(`[VITE_TRACE_PRESENCE] new connection socketId=${socket.id} username=${username} userId=${userId}`);
-        console.log(`[VITE_TRACE_PRESENCE] existing connectedUsers count=${connectedUsers.size} entries=${JSON.stringify(Array.from(connectedUsers.values()).map(u=>({id:u.id, username:u.username, socketId:u.socketId, roomId:u.roomId})))}`);
-        console.log(`[VITE_TRACE_PRESENCE] existing roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))} details=${JSON.stringify(Object.fromEntries(Array.from(roomMembersMap.entries()).map(([k,v])=>[k,Array.from(v)])))}`);
-        addUser(socket.id, userData);
-        addConnectedUser(socket.id, userData).catch(err => console.error("[vite-socket] addConnectedUser failed:", err));
-
-        // Enrich from DB at connection time
         (async () => {
+          let canonicalDisplayName = initialUserData.displayName;
+          let canonicalMentionName = initialUserData.mentionName;
+          let canonicalPublicUserId = initialUserData.publicUserId;
+          let dbIdreg = auth.idreg || "";
+          let dbNameColor = auth.nameColor || "";
+          let dbMessageColor = auth.messageColor || "";
+          let dbMemberCardBg = auth.memberCardBgUrl || "";
+          let dbAvatarFrame = auth.avatarFrameUrl || "";
+          let dbStatusMsg = typeof auth.statusMsg === "string" && auth.statusMsg.trim()
+            ? auth.statusMsg.trim()
+            : (typeof auth.profileMsg === "string" && auth.profileMsg.trim() ? auth.profileMsg.trim() : "");
+          let dbGiftedBannerUrl = auth.giftedBannerUrl || "";
+          let dbGiftedGiftIconUrl = auth.giftedGiftIconUrl || "";
+          let dbGiftedPromotionIconUrl = auth.giftedPromotionIconUrl || "";
+          let dbRoleIconUrl = auth.roleIconUrl || "";
+
           try {
             const mod = await import("./server/db");
             const result = await mod.dbPool.query(
-              `SELECT "member_card_bg_url", "name_color", "message_color", "idreg", "avatar_frame_url", "profile_msg",
-                      "gifted_banner_url", "gifted_gift_icon_url", "gifted_promotion_icon_url"
-               FROM "user_profiles" WHERE "user_id" = $1 LIMIT 1`,
-              [userId]
+              `SELECT u.id, u.username, u.display_name, u.topic, u.mention_name, u.public_user_id, u.idreg, u.ucol, u.mcol,
+                      up.member_card_bg_url, up.name_color, up.message_color, up.idreg as up_idreg, up.avatar_frame_url, up.profile_msg,
+                      up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url
+               FROM users u
+               LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
+               WHERE CAST(u.id AS text) = $1 OR CAST(u.uid AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($2)
+               LIMIT 1`,
+              [userId, username]
             );
             const row = result.rows[0];
             if (row) {
-              const u = connectedUsers.get(socket.id);
-              if (u) {
-                if (row.member_card_bg_url) u.memberCardBgUrl = String(row.member_card_bg_url).trim();
-                if (row.name_color) u.nameColor = String(row.name_color).trim();
-                if (row.message_color) u.messageColor = String(row.message_color).trim();
-                if (row.idreg) u.idreg = String(row.idreg).trim();
-                if (row.avatar_frame_url) u.avatarFrameUrl = String(row.avatar_frame_url).trim();
-                if (row.gifted_banner_url) u.giftedBannerUrl = String(row.gifted_banner_url).trim();
-                if (row.gifted_gift_icon_url) u.giftedGiftIconUrl = String(row.gifted_gift_icon_url).trim();
-                if (row.gifted_promotion_icon_url) u.giftedPromotionIconUrl = String(row.gifted_promotion_icon_url).trim();
-                if (row.profile_msg) {
-                  const msg = String(row.profile_msg).trim();
-                  u.statusMsg = msg;
-                }
-              }
+              canonicalDisplayName = String(row.display_name || row.topic || username).trim();
+              canonicalMentionName = String(row.mention_name || "").trim();
+              canonicalPublicUserId = String(row.public_user_id || "").trim();
+              if (row.member_card_bg_url) dbMemberCardBg = String(row.member_card_bg_url).trim();
+              if (row.name_color || row.ucol) dbNameColor = String(row.name_color || row.ucol).trim();
+              if (row.message_color || row.mcol) dbMessageColor = String(row.message_color || row.mcol).trim();
+              if (row.up_idreg || row.idreg) dbIdreg = String(row.up_idreg || row.idreg).trim();
+              if (row.avatar_frame_url) dbAvatarFrame = String(row.avatar_frame_url).trim();
+              if (row.gifted_banner_url) dbGiftedBannerUrl = String(row.gifted_banner_url).trim();
+              if (row.gifted_gift_icon_url) dbGiftedGiftIconUrl = String(row.gifted_gift_icon_url).trim();
+              if (row.gifted_promotion_icon_url) dbGiftedPromotionIconUrl = String(row.gifted_promotion_icon_url).trim();
+              if (row.profile_msg) dbStatusMsg = String(row.profile_msg).trim();
             }
-            // Fetch missing idreg from users table if not present in profile
-            const currentU = connectedUsers.get(socket.id);
-            if (currentU && !currentU.idreg && userId) {
-              const userRes = await mod.dbPool.query(
-                `SELECT idreg FROM users WHERE id::text = $1 OR uid::text = $1 OR lower(username) = lower($2) LIMIT 1`,
-                [userId, username]
-              );
-              if (userRes.rows[0]?.idreg) {
-                currentU.idreg = String(userRes.rows[0].idreg).trim();
-                socket.data.user.idreg = currentU.idreg;
-              }
-            }
-            // Fetch role icon
+
             const roleResult = await mod.dbPool.query(
               `SELECT r.icon_url AS role_icon_url
                FROM user_role_assignments ura
@@ -411,42 +613,68 @@ export function viteSocketIO(): Plugin {
               [userId]
             );
             if (roleResult.rows[0]?.role_icon_url) {
-              const u = connectedUsers.get(socket.id);
-              if (u) {
-                u.roleIconUrl = normalizeOptionalMinioUrl(roleResult.rows[0].role_icon_url);
-              }
+              dbRoleIconUrl = normalizeOptionalMinioUrl(roleResult.rows[0].role_icon_url);
             }
-            // Fallback to legacy ucol/mcol
-            if (!connectedUsers.get(socket.id)?.nameColor || !connectedUsers.get(socket.id)?.messageColor) {
-              const legResult = await mod.dbPool.query(`SELECT "ucol", "mcol" FROM "users" WHERE "id" = $1 LIMIT 1`, [userId]);
-              if (legResult.rows[0]) {
-                const u = connectedUsers.get(socket.id);
-                if (u) {
-                  if (!u.nameColor) u.nameColor = (legResult.rows[0].ucol || "").toString().trim();
-                  if (!u.messageColor) u.messageColor = (legResult.rows[0].mcol || "").toString().trim();
-                }
-              }
-            }
-          } catch (_) {}
+          } catch (dbErr) {
+            console.error("[vite-socket] Error querying canonical user info from DB:", dbErr);
+          }
+
+          userData = {
+            id: userId,
+            sessionId: claims.sessionId,
+            sessionExpiresAt: claims.exp,
+            username,
+            displayName: canonicalDisplayName,
+            mentionName: canonicalMentionName,
+            publicUserId: canonicalPublicUserId,
+            role,
+            avatar: auth.avatar || "/pic.png",
+            countryCode: auth.countryCode || "SA",
+            avatarFrameUrl: dbAvatarFrame,
+            giftIconUrl: auth.giftIconUrl || "",
+            memberCardBgUrl: dbMemberCardBg,
+            nameColor: dbNameColor,
+            messageColor: dbMessageColor,
+            messageBubbleStyle: auth.messageBubbleStyle || "default",
+            statusFontColor: auth.statusFontColor || "",
+            roomId: "",
+            connectedAt: new Date().toISOString(),
+            status: "online",
+            idreg: dbIdreg,
+            siteBadge: auth.siteBadge || "",
+            statusMsg: dbStatusMsg,
+            giftedBannerUrl: dbGiftedBannerUrl,
+            giftedGiftIconUrl: dbGiftedGiftIconUrl,
+            giftedPromotionIconUrl: dbGiftedPromotionIconUrl,
+            roleIconUrl: dbRoleIconUrl,
+          };
+
+          socket.data.user = userData;
+          console.log(`[VITE_TRACE_PRESENCE] new connection socketId=${socket.id} username=${username} displayName=${canonicalDisplayName} userId=${userId}`);
+          addUser(socket.id, userData);
+          addConnectedUser(socket.id, userData).catch(err => console.error("[vite-socket] addConnectedUser failed:", err));
+
+          joinUserChannels(socket);
+          try {
+            registerPrivateHandlers(io!, socket);
+          } catch (pmErr) {
+            console.error("[vite-socket] registerPrivateHandlers async failed:", pmErr);
+          }
+
+          const connectedUser = connectedUsers.get(socket.id)!;
+          broadcastUserConnected(connectedUser);
+          io!.emit("online_count", { count: computeUniqueOnlineCount() });
+
+          if (role === 'admin' || role === 'owner') {
+            socket.join("moderators_alerts");
+          }
+
+          socket.emit("connected", {
+            socketId: socket.id,
+            user: userData,
+            serverTime: new Date().toISOString(),
+          });
         })();
-
-        // الانضمام للقنوات الشخصية (إشعارات، حضور، etc.)
-        joinUserChannels(socket);
-
-        const connectedUser = connectedUsers.get(socket.id)!;
-        broadcastUserConnected(connectedUser);
-        io!.emit("online_count", { count: connectedUsers.size });
-
-        // Join moderators alerts room if authorized
-        if (role === 'admin' || role === 'owner') {
-          socket.join("moderators_alerts");
-        }
-
-        socket.emit("connected", {
-          socketId: socket.id,
-          user: userData,
-          serverTime: new Date().toISOString(),
-        });
 
         // Update country from IP asynchronously
         if (requestCountry) {
@@ -460,6 +688,9 @@ export function viteSocketIO(): Plugin {
                   socketId: socket.id,
                   userId: u.id,
                   username: u.username,
+                  displayName: u.displayName || u.username,
+                  mentionName: u.mentionName || "",
+                  publicUserId: u.publicUserId || "",
                   role: u.role,
                   countryCode: cc,
                 });
@@ -537,28 +768,31 @@ export function viteSocketIO(): Plugin {
             console.log(`[VITE_TRACE] pendingLeave resolved: prev=${prev}`);
           }
 
-          const userKey = userId;
-          const pendingDisconnect = pendingDisconnects.get(userKey);
+          // البحث عن معلّقات قطع اتصال لهذه الجلسة أو لأي جلسة سابقة لنفس المستخدم
+          // (المفاتيح الآن socketId لكل جلسة — نمسح البنية بدلاً من المفتاح المباشر)
           let isReconnect = false;
 
-          if (pendingDisconnect) {
-            clearTimeout(pendingDisconnect.timeout);
-            pendingDisconnects.delete(userKey);
+          for (const [pKey, pEntry] of Array.from(pendingDisconnects.entries())) {
+            const isOwn = pKey === socket.id || pEntry.socketId === socket.id;
+            const isSameUser = String(pEntry.userId || "") === String(userId);
+            if (!isOwn && !isSameUser) continue;
 
-            const oldSocketId = pendingDisconnect.socketId;
-            const isSameSocket = oldSocketId === socket.id;
-            if (!isSameSocket) {
+            clearTimeout(pEntry.timeout);
+            pendingDisconnects.delete(pKey);
+
+            const oldSocketId = pEntry.socketId;
+            if (oldSocketId !== socket.id) {
               removeUser(oldSocketId);
               console.log(`[VITE_TRACE] pendingDisconnect: removed OLD socket oldSocketId=${oldSocketId} (different from current)`);
             } else {
               console.log(`[VITE_TRACE] pendingDisconnect: SKIPPED removeUser (same socket) oldSocketId=${oldSocketId}`);
             }
 
-            if (pendingDisconnect.roomId === roomId) {
+            if (pEntry.roomId === roomId) {
               isReconnect = true;
               console.log(`[VITE_TRACE] isReconnect=true (same room) roomId=${roomId}`);
             } else {
-              prev = pendingDisconnect.roomId;
+              prev = pEntry.roomId;
               console.log(`[VITE_TRACE] pendingDisconnect: setting prev=${prev} oldSocketId=${oldSocketId} roomId=${roomId}`);
             }
           }
@@ -855,10 +1089,11 @@ export function viteSocketIO(): Plugin {
               }
             }
 
+            const currentSender = connectedUsers.get(socket.id);
             const msg = await chatStore.addMessage({
               roomId,
               clientId: data.clientId,
-              user: username,
+              user: currentSender?.displayName || currentSender?.username || username,
               userId: userId,
               role,
               text: finalChatText,
@@ -1073,7 +1308,11 @@ export function viteSocketIO(): Plugin {
             
              if (!existing) {
               uniqueUsers.set(uniqueKey, {
-                id: u.id, socketId: u.socketId, username: u.username, role: u.role, avatar: u.avatar,
+                id: u.id, socketId: u.socketId, username: u.username,
+                displayName: u.displayName || u.username,
+                mentionName: u.mentionName || "",
+                publicUserId: u.publicUserId || "",
+                role: u.role, avatar: u.avatar,
                 countryCode: u.countryCode, avatarFrameUrl: u.avatarFrameUrl,
                 giftIconUrl: u.giftIconUrl, memberCardBgUrl: u.memberCardBgUrl,
                 nameColor: u.nameColor, messageColor: u.messageColor,
@@ -1100,6 +1339,36 @@ export function viteSocketIO(): Plugin {
           callback?.({ success: true, users, count: uniqueUsers.size });
         });
 
+        // ===== get_room_members — يُستخدم للتحقق بعد إعادة الاتصال =====
+        socket.on("get_room_members", (data: any, callback?: any) => {
+          if (typeof callback !== "function") return;
+          const roomId = typeof data?.roomId === "string" ? data.roomId.trim() : "";
+          if (!roomId) return callback({ success: false, message: "roomId مطلوب" });
+
+          const members: any[] = [];
+          for (const u of connectedUsers.values()) {
+            if (String(u.roomId || "") !== roomId) continue;
+            members.push({
+              id: u.id,
+              socketId: u.socketId,
+              username: u.username,
+              displayName: u.displayName || u.username,
+              role: u.role,
+              avatar: u.avatar,
+              countryCode: u.countryCode,
+              avatarFrameUrl: u.avatarFrameUrl || "",
+              status: u.status || "online",
+            });
+          }
+          callback({ success: true, members, memberCount: members.length });
+        });
+
+        // ===== ping_keepalive — يتجاهله السيرفر لكن يجدّد نشاط الاتصال =====
+        socket.on("ping_keepalive", () => {
+          // لا يُرسل رداً — الغرض الوحيد هو إعلام السيرفر أن العميل لا يزال حياً
+          // وهذا يمنع Socket.io من احتساب انتهاء pingTimeout
+        });
+
         // ===== Status Update Events =====
         socket.on("status_update", (data: any) => {
           const newStatus = String(data?.status || "online").trim();
@@ -1115,6 +1384,9 @@ export function viteSocketIO(): Plugin {
             socketId: socket.id,
             userId: user.id,
             username: user.username,
+            displayName: user.displayName || user.username,
+            mentionName: user.mentionName || "",
+            publicUserId: user.publicUserId || "",
             role: user.role,
             status: newStatus,
             idreg: user.idreg,
@@ -1145,11 +1417,19 @@ export function viteSocketIO(): Plugin {
           if (data.messageColor !== undefined) user.messageColor = data.messageColor;
           if (data.messageBubbleStyle) user.messageBubbleStyle = data.messageBubbleStyle;
           if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
-            user.username = data.displayName.trim().slice(0, 80);
-            userData.username = user.username;
-            socket.data.user.username = user.username;
-            username = user.username;
+            const sanitizedDisplayName = data.displayName.trim().slice(0, 80);
+            user.displayName = sanitizedDisplayName;
+            userData.displayName = sanitizedDisplayName;
+            socket.data.user.displayName = sanitizedDisplayName;
           }
+          if (typeof data.mentionName === "string") {
+            const sanitizedMentionName = data.mentionName.trim().slice(0, 32);
+            user.mentionName = sanitizedMentionName;
+            userData.mentionName = sanitizedMentionName;
+            socket.data.user.mentionName = sanitizedMentionName;
+          }
+
+          addConnectedUser(socket.id, user).catch(() => {});
 
           chatStore.updateUserMessageIdentity(oldUsername, {
             avatar: user.avatar,
@@ -1163,6 +1443,9 @@ export function viteSocketIO(): Plugin {
             socketId: socket.id,
             userId: user.id,
             username: user.username,
+            displayName: user.displayName || user.username,
+            mentionName: user.mentionName || "",
+            publicUserId: user.publicUserId || "",
             previousUsername: oldUsername,
             avatar: data.avatar || user.avatar,
             avatarUrl: data.avatarUrl || data.avatar || user.avatar,
@@ -1225,38 +1508,52 @@ export function viteSocketIO(): Plugin {
         });
 
         // ===== Profile Handlers =====
-        if (profileHandlers) {
-          profileHandlers.registerProfileHandlers(io!, socket);
+        try {
+          registerProfileHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering profile handlers:", err);
         }
 
         // ===== Story Handlers =====
-        if (storyHandlers) {
-          storyHandlers.registerStoryHandlers(io!, socket);
+        try {
+          registerStoryHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering story handlers:", err);
         }
 
         // ===== Wall Handlers (posts, likes, comments) =====
-        if (wallHandlers) {
-          wallHandlers.registerWallHandlers(io!, socket);
+        try {
+          registerWallHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering wall handlers:", err);
         }
 
         // ===== Notification Handlers =====
-        if (notificationHandlers) {
-          notificationHandlers.registerNotificationHandlers(io!, socket);
+        try {
+          registerNotificationHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering notification handlers:", err);
         }
 
         // ===== Mail Handlers =====
-        if (mailHandlers) {
-          mailHandlers.registerMailHandlers(io!, socket);
+        try {
+          registerMailHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering mail handlers:", err);
         }
 
         // ===== Private Message Handlers =====
-        if (privateHandlers) {
-          privateHandlers.registerPrivateHandlers(io!, socket);
+        try {
+          registerPrivateHandlers(io!, socket);
+        } catch (pmErr) {
+          console.error("[vite-socket] Error registering private handlers:", pmErr);
         }
 
         // ===== Voice Stage Handlers =====
-        if (voiceStageHandlers) {
-          voiceStageHandlers.registerVoiceStageHandlers(io!, socket);
+        try {
+          registerVoiceStageHandlers(io!, socket);
+        } catch (err) {
+          console.error("[vite-socket] Error registering voice stage handlers:", err);
         }
 
         // ===== Call Handlers (WebRTC 1-on-1 Private Voice Call) =====
@@ -1296,22 +1593,19 @@ export function viteSocketIO(): Plugin {
         // ===== User Logout =====
         socket.on("user_logout", () => {
           try {
+            console.log(`[SOCKET_TRACE] user_logout received socket=${socket.id} userId=${socket.data?.user?.id || ""} referer=${socket.handshake.headers.referer || ""}`);
             (socket as any).loggedOut = true;
+            const anotherSessionIsOnline = Array.from(connectedUsers.entries()).some(
+              ([sid, user]) =>
+                sid !== socket.id &&
+                String(user.id) === String(userData.id) &&
+                String(user.sessionId || "") !== String(userData.sessionId || ""),
+            );
             const removed = removeUser(socket.id);
             removeConnectedUser(socket.id).catch(() => {});
             if (removed) {
-              broadcastUserDisconnected(removed);
-              io!.emit("online_count", { count: connectedUsers.size });
-            }
-            if (userData.id) {
-              for (const [sid, u] of connectedUsers.entries()) {
-                if (sid !== socket.id && String(u.id) === String(userData.id)) {
-                  removeUser(sid);
-                  removeConnectedUser(sid).catch(() => {});
-                  io!.to(sid).emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
-                  io!.sockets.sockets.get(sid)?.disconnect(true);
-                }
-              }
+              if (!anotherSessionIsOnline) broadcastUserDisconnected(removed);
+              io!.emit("online_count", { count: computeUniqueOnlineCount() });
             }
             socket.disconnect(true);
           } catch (e) {
@@ -1320,7 +1614,8 @@ export function viteSocketIO(): Plugin {
         });
 
         // ===== Disconnect =====
-        socket.on("disconnect", () => {
+        socket.on("disconnect", (disconnectReason: any) => {
+          console.log(`[SOCKET_TRACE] disconnect reason=${disconnectReason || "unknown"} socket=${socket.id} loggedOut=${!!(socket as any).loggedOut} user=${socket.data?.user?.username || ""}`);
           if ((socket as any).loggedOut) {
             return;
           }
@@ -1330,13 +1625,20 @@ export function viteSocketIO(): Plugin {
           }
           const user = connectedUsers.get(socket.id);
           if (user?.roomId) {
-            const userKey = user.id;
-            if (pendingDisconnects.has(userKey)) {
-              clearTimeout(pendingDisconnects.get(userKey)!.timeout);
+            // مفتاح مؤقت قطع الاتصال لكل "جلسة" (socketId) وليس للمستخدم:
+            // لو استخدمنا userId فإن انقطاع جلستين لنفس المستخدم يؤدي إلى إلغاء
+            // مؤقّت الجلسة الأولى دون حذف سجلها فيبقى سجلاً يتيم في connectedUsers
+            // ويرفع عدّاد "متصل الآن" للأبد (عدّاد أكبر من عدد الأشخاص الفعليين).
+            const socketKey = socket.id;
+            // إلغاء معلّق سابق لنفس الجلسة فقط إن وُجد
+            const ownPending = pendingDisconnects.get(socketKey);
+            if (ownPending) {
+              clearTimeout(ownPending.timeout);
+              pendingDisconnects.delete(socketKey);
             }
 
             const runDisconnect = () => {
-              pendingDisconnects.delete(userKey);
+              pendingDisconnects.delete(socketKey);
               const latestUser = connectedUsers.get(socket.id);
               if (!latestUser) return;
               const isStillConnected = Array.from(connectedUsers.values()).some(
@@ -1382,23 +1684,24 @@ export function viteSocketIO(): Plugin {
               }
               removeUser(socket.id);
               broadcastUserDisconnected(latestUser);
-              io!.emit("online_count", { count: connectedUsers.size });
+              io!.emit("online_count", { count: computeUniqueOnlineCount() });
             };
 
             const timeout = setTimeout(() => {
               runDisconnect();
-            }, 3000);
+            }, 15000); // 15 ثانية سماحية — تمنع ظهور "غادر/دخل" عند إعادة الاتصال السريعة
 
-            pendingDisconnects.set(userKey, {
+            pendingDisconnects.set(socketKey, {
               roomId: user.roomId,
               timeout,
               socketId: socket.id,
+              userId: user.id,
             });
           } else {
             const user = removeUser(socket.id);
             if (user) {
               broadcastUserDisconnected(user);
-              io!.emit("online_count", { count: connectedUsers.size });
+              io!.emit("online_count", { count: computeUniqueOnlineCount() });
             }
           }
         });

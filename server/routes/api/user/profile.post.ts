@@ -1,5 +1,5 @@
-import { defineEventHandler, getHeader, readBody, setResponseStatus } from "h3";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { getUserAuthContext } from "../../../services/adminAccess";
 import { updatePersistedUserProfile } from "../../../services/userRepository";
 import { updateInMemoryUserProfile } from "../../../services/authService";
 import { saveUploadBuffer } from "../../../services/uploadStorage";
@@ -8,72 +8,107 @@ import { getIO } from "../../../socket";
 import { normalizeMinioUrl } from "../../../services/minioClient";
 import { dbPool } from "../../../db";
 
-const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
-
-const verifySignature = (payload: string, signature: string) => {
-  const expected = createHmac("sha256", getSecret()).update(payload).digest("base64url");
-  const expectedBuffer = Buffer.from(expected);
-  const actualBuffer = Buffer.from(signature || "");
-  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
-};
+const ALLOWED_PROFILE_IMAGE_TYPES = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
 
 export default defineEventHandler(async (event) => {
-  const authHeader = getHeader(event, "authorization") || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const [payload, signature] = token.split(".");
-
-  if (!payload || !signature || !verifySignature(payload, signature)) {
-    setResponseStatus(event, 401);
-    return { success: false, message: "جلسة غير صالحة" };
+  const auth = getUserAuthContext(event);
+  if (!auth.ok || !auth.userId) {
+    setResponseStatus(event, auth.ok ? 401 : auth.statusCode);
+    return { success: false, message: auth.ok ? "جلسة غير صالحة" : auth.message };
   }
 
-  let userId = "";
-  let username = "";
-  try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!parsed?.exp || Date.now() > Number(parsed.exp)) {
-      setResponseStatus(event, 401);
-      return { success: false, message: "انتهت صلاحية الجلسة" };
-    }
-    userId = String(parsed.sub || "");
-    username = String(parsed.username || parsed.name || "");
-  } catch (err) {
-    setResponseStatus(event, 401);
-    return { success: false, message: "توكن غير صالح" };
-  }
+  const userId = auth.userId;
+  const username = auth.username;
 
   try {
-const body = await readBody(event);
-      const { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor, youtubeUrl } = body;
+    const body = await readBody(event);
+    const {
+      avatar,
+      cover,
+      profileMsg,
+      mentionName,
+      displayName,
+      nameColor,
+      messageColor,
+      statusFontColor,
+      youtubeUrl,
+    } = body || {};
 
-      console.log("[API] Request body:", { avatar, cover, profileMsg, displayName, nameColor, messageColor, statusFontColor, youtubeUrl });
+    console.log("[API] Profile update request:", {
+      userId,
+      hasAvatar: !!avatar,
+      hasCover: !!cover,
+      hasProfileMsg: profileMsg !== undefined,
+      hasMentionName: mentionName !== undefined,
+      displayName,
+    });
 
-      const updates: { avatar?: string; cover?: string; profileMsg?: string; displayName?: string; nameColor?: string; messageColor?: string; statusFontColor?: string; youtubeUrl?: string } = {};
+    const updates: {
+      avatar?: string;
+      cover?: string;
+      profileMsg?: string;
+      mentionName?: string | null;
+      displayName?: string;
+      nameColor?: string;
+      messageColor?: string;
+      statusFontColor?: string;
+      youtubeUrl?: string;
+      siteBadge?: string;
+    } = {};
 
-    if (avatar && avatar.startsWith("data:image/")) {
+    if (avatar && typeof avatar === "string" && avatar.startsWith("data:image/")) {
       const matches = avatar.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
       if (matches && matches.length === 3) {
-        const buffer = Buffer.from(matches[2], "base64");
-        const savedPath = await saveUploadBuffer({ kind: "avatar", userId, extension: matches[1], buffer });
-        if (savedPath) updates.avatar = savedPath;
+        const rawExt = matches[1].toLowerCase().replace(/^svg\+xml$/, "").replace(/^svg$/, "");
+        const ext = rawExt === "jpeg" ? "jpg" : rawExt;
+        if (ALLOWED_PROFILE_IMAGE_TYPES.has(ext)) {
+          const buffer = Buffer.from(matches[2], "base64");
+          const savedPath = await saveUploadBuffer({ kind: "avatar", userId, extension: ext, buffer });
+          if (savedPath) updates.avatar = savedPath;
+        }
       }
-    } else if (avatar) {
+    } else if (avatar && typeof avatar === "string" && !avatar.toLowerCase().includes(".svg") && !avatar.toLowerCase().includes(".xml")) {
       updates.avatar = avatar;
     }
 
-    if (cover && cover.startsWith("data:image/")) {
+    if (cover && typeof cover === "string" && cover.startsWith("data:image/")) {
       const matches = cover.match(/^data:image\/([A-Za-z0-9+]+);base64,(.+)$/);
       if (matches && matches.length === 3) {
-        const buffer = Buffer.from(matches[2], "base64");
-        const savedPath = await saveUploadBuffer({ kind: "cover", userId, extension: matches[1], buffer });
-        if (savedPath) updates.cover = savedPath;
+        const rawExt = matches[1].toLowerCase().replace(/^svg\+xml$/, "").replace(/^svg$/, "");
+        const ext = rawExt === "jpeg" ? "jpg" : rawExt;
+        if (ALLOWED_PROFILE_IMAGE_TYPES.has(ext)) {
+          const buffer = Buffer.from(matches[2], "base64");
+          const savedPath = await saveUploadBuffer({ kind: "cover", userId, extension: ext, buffer });
+          if (savedPath) updates.cover = savedPath;
+        }
       }
-    } else if (cover) {
+    } else if (cover && typeof cover === "string" && !cover.toLowerCase().includes(".svg") && !cover.toLowerCase().includes(".xml")) {
       updates.cover = cover;
     }
 
-    if (profileMsg !== undefined) {
-      updates.profileMsg = profileMsg;
+    if (profileMsg !== undefined && typeof profileMsg === "string") {
+      updates.profileMsg = profileMsg.slice(0, 500);
+    }
+
+    if (mentionName !== undefined) {
+      const trimmedMention = typeof mentionName === "string" ? mentionName.trim().toLowerCase().replace(/^@/, "") : "";
+      if (trimmedMention) {
+        if (!/^[a-z0-9_-]{2,32}$/.test(trimmedMention)) {
+          setResponseStatus(event, 400);
+          return { success: false, message: "اسم المنشن يجب أن يتكون من 2 إلى 32 حرفاً أو رقماً إنجليزياً" };
+        }
+        const conflict = await dbPool.query(
+          `SELECT id FROM users WHERE lower(mention_name) = lower($1) AND CAST(id AS text) != $2 AND CAST(uid AS text) != $2 LIMIT 1`,
+          [trimmedMention, userId]
+        );
+        if (conflict.rows.length > 0) {
+          setResponseStatus(event, 400);
+          return { success: false, message: "اسم المنشن مستخدم بالفعل، يرجى اختيار اسم آخر" };
+        }
+        updates.mentionName = trimmedMention;
+      } else {
+        updates.mentionName = null;
+      }
     }
 
     if (displayName !== undefined && typeof displayName === "string" && displayName.trim().length > 0) {
@@ -114,7 +149,7 @@ const body = await readBody(event);
       } catch {}
     }
 
-    const eventPayload = {
+    const eventPayload: Record<string, unknown> = {
       userId,
       username: updates.displayName || username,
       previousUsername: username,
@@ -131,10 +166,6 @@ const body = await readBody(event);
       statusFontColor: updates.statusFontColor,
       youtubeUrl: updates.youtubeUrl,
     };
-
-    console.log("[API] Profile update eventPayload:", eventPayload);
-    console.log("[API] nameColor in eventPayload:", eventPayload.nameColor);
-    console.log("[API] messageColor in eventPayload:", eventPayload.messageColor);
 
     // Always read the latest canonical profile data from DB after update to ensure correct broadcast
     try {
@@ -165,25 +196,24 @@ const body = await readBody(event);
       }
     } catch {}
 
-// Try direct broadcast via Socket.IO instance (more reliable across Vite contexts)
-        const io = getIO();
-        console.log("[API] Broadcasting user_profile_updated via io:", eventPayload);
-        if (io) {
-          io.emit("user_profile_updated", eventPayload);
-          console.log("[API] user_profile_updated event sent successfully");
-        } else {
-          publishGlobalEvent("user_profile_updated", eventPayload).catch((err) => console.error("profile update broadcast failed:", err));
-        }
+    // Try direct broadcast via Socket.IO instance (more reliable across Vite contexts)
+    const io = getIO();
+    if (io) {
+      io.emit("user_profile_updated", eventPayload);
+    } else {
+      publishGlobalEvent("user_profile_updated", eventPayload).catch((err) => console.error("profile update broadcast failed:", err));
+    }
 
     return {
       success: true,
       updates,
       normalizedAvatar: currentAvatarUrl,
       displayName: updates.displayName || username,
+      mentionName: updates.mentionName,
       nameColor: updates.nameColor,
       messageColor: updates.messageColor,
       statusFontColor: updates.statusFontColor,
-      dbSuccess
+      dbSuccess,
     };
   } catch (error: any) {
     console.error("Profile update error:", error);

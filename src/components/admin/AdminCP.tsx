@@ -8,13 +8,15 @@ import {
   Image
 } from 'lucide-react';
 import { getMenuLabel, getGroupLabel, getFieldLanguage, setFieldLanguage } from './constants';
+import { ADMIN_SECTION_PERMISSION_BY_ID, canViewAdminSection } from './powers/permissionDefs';
 
 interface AdminCPProps {
+  permissions: string[];
   activeSection: string;
   onChangeSection: (section: string) => void;
 }
 
-const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
+const AdminCP = ({ permissions, activeSection, onChangeSection }: AdminCPProps) => {
   const [lang, setLang] = useState<"ar" | "en">(getFieldLanguage);
   const [, setTick] = useState(0);
 
@@ -24,6 +26,13 @@ const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
     setFieldLanguage(next);
     setTick((t) => t + 1);
   };
+
+  const renderAction = (id: string, icon: React.ReactNode, label: string) =>
+    canViewAdminSection(permissions, id)
+      ? <AdminAction id={id} icon={icon} label={label} activeSection={activeSection} onClick={onChangeSection} />
+      : null;
+  const hasSectionAccess = Object.keys(ADMIN_SECTION_PERMISSION_BY_ID)
+    .some(section => canViewAdminSection(permissions, section));
 
   return (
     <div className="p-4 space-y-6 rtl">
@@ -47,70 +56,82 @@ const AdminCP = ({ activeSection, onChangeSection }: AdminCPProps) => {
         </button>
       </div>
 
+      {!hasSectionAccess && (
+        <p role="status" className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+          لا توجد صلاحية قراءة لأي قسم في لوحة التحكم.
+        </p>
+      )}
+
       <div className="space-y-1 max-h-[70vh] overflow-y-auto pr-1 pb-10 scrollbar-thin">
         <NavGroup title={getGroupLabel("g_main")}>
-          <AdminAction id="overview" icon={<BarChart3 size={16} />} label={getMenuLabel("overview")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="events" icon={<Activity size={16} />} label={getMenuLabel("events")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="actions" icon={<Zap size={16} />} label={getMenuLabel("actions")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("overview", <BarChart3 size={16} />, getMenuLabel("overview"))}
+          {renderAction("events", <Activity size={16} />, getMenuLabel("events"))}
+          {renderAction("actions", <Zap size={16} />, getMenuLabel("actions"))}
         </NavGroup>
 
         <NavGroup title={getGroupLabel("g_members")}>
-          <AdminAction id="users" icon={<Users size={16} />} label={getMenuLabel("users")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="bans" icon={<Ban size={16} />} label={getMenuLabel("bans")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="roles" icon={<Lock size={16} />} label={getMenuLabel("roles")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="fltr" icon={<ListFilter size={16} />} label={getMenuLabel("fltr")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("users", <Users size={16} />, getMenuLabel("users"))}
+          {renderAction("bans", <Ban size={16} />, getMenuLabel("bans"))}
+          {renderAction("roles", <Lock size={16} />, getMenuLabel("roles"))}
+          {renderAction("fltr", <ListFilter size={16} />, getMenuLabel("fltr"))}
         </NavGroup>
 
         <NavGroup title={getGroupLabel("g_rooms")}>
-          <AdminAction id="rooms" icon={<MessageSquare size={16} />} label={getMenuLabel("rooms")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="stickers" icon={<Sticker size={16} />} label={getMenuLabel("stickers")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="swiperbanners" icon={<Image size={16} />} label={getMenuLabel("swiperbanners")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="profileframes" icon={<Image size={16} />} label={getMenuLabel("profileframes")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="membercardtheme" icon={<Image size={16} />} label={getMenuLabel("membercardtheme")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="icons" icon={<Image size={16} />} label={getMenuLabel("icons")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="gifts" icon={<Gift size={16} />} label={getMenuLabel("gifts")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="animatedfaces" icon={<Smile size={16} />} label={getMenuLabel("animatedfaces")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="roomBadges" icon={<BadgeAlert size={16} />} label={getMenuLabel("roomBadges")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="siteBadges" icon={<Award size={16} />} label={getMenuLabel("siteBadges")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="shrt" icon={<MessageSquare size={16} />} label={getMenuLabel("shrt")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="msgs" icon={<MessageSquare size={16} />} label={getMenuLabel("msgs")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="bots" icon={<Cpu size={16} />} label={getMenuLabel("bots")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("rooms", <MessageSquare size={16} />, getMenuLabel("rooms"))}
+          {renderAction("stickers", <Sticker size={16} />, getMenuLabel("stickers"))}
+          {renderAction("swiperbanners", <Image size={16} />, getMenuLabel("swiperbanners"))}
+          {renderAction("profileframes", <Image size={16} />, getMenuLabel("profileframes"))}
+          {renderAction("membercardtheme", <Image size={16} />, getMenuLabel("membercardtheme"))}
+          {renderAction("icons", <Image size={16} />, getMenuLabel("icons"))}
+          {renderAction("gifts", <Gift size={16} />, getMenuLabel("gifts"))}
+          {renderAction("animatedfaces", <Smile size={16} />, getMenuLabel("animatedfaces"))}
+          {renderAction("roomBadges", <BadgeAlert size={16} />, getMenuLabel("roomBadges"))}
+          {renderAction("siteBadges", <Award size={16} />, getMenuLabel("siteBadges"))}
+          {renderAction("shrt", <MessageSquare size={16} />, getMenuLabel("shrt"))}
+          {renderAction("msgs", <MessageSquare size={16} />, getMenuLabel("msgs"))}
+          {renderAction("bots", <Cpu size={16} />, getMenuLabel("bots"))}
         </NavGroup>
 
         <NavGroup title={getGroupLabel("g_finance")}>
-          <AdminAction id="subs" icon={<Award size={16} />} label={getMenuLabel("subs")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="giftsgit" icon={<Gift size={16} />} label={getMenuLabel("giftsgit")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="agentwallets" icon={<Wallet size={16} />} label={getMenuLabel("agentwallets")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="evaluationpoints" icon={<Calculator size={16} />} label={getMenuLabel("evaluationpoints")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("subs", <Award size={16} />, getMenuLabel("subs"))}
+          {renderAction("giftsgit", <Gift size={16} />, getMenuLabel("giftsgit"))}
+          {renderAction("agentwallets", <Wallet size={16} />, getMenuLabel("agentwallets"))}
+          {renderAction("giftcommission", <Calculator size={16} />, getMenuLabel("giftcommission"))}
+          {renderAction("evaluationpoints", <Calculator size={16} />, getMenuLabel("evaluationpoints"))}
         </NavGroup>
 
         <NavGroup title={getGroupLabel("g_system")}>
-          <AdminAction id="settings" icon={<Settings size={16} />} label={getMenuLabel("settings")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="database" icon={<Database size={16} />} label={getMenuLabel("database")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="micprovidercp" icon={<Mic size={16} />} label={getMenuLabel("micprovidercp")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="ddosguardcp" icon={<ShieldAlert size={16} />} label={getMenuLabel("ddosguardcp")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("settings", <Settings size={16} />, getMenuLabel("settings"))}
+          {renderAction("database", <Database size={16} />, getMenuLabel("database"))}
+          {renderAction("micprovidercp", <Mic size={16} />, getMenuLabel("micprovidercp"))}
+          {renderAction("ddosguardcp", <ShieldAlert size={16} />, getMenuLabel("ddosguardcp"))}
         </NavGroup>
 
         <NavGroup title={getGroupLabel("g_plugins")}>
-          <AdminAction id="hostin" icon={<HardDrive size={16} />} label={getMenuLabel("hostin")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostcleanup" icon={<Wrench size={16} />} label={getMenuLabel("hostcleanup")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostcontrols" icon={<Key size={16} />} label={getMenuLabel("hostcontrols")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostsettings" icon={<LinkIcon size={16} />} label={getMenuLabel("hostsettings")} activeSection={activeSection} onClick={onChangeSection} />
-          <AdminAction id="hostdomains" icon={<Database size={16} />} label={getMenuLabel("hostdomains")} activeSection={activeSection} onClick={onChangeSection} />
+          {renderAction("hostin", <HardDrive size={16} />, getMenuLabel("hostin"))}
+          {renderAction("hostcleanup", <Wrench size={16} />, getMenuLabel("hostcleanup"))}
+          {renderAction("hostcontrols", <Key size={16} />, getMenuLabel("hostcontrols"))}
+          {renderAction("hostsettings", <LinkIcon size={16} />, getMenuLabel("hostsettings"))}
+          {renderAction("hostdomains", <Database size={16} />, getMenuLabel("hostdomains"))}
         </NavGroup>
       </div>
     </div>
   );
 };
 
-const NavGroup = ({ title, children }: { title: string, children: React.ReactNode }) => (
-  <div className="mb-4">
-    <h4 className="text-[10px] font-bold text-muted-foreground px-2 mb-1 uppercase tracking-wider">{title}</h4>
-    <div className="space-y-0.5">
-      {children}
+const NavGroup = ({ title, children }: { title: string, children: React.ReactNode }) => {
+  const visibleChildren = React.Children.toArray(children);
+  if (visibleChildren.length === 0) return null;
+
+  return (
+    <div className="mb-4">
+      <h4 className="text-[10px] font-bold text-muted-foreground px-2 mb-1 uppercase tracking-wider">{title}</h4>
+      <div className="space-y-0.5">
+        {visibleChildren}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const AdminAction = ({ id, icon, label, activeSection, onClick }: { id: string, icon: React.ReactNode; label: string, activeSection: string, onClick: (id: string) => void }) => {
   const isActive = activeSection === id;

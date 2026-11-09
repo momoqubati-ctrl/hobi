@@ -2,6 +2,7 @@ import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
 import { getUserAuthContext } from "../../../services/adminAccess";
 import { getUserContext } from "../../../services/permissionEngine";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -63,7 +64,9 @@ export default defineEventHandler(async (event) => {
       `SELECT
         u.id,
         u.username,
-        u.topic AS "displayName",
+        COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), u.username) AS "displayName",
+        u.mention_name AS "mentionName",
+        u.public_user_id AS "publicUserId",
         u.power,
         u.ip,
         u.fp AS "fingerprint",
@@ -77,18 +80,23 @@ export default defineEventHandler(async (event) => {
       FROM users u
       WHERE
         LOWER(u.username) LIKE LOWER($1)
+        OR LOWER(u.display_name) LIKE LOWER($1)
         OR LOWER(u.topic) LIKE LOWER($1)
+        OR LOWER(u.mention_name) LIKE LOWER($1)
+        OR u.public_user_id = $2
         OR CAST(u.idreg AS text) LIKE $1
         OR u.ip LIKE $1
       ORDER BY u.lastssen DESC NULLS LAST
       LIMIT 20`,
-      [searchPattern],
+      [searchPattern, search],
     );
 
     const users = result.rows.map((row: any) => ({
       id: row.id,
       username: row.username,
       displayName: row.displayName || row.username,
+      mentionName: row.mentionName || "",
+      publicUserId: row.publicUserId || "",
       power: row.power,
       ip: isFullModerator ? (row.ip || "") : "",
       fingerprint: isFullModerator ? (row.fingerprint || "") : "",
@@ -103,7 +111,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, users };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Upload, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { canManageAdminSection } from "../powers/permissionDefs";
 
 interface IconItem {
   id: string;
@@ -12,7 +13,13 @@ interface IconItem {
   is_active: boolean;
 }
 
-const IconsSection = () => {
+interface IconsSectionProps {
+  permissions: string[];
+}
+
+const IconsSection = ({ permissions }: IconsSectionProps) => {
+  const canEdit = canManageAdminSection(permissions, "icons", "edit");
+  const canDelete = canManageAdminSection(permissions, "icons", "delete");
   const [icons, setIcons] = useState<IconItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -122,7 +129,8 @@ const IconsSection = () => {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || !canEdit}
+            title={!canEdit ? "لا تملك صلاحية تعديل الأيقونات" : undefined}
             className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-bold hover:bg-green-600 transition disabled:opacity-50"
           >
             <Upload size={16} />
@@ -150,13 +158,15 @@ const IconsSection = () => {
                 loading="lazy"
               />
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                <button
-                  onClick={() => handleDeleteIcon(icon.id)}
-                  className="p-1.5 rounded-full bg-red-500/90 hover:bg-red-600 text-white transition shadow-lg"
-                  title="حذف"
-                >
-                  <Trash2 size={14} />
-                </button>
+                {canDelete && (
+                  <button
+                    onClick={() => handleDeleteIcon(icon.id)}
+                    className="p-1.5 rounded-full bg-red-500/90 hover:bg-red-600 text-white transition shadow-lg"
+                    title="حذف"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
             </div>
           ))}

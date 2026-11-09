@@ -4,6 +4,7 @@ export const SOCKET_CHANNELS = {
   room: (roomId: string) => `room:${roomId}`,
   presence: (roomId: string) => `presence:${roomId}`,
   social: (userId: string) => `room:social:${userId}`,
+  privateMessageSession: (sessionId: string) => `pm:session:${sessionId}`,
   moderation: "moderators_alerts",
   notifications: (userId: string) => `room:notifications:${userId}`,
   admin: "admin:realtime",

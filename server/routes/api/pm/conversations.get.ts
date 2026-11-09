@@ -1,21 +1,27 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
-import { getConversations } from "../../../services/privateMessageService";
+import { setResponseHeader, setResponseStatus } from "h3";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
+import {
+  isEphemeralPrivateMessagingEnabled,
+  privateMessageStore,
+  registerPrivateMessageSession,
+} from "../../../services/privateMessageService";
 
-export default defineEventHandler(async (event) => {
-  const query = getQuery(event);
-  const userId = query.userId as string;
-
-  if (!userId) {
-    setResponseStatus(event, 400);
-    return { success: false, message: "userId مطلوب" };
+export default createAuthenticatedUserHandler(async (event, auth) => {
+  setResponseHeader(event, "Cache-Control", "private, no-store");
+  if (!isEphemeralPrivateMessagingEnabled()) {
+    setResponseStatus(event, 503);
+    return { success: false, message: "الرسائل الخاصة المؤقتة غير مهيأة على هذا الخادم" };
   }
-
-  try {
-    const conversations = await getConversations(userId);
-    console.log(`[PM conversations] userId=${userId} → ${conversations.length} conversations:`, JSON.stringify(conversations, null, 2));
-    return { success: true, conversations };
-  } catch (error) {
-    console.error("getConversations error:", error);
-    return { success: false, message: "تعذر جلب المحادثات" };
+  if (!auth.sessionId || !registerPrivateMessageSession({
+    sessionId: auth.sessionId,
+    userId: auth.userId,
+    expiresAt: auth.expiresAt,
+  })) {
+    setResponseStatus(event, 401);
+    return { success: false, message: "جلسة غير صالحة" };
   }
+  return {
+    success: true,
+    conversations: privateMessageStore.listConversations(auth.sessionId),
+  };
 });

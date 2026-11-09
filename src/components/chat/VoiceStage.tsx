@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Mic, MicOff, Volume2, VolumeX, Lock, Unlock, LogOut, UserX, Shield, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
 import { getSocket } from "@/lib/socket";
+import { getNewlyJoinedStagePeers } from "@/lib/voiceStageConnections";
 import { showSuccess, showError } from "@/utils/toast";
+import {
+  ConnectionState,
+  RemoteAudioTrack,
+  Room,
+  RoomEvent,
+  type Participant,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+} from "livekit-client";
+import { getActiveSession } from "@/lib/authSession";
+import { connectLiveKitVoiceRoom } from "@/lib/livekitVoiceSession";
+import { parseVoiceProviderMode, type VoiceProviderMode } from "@/lib/voiceProviderMode";
 
 export interface VoiceSeat {
   seatIndex: number;
@@ -29,6 +42,18 @@ interface VoiceStageProps {
   onToggleExternalMute?: () => void;
 }
 
+interface VoiceStageResponse {
+  success?: boolean;
+  message?: string;
+  provider?: unknown;
+  seats?: (VoiceSeat | null)[];
+  maxSeats?: number;
+  payload?: {
+    seats?: (VoiceSeat | null)[];
+    maxSeats?: number;
+  };
+}
+
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -54,23 +79,28 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [selectedSeatIndex, setSelectedSeatIndex] = useState<number | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [voiceConnectionState, setVoiceConnectionState] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
+  const [isRoomReady, setIsRoomReady] = useState(false);
+  const [voiceProviderMode, setVoiceProviderMode] = useState<VoiceProviderMode | null>(null);
 
   const isMountedRef = useRef<boolean>(true);
   const isSelfMutedRef = useRef<boolean>(false);
   const isStageMutedRef = useRef<boolean>(Boolean(externalMuted));
   const locallyMutedUsersRef = useRef<Set<string>>(new Set());
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const liveKitRoomRef = useRef<Room | null>(null);
+  const voiceProviderModeRef = useRef<VoiceProviderMode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const iceCandidateQueuesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const speakingStateRef = useRef<boolean>(false);
-  const speakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const speakingTimeoutRef = useRef<number | null>(null);
   const isInitiatingRef = useRef<Set<string>>(new Set());
   const signalingQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const stagePeerIdsRef = useRef<Set<string> | null>(null);
 
 
   const mySeatIndex = seats.findIndex((s) => s?.userId === currentUser.id);
@@ -88,6 +118,102 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
     return () => window.clearInterval(intervalId);
   }, [isOnStage, roomId]);
 
+  useEffect(() => {
+    if (!isRoomReady || voiceProviderMode !== "livekit") return;
+
+    const session = getActiveSession();
+    if (!session) {
+      setVoiceConnectionState("disconnected");
+      showError("سجّل الدخول مجدداً للاتصال بخدمة الصوت");
+      return;
+    }
+
+    let active = true;
+    const room = new Room();
+    liveKitRoomRef.current = room;
+    setVoiceConnectionState("connecting");
+
+    const onTrackSubscribed = (track: RemoteTrack, _publication: RemoteTrackPublication, participant: Participant) => {
+      if (!active || !(track instanceof RemoteAudioTrack)) return;
+      setRemoteStreams((current) => new Map(current).set(
+        participant.identity,
+        new MediaStream([track.mediaStreamTrack]),
+      ));
+    };
+    const onTrackUnsubscribed = (track: RemoteTrack, _publication: RemoteTrackPublication, participant: Participant) => {
+      if (!active || !(track instanceof RemoteAudioTrack)) return;
+      setRemoteStreams((current) => {
+        if (!current.has(participant.identity)) return current;
+        const next = new Map(current);
+        next.delete(participant.identity);
+        return next;
+      });
+    };
+    const onActiveSpeakersChanged = (speakers: Participant[]) => {
+      if (active) setIsSpeakingUsers(new Set(speakers.map((speaker) => speaker.identity)));
+    };
+    const onConnectionStateChanged = (state: ConnectionState) => {
+      if (!active) return;
+      if (state === ConnectionState.Connected) setVoiceConnectionState("connected");
+      else if (state === ConnectionState.Reconnecting || state === ConnectionState.SignalReconnecting) {
+        setVoiceConnectionState("reconnecting");
+      } else if (state === ConnectionState.Disconnected) setVoiceConnectionState("disconnected");
+      else setVoiceConnectionState("connecting");
+    };
+
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+    room.on(RoomEvent.ActiveSpeakersChanged, onActiveSpeakersChanged);
+    room.on(RoomEvent.ConnectionStateChanged, onConnectionStateChanged);
+    room.on(RoomEvent.Reconnecting, () => {
+      if (active) setVoiceConnectionState("reconnecting");
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      if (active) setVoiceConnectionState("connected");
+    });
+    const reportLiveKitDisconnect = () => {
+      if (active) setVoiceConnectionState("disconnected");
+      getSocket()?.emit("voice_stage:livekit_disconnected", { roomId });
+    };
+    const socket = getSocket();
+    const onSocketConnect = () => {
+      if (room.state === ConnectionState.Disconnected) {
+        reportLiveKitDisconnect();
+      }
+    };
+
+    room.on(RoomEvent.Disconnected, reportLiveKitDisconnect);
+    socket?.on("connect", onSocketConnect);
+
+    void connectLiveKitVoiceRoom(roomId, session.token, {
+      createRoom: () => room,
+    }).then(() => {
+      if (active) {
+        setVoiceConnectionState("connected");
+      } else {
+        void room.disconnect().catch((disconnectError: unknown) => {
+          console.error("[VoiceStage] Failed to disconnect after the room view closed:", disconnectError);
+        });
+      }
+    }).catch((error: unknown) => {
+      if (!active) return;
+      if (liveKitRoomRef.current === room) liveKitRoomRef.current = null;
+      setVoiceConnectionState("disconnected");
+      console.error("[VoiceStage] LiveKit room connection failed:", error);
+      showError(error instanceof Error ? error.message : "تعذر الاتصال بخدمة الصوت");
+    });
+
+    return () => {
+      active = false;
+      socket?.off("connect", onSocketConnect);
+      room.removeAllListeners();
+      if (liveKitRoomRef.current === room) liveKitRoomRef.current = null;
+      void room.disconnect().catch((error: unknown) => {
+        console.error("[VoiceStage] Failed to disconnect from LiveKit:", error);
+      });
+    };
+  }, [currentUser.id, isRoomReady, roomId, voiceProviderMode]);
+
   // تنظيف وإنهاء كافة اتصالات الصوت
   const stopAllAudio = useCallback(() => {
     // إيقاف هالة التحدث ومؤقتاتها
@@ -103,6 +229,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
 
     isInitiatingRef.current.clear();
     signalingQueuesRef.current.clear();
+    stagePeerIdsRef.current = null;
 
     // إيقاف مسار المايك المحلي
     if (localStreamRef.current) {
@@ -146,6 +273,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
       };
       pc.onconnectionstatechange = () => {
         console.log(`[VoiceStage] 🔗 Connection state with ${peerUserId}:`, pc?.connectionState);
+        if (peerConnectionsRef.current.get(peerUserId) !== pc) return;
         if (pc?.connectionState === "closed" || pc?.connectionState === "failed") {
           peerConnectionsRef.current.delete(peerUserId);
           iceCandidateQueuesRef.current.delete(peerUserId);
@@ -402,7 +530,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
                 socket?.emit("voice_stage:speaking", { roomId, isSpeaking: true });
               } else {
                 if (!speakingTimeoutRef.current) {
-                  speakingTimeoutRef.current = setTimeout(() => {
+                  speakingTimeoutRef.current = window.setTimeout(() => {
                     speakingStateRef.current = false;
                     speakingTimeoutRef.current = null;
                     setIsSpeakingUsers((prev) => {
@@ -460,19 +588,44 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
     if (!socket) return;
 
     // طلب المقاعد الحالية فور فتح الغرفة والاستماع الفوري للمتحدثين
-    socket.emit("voice_stage:get_seats", { roomId }, (res: any) => {
+    socket.emit("voice_stage:get_seats", { roomId }, (res: VoiceStageResponse) => {
       if (res?.success && isMountedRef.current) {
+        let provider: VoiceProviderMode;
+        try {
+          provider = parseVoiceProviderMode(res.provider);
+        } catch (error) {
+          console.error("[VoiceStage] Server returned an invalid voice provider:", error);
+          setVoiceConnectionState("disconnected");
+          showError("تعذر تحديد مزود الصوت");
+          return;
+        }
+
         setSeats(res.seats || []);
         if (res.maxSeats) setMaxSeats(res.maxSeats);
+        setVoiceProviderMode(provider);
+        voiceProviderModeRef.current = provider;
+        if (provider === "webrtc") setVoiceConnectionState("connected");
+        setIsRoomReady(true);
 
-        const amIOnStage = (res.seats || []).some((s: any) => s?.userId === currentUser.id);
-
-        // بدء الاستماع فوراً لأي متحدث موجود على الاستيج
-        (res.seats || []).forEach((seat: VoiceSeat | null) => {
-          if (seat && seat.userId && seat.userId !== currentUser.id) {
-            initiateCallToPeer(seat.userId, amIOnStage);
-          }
-        });
+        if (stagePeerIdsRef.current === null) {
+          const { stagePeerIds } = getNewlyJoinedStagePeers(
+            null,
+            res.seats || [],
+            currentUser.id,
+          );
+          stagePeerIdsRef.current = stagePeerIds;
+        }
+        if (provider === "webrtc") {
+          const currentSeats = (res.seats || []).filter(
+            (seat): seat is VoiceSeat => Boolean(seat?.userId && seat.userId !== currentUser.id),
+          );
+          const alreadyOnStage = (res.seats || []).some(
+            (seat) => seat?.userId === currentUser.id,
+          );
+          currentSeats.forEach((seat) => initiateCallToPeer(seat.userId, alreadyOnStage));
+        }
+      } else if (isMountedRef.current) {
+        showError(res?.message || "تعذر تحميل مقاعد الصوت");
       }
     });
 
@@ -481,8 +634,31 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
         setSeats(data.seats || []);
         if (data.maxSeats) setMaxSeats(data.maxSeats);
 
-        // هل أنا على الاستيج وفق بيانات المقاعد الحالية المؤكدة؟
-        const amIOnStage = (data.seats || []).some((s) => s?.userId === currentUser.id);
+        const { stagePeerIds, newlyJoinedPeerIds } = getNewlyJoinedStagePeers(
+          stagePeerIdsRef.current,
+          data.seats || [],
+          currentUser.id,
+        );
+        stagePeerIdsRef.current = stagePeerIds;
+
+        for (const peerId of newlyJoinedPeerIds) {
+          const pc = peerConnectionsRef.current.get(peerId);
+          if (pc) {
+            pc.close();
+            peerConnectionsRef.current.delete(peerId);
+            iceCandidateQueuesRef.current.delete(peerId);
+          }
+        }
+        const isUserOnStage = (data.seats || []).some(
+          (seat) => seat?.userId === currentUser.id,
+        );
+        if (voiceProviderModeRef.current === "webrtc") {
+          (data.seats || []).forEach((seat) => {
+            if (seat?.userId && seat.userId !== currentUser.id) {
+              initiateCallToPeer(seat.userId, isUserOnStage);
+            }
+          });
+        }
 
         const activeUsersOnStage = new Set(
           (data.seats || [])
@@ -496,7 +672,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
           let hasChanges = false;
           const next = new Map(prev);
           for (const peerId of next.keys()) {
-            if (!activeUsersOnStage.has(peerId)) {
+            if (!activeUsersOnStage.has(peerId) || newlyJoinedPeerIds.includes(peerId)) {
               next.delete(peerId);
               hasChanges = true;
             }
@@ -513,17 +689,12 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
           }
         });
 
-        // ربط الاتصال مع كل متحدث على الاستيج (للمستمعين وللمتحدثين)
-        (data.seats || []).forEach((seat) => {
-          if (seat && seat.userId && seat.userId !== currentUser.id) {
-            initiateCallToPeer(seat.userId, amIOnStage);
-          }
-        });
       }
     };
 
     // استقبال إشارات WebRTC (Offer / Answer / ICE Candidates) من الطرف الآخر بتسلسل محمي
     const onWebRTCSignal = (data: { roomId: string; fromUserId: string; signal: any }) => {
+      if (voiceProviderModeRef.current !== "webrtc") return;
       if (data.roomId !== roomId) return;
       const { fromUserId, signal } = data;
       if (!fromUserId || !signal) return;
@@ -613,6 +784,9 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
 
     const onKicked = (data: { roomId: string }) => {
       if (data.roomId === roomId && isMountedRef.current) {
+        void liveKitRoomRef.current?.localParticipant.setMicrophoneEnabled(false).catch((error: unknown) => {
+          console.error("[VoiceStage] Failed to stop the kicked participant's microphone:", error);
+        });
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach((t) => t.stop());
           localStreamRef.current = null;
@@ -699,31 +873,26 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
       showError("لا يوجد اتصال بالخادم");
       return;
     }
-
-    // 1. تفعيل المايك مسبقاً قبل إرسال الطلب للسيرفر لضمان وجود مسار الصوت
-    const stream = await startLocalMicrophone();
-    if (!stream) {
+    const room = liveKitRoomRef.current;
+    const provider = voiceProviderModeRef.current;
+    if (!provider) {
+      showError("انتظر تحميل إعدادات مزود الصوت");
+      return;
+    }
+    if (provider === "livekit" && (!room || room.state !== ConnectionState.Connected)) {
+      showError("انتظر اتصال خدمة الصوت قبل أخذ المقعد");
       return;
     }
 
-    // تنظيف اتصالات الاستماع السابقة للبدء باتصالات متحدثين نقية ثنائية الاتجاه
-    peerConnectionsRef.current.forEach((pc) => {
-      try { pc.close(); } catch {}
-    });
-    peerConnectionsRef.current.clear();
-    iceCandidateQueuesRef.current.clear();
-    setRemoteStreams(new Map());
+    if (provider === "webrtc") {
+      const stream = await startLocalMicrophone();
+      if (!stream) return;
 
-    // 2. فك قفل سياق الصوت التلقائي بالمتصفح
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        const dummy = new AudioCtx();
-        if (dummy.state === "suspended") {
-          dummy.resume();
-        }
-      }
-    } catch {}
+      peerConnectionsRef.current.forEach((connection) => connection.close());
+      peerConnectionsRef.current.clear();
+      iceCandidateQueuesRef.current.clear();
+      setRemoteStreams(new Map());
+    }
 
     let responded = false;
     const timeout = setTimeout(() => {
@@ -732,25 +901,51 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
       }
     }, 4000);
 
-    socket.emit("voice_stage:take_seat", { roomId, seatIndex }, async (res: any) => {
+    socket.emit("voice_stage:take_seat", { roomId, seatIndex }, async (res: VoiceStageResponse) => {
       responded = true;
       clearTimeout(timeout);
       if (res?.success) {
-        showSuccess(`صعدت على المقعد ${seatIndex + 1} بنجاح! 🎙️`);
         if (res.payload?.seats) {
           setSeats(res.payload.seats);
           if (res.payload.maxSeats) setMaxSeats(res.payload.maxSeats);
         }
-
-        // بدء الاتصال الصوتي مع بقية الأعضاء الموجودين مسبقاً على الاستيج
-        if (res.payload?.seats) {
-          res.payload.seats.forEach((seat: VoiceSeat | null) => {
-            if (seat && seat.userId && seat.userId !== currentUser.id) {
-              initiateCallToPeer(seat.userId, true);
+        try {
+          if (provider === "livekit") {
+            await room!.localParticipant.setMicrophoneEnabled(true);
+          } else {
+            const stream = await startLocalMicrophone();
+            if (!stream) {
+              socket.emit("voice_stage:leave_seat", { roomId });
+              return;
+            }
+            (res.payload?.seats || seats).forEach((seat) => {
+              if (seat?.userId && seat.userId !== currentUser.id) {
+                void initiateCallToPeer(seat.userId, true);
+              }
+            });
+          }
+          setIsSelfMuted(false);
+          isSelfMutedRef.current = false;
+          showSuccess(`صعدت على المقعد ${seatIndex + 1} بنجاح! 🎙️`);
+        } catch (error) {
+          console.error("[VoiceStage] Failed to publish microphone after taking a seat:", error);
+          socket.emit("voice_stage:leave_seat", { roomId });
+          showError("تم أخذ المقعد لكن تعذر تفعيل المايك؛ تحقق من إذن المتصفح");
+        }
+      } else {
+        if (provider === "webrtc") {
+          localStreamRef.current?.getTracks().forEach((track) => track.stop());
+          localStreamRef.current = null;
+          if (animFrameRef.current) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = null;
+          }
+          seats.forEach((seat) => {
+            if (seat?.userId && seat.userId !== currentUser.id) {
+              void initiateCallToPeer(seat.userId, false);
             }
           });
         }
-      } else {
         showError(res?.message || "تعذر الصعود على المقعد");
       }
     });
@@ -761,26 +956,32 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
     const socket = getSocket();
     if (!socket) return;
 
-    if (speakingTimeoutRef.current) {
-      clearTimeout(speakingTimeoutRef.current);
-      speakingTimeoutRef.current = null;
-    }
-    if (speakingStateRef.current) {
-      speakingStateRef.current = false;
-      socket.emit("voice_stage:speaking", { roomId, isSpeaking: false });
-    }
-
-    // 1. إيقاف المايك المحلي للمستخدم فقط
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
+    if (voiceProviderModeRef.current === "livekit") {
+      try {
+        await liveKitRoomRef.current?.localParticipant.setMicrophoneEnabled(false);
+      } catch (error) {
+        console.error("[VoiceStage] Failed to stop microphone before leaving the seat:", error);
+      }
+    } else {
+      if (speakingTimeoutRef.current) {
+        clearTimeout(speakingTimeoutRef.current);
+        speakingTimeoutRef.current = null;
+      }
+      if (speakingStateRef.current) {
+        speakingStateRef.current = false;
+        socket.emit("voice_stage:speaking", { roomId, isSpeaking: false });
+      }
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
-    }
-    if (analyserRef.current) {
       analyserRef.current = null;
-    }
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      peerConnectionsRef.current.forEach((connection) => connection.close());
+      peerConnectionsRef.current.clear();
+      iceCandidateQueuesRef.current.clear();
+      setRemoteStreams(new Map());
     }
     setIsSpeakingUsers((prev) => {
       const next = new Set(prev);
@@ -790,23 +991,18 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
     setIsSelfMuted(false);
     isSelfMutedRef.current = false;
 
-    // 2. تنظيف اتصالات التحدث السابقة للتحول إلى وضع المستمع النقي
-    peerConnectionsRef.current.forEach((pc) => {
-      try { pc.close(); } catch {}
-    });
-    peerConnectionsRef.current.clear();
-    iceCandidateQueuesRef.current.clear();
-    setRemoteStreams(new Map());
-
-    // 3. إشعار الخادم بالنزول من المقعد وإعادة الاتصال كمستمع
-    socket.emit("voice_stage:leave_seat", { roomId }, async (res: any) => {
+    socket.emit("voice_stage:leave_seat", { roomId }, async (res: VoiceStageResponse) => {
       if (res?.success) {
         showSuccess("تم النزول من المقعد - تستطيع مواصلة الاستماع 🎧");
-        (seats || []).forEach((seat) => {
-          if (seat && seat.userId && seat.userId !== currentUser.id) {
-            initiateCallToPeer(seat.userId, false);
-          }
-        });
+        if (voiceProviderModeRef.current === "webrtc") {
+          seats.forEach((seat) => {
+            if (seat?.userId && seat.userId !== currentUser.id) {
+              void initiateCallToPeer(seat.userId, false);
+            }
+          });
+        }
+      } else {
+        showError(res?.message || "تعذر النزول من المقعد");
       }
     });
   };
@@ -814,85 +1010,79 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
   // 4. كتم / إلغاء كتم مايك المتحدث لنفسه
   const handleToggleSelfMute = async () => {
     const nextMuted = !isSelfMuted;
-    setIsSelfMuted(nextMuted);
-    isSelfMutedRef.current = nextMuted;
-
-    if (nextMuted) {
-      if (speakingTimeoutRef.current) {
-        clearTimeout(speakingTimeoutRef.current);
-        speakingTimeoutRef.current = null;
-      }
-      if (speakingStateRef.current) {
-        speakingStateRef.current = false;
-        const socket = getSocket();
-        socket?.emit("voice_stage:speaking", { roomId, isSpeaking: false });
-      }
-      setIsSpeakingUsers((prev) => {
-        const next = new Set(prev);
-        next.delete(currentUser.id);
-        return next;
-      });
+    const socket = getSocket();
+    if (!socket) {
+      showError("لا يوجد اتصال بالخادم");
+      return;
     }
 
-    if (localStreamRef.current) {
-      let audioTracks = localStreamRef.current.getAudioTracks();
+    if (voiceProviderModeRef.current === "webrtc") {
+      let stream = localStreamRef.current;
+      if (!nextMuted && !stream) {
+        stream = await startLocalMicrophone();
+      }
+      if (!nextMuted && !stream) return;
 
-      // إذا كان المسار منتهياً أو متوقفاً عند إلغاء الكتم، نعيد جلب المايك لضمان عودة الصوت
-      if (!nextMuted && (audioTracks.length === 0 || audioTracks.some((t) => t.readyState === "ended"))) {
+      stream?.getAudioTracks().forEach((track) => {
+        track.enabled = !nextMuted;
+      });
+      setIsSelfMuted(nextMuted);
+      isSelfMutedRef.current = nextMuted;
+      if (nextMuted) {
+        setIsSpeakingUsers((current) => {
+          const next = new Set(current);
+          next.delete(currentUser.id);
+          return next;
+        });
+      }
+      socket.emit("voice_stage:toggle_mute", { roomId, isMuted: nextMuted });
+      return;
+    }
+
+    const room = liveKitRoomRef.current;
+    if (voiceProviderModeRef.current !== "livekit" || !room || room.state !== ConnectionState.Connected) {
+      showError("خدمة الصوت غير متصلة");
+      return;
+    }
+
+    if (nextMuted) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(false);
+        setIsSelfMuted(true);
+        isSelfMutedRef.current = true;
+      } catch (error) {
+        console.error("[VoiceStage] Failed to mute the LiveKit microphone:", error);
+        showError("تعذر كتم المايك");
+        return;
+      }
+    }
+
+    socket.emit("voice_stage:toggle_mute", { roomId, isMuted: nextMuted }, async (result: VoiceStageResponse) => {
+      if (!result?.success) {
+        showError(result?.message || "تعذر تحديث حالة المايك");
+        return;
+      }
+
+      if (!nextMuted) {
         try {
-          const freshStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-            video: false,
-          });
-          localStreamRef.current = freshStream;
-          audioTracks = freshStream.getAudioTracks();
-
-          if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-            try {
-              const source = audioContextRef.current.createMediaStreamSource(freshStream);
-              if (analyserRef.current) {
-                source.connect(analyserRef.current);
-              }
-            } catch {}
-          }
-        } catch (e) {
-          console.warn("[VoiceStage] Failed to re-acquire microphone stream on unmute:", e);
+          await room.localParticipant.setMicrophoneEnabled(true);
+        } catch (error) {
+          console.error("[VoiceStage] Failed to publish the LiveKit microphone:", error);
+          showError("تعذر تشغيل المايك؛ تحقق من إذن المتصفح");
+          return;
         }
       }
 
-      audioTracks.forEach((track) => {
-        track.enabled = !nextMuted;
-      });
-
-      // إيقاظ وبث المسار الصوتي فورياً على جميع الـ RTCRtpSenders
-      const activeTrack = audioTracks[0];
-      if (activeTrack) {
-        peerConnectionsRef.current.forEach((pc) => {
-          pc.getSenders().forEach((sender) => {
-            if (sender.track && sender.track.kind === "audio") {
-              sender.track.enabled = !nextMuted;
-              if (!nextMuted) {
-                sender.replaceTrack(activeTrack).catch(() => {});
-              }
-            }
-          });
+      setIsSelfMuted(nextMuted);
+      isSelfMutedRef.current = nextMuted;
+      if (nextMuted) {
+        setIsSpeakingUsers((current) => {
+          const next = new Set(current);
+          next.delete(currentUser.id);
+          return next;
         });
       }
-    }
-
-    // إيقاظ AudioContext عند إلغاء الكتم
-    if (!nextMuted && audioContextRef.current && audioContextRef.current.state === "suspended") {
-      audioContextRef.current.resume().catch(() => {});
-    }
-
-    const socket = getSocket();
-    if (socket) {
-      socket.emit("voice_stage:toggle_mute", { roomId, isMuted: nextMuted });
-    }
+    });
   };
 
   // 5. كتم شخص محدد محلياً من جهة المستمع فقط
@@ -970,6 +1160,26 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
           </span>
           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400">
             {seats.filter(Boolean).length} / {maxSeats} مقاعد
+          </span>
+          <span
+            role="status"
+            aria-live="polite"
+            className={`flex items-center gap-1 text-[10px] ${
+              voiceConnectionState === "connected" ? "text-emerald-400" : "text-amber-400"
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                voiceConnectionState === "connected" ? "bg-emerald-400" : "bg-amber-400"
+              }`}
+            />
+            {voiceConnectionState === "connected"
+              ? "متصل بخدمة الصوت"
+              : voiceConnectionState === "reconnecting"
+              ? "إعادة الاتصال بالصوت"
+              : voiceConnectionState === "connecting"
+              ? "جاري الاتصال بالصوت"
+              : "الصوت غير متصل"}
           </span>
         </div>
 
@@ -1152,11 +1362,12 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleToggleSelfMute}
+                  disabled={voiceConnectionState !== "connected"}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors ${
                     isSelfMuted
                       ? "bg-red-500 hover:bg-red-600 text-white"
                       : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                  }`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   {isSelfMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                   {isSelfMuted ? "المايك مكتوم (انقر للتحدث)" : "المايك مفتوح (تحدث الآن)"}

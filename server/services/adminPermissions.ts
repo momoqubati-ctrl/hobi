@@ -1,14 +1,20 @@
 import { getAdminContext } from "./adminAccess";
 import { H3Event, setResponseStatus } from "h3";
-import { hasPermission as engineHasPermission, PermissionKey } from "./permissionEngine";
+import { hasPermission as engineHasPermission } from "./permissionEngine";
+import type { PermissionKey } from "./permissionEngine";
+import { resolvePermissionKeys } from "./permissionActionResolver";
+import type { AdminPermission } from "./permissionActionResolver";
+import type { PoolClient } from "pg";
+import { isSystemOwnerUsername } from "./systemOwner";
+import { ApiError } from "../utils/apiError";
 
-export type AdminPermission = PermissionKey;
+export type { AdminPermission } from "./permissionActionResolver";
 
 /**
  * يتحقق مما إذا كان المشرف يملك صلاحية معينة
  */
-export const hasPermission = async (userId: string, permission: AdminPermission): Promise<boolean> => {
-  return engineHasPermission(userId, permission as any);
+export const hasPermission = async (userId: string, permission: PermissionKey): Promise<boolean> => {
+  return engineHasPermission(userId, permission);
 };
 
 /**
@@ -18,16 +24,23 @@ export const guardAdminAction = async (event: H3Event, permission: AdminPermissi
   const admin = getAdminContext(event);
   if (!admin.ok) {
     setResponseStatus(event, admin.statusCode);
-    throw new Error(admin.message);
+    throw new ApiError(admin.statusCode, admin.statusCode === 401 ? "UNAUTHORIZED" : "FORBIDDEN", admin.message);
   }
 
   // المالك يملك كل الصلاحيات
-  if (admin.role === "owner") return admin;
+  if (isSystemOwnerUsername(admin.username)) return admin;
 
-  const allowed = await hasPermission(admin.userId, permission);
+  const allowedPermissions = resolvePermissionKeys(permission, event.method);
+  let allowed = false;
+  for (const allowedPermission of allowedPermissions) {
+    if (await hasPermission(admin.userId, allowedPermission)) {
+      allowed = true;
+      break;
+    }
+  }
   if (!allowed) {
     setResponseStatus(event, 403);
-    throw new Error("لا تملك الصلاحية الكافية لتنفيذ هذا الإجراء");
+    throw new ApiError(403, "FORBIDDEN", "لا تملك الصلاحية الكافية لتنفيذ هذا الإجراء");
   }
 
   return admin;
@@ -41,11 +54,11 @@ export const logAdminAudit = async (params: {
   action: string;
   targetType?: string;
   targetId?: string;
-  metadata?: any;
-}) => {
-  const { dbPool } = await import("../db");
+  metadata?: Record<string, unknown>;
+}, options: { queryExecutor?: Pick<PoolClient, "query">; throwOnError?: boolean } = {}) => {
   try {
-    await dbPool.query(
+    const queryExecutor = options.queryExecutor ?? (await import("../db")).dbPool;
+    await queryExecutor.query(
       `INSERT INTO admin_audit_logs (actor_id, action, target_type, target_id, metadata)
        VALUES ((SELECT id FROM users WHERE CAST(idreg AS text) = $1 OR CAST(id AS text) = $2 OR CAST(uid AS text) = $2 LIMIT 1), $3, $4, $5, $6::jsonb)`,
       [
@@ -59,5 +72,6 @@ export const logAdminAudit = async (params: {
     );
   } catch (err) {
     console.error("Audit log error:", err);
+    if (options.throwOnError) throw err;
   }
 };

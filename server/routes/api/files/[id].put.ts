@@ -1,14 +1,16 @@
-import { defineEventHandler, readBody, getRouterParam, setResponseStatus } from "h3";
+import { readBody, getRouterParam, setResponseStatus } from "h3";
 import { renameFile } from "../../../services/fileService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const id = getRouterParam(event, "id");
   const body = await readBody(event);
-  const { userId, name } = body;
+  const userId = auth.userId;
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
 
-  if (!id || !userId || !name?.trim()) {
+  if (!id || !name) {
     setResponseStatus(event, 400);
-    return { success: false, message: "id, userId, name مطلوبون" };
+    return { success: false, message: "معرف الملف والاسم الجديد مطلوبان" };
   }
 
   try {

@@ -63,14 +63,6 @@ export default defineEventHandler(async (event) => {
   let likedRoomIds = new Set<string>();
   if (userId) {
     try {
-      await dbPool.query(`
-        CREATE TABLE IF NOT EXISTS "room_likes" (
-          "room_id" varchar(255) NOT NULL,
-          "user_id" varchar(255) NOT NULL,
-          "created_at" timestamptz DEFAULT now() NOT NULL,
-          PRIMARY KEY ("room_id", "user_id")
-        );
-      `);
       const likesResult = await dbPool.query(
         `SELECT room_id FROM room_likes WHERE user_id = $1`,
         [String(userId)]

@@ -3,8 +3,11 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useRealtimeStore } from '@/lib/realtime-store';
 import { getSocket } from '@/lib/socket';
+import { getAuthHeaders } from '@/lib/authSession';
 import { toast } from 'sonner';
 import { AlertReceivedPopup } from '@/components/profile/AlertReceivedPopup';
+import { startReconnectionManager } from '@/lib/reconnectionManager';
+import { browserAliveKeeper } from '@/lib/browserAliveKeeper';
 
 const PresenceEngine = () => {
   const [alerts, setAlerts] = useState<Array<{ id: string; open: boolean; fromUsername: string; fromAvatar: string; fromBanner: string; fromGiftIcon: string; fromPromotionIcon: string; fromAvatarFrame: string; message: string; timestamp: number }>>([]);
@@ -18,6 +21,9 @@ const PresenceEngine = () => {
       return {
         id: String(user?.id || "").trim(),
         username: String(user?.name || user?.username || "").trim(),
+        displayName: String(user?.displayName || user?.name || user?.username || "").trim(),
+        mentionName: String(user?.mentionName || "").trim(),
+        publicUserId: String(user?.publicUserId || "").trim(),
         profileMsg,
         statusMsg,
       };
@@ -42,6 +48,9 @@ const PresenceEngine = () => {
     const resolvedStatusMsg = String(user?.statusMsg || user?.profileMsg || hint.statusMsg || hint.profileMsg || "").trim();
     return {
       ...user,
+      displayName: user?.displayName || (matchesCurrentUser ? (hint.displayName || hint.username) : undefined),
+      mentionName: user?.mentionName !== undefined ? user.mentionName : (matchesCurrentUser ? hint.mentionName : undefined),
+      publicUserId: user?.publicUserId || (matchesCurrentUser ? hint.publicUserId : undefined),
       profileMsg: resolvedStatusMsg,
       statusMsg: resolvedStatusMsg,
     };
@@ -251,8 +260,13 @@ const PresenceEngine = () => {
   // Load all initial data once
   useEffect(() => {
     const socket = getSocket();
-    
-    const onConnect = () => {
+
+    // ── تشغيل مدير إعادة الاتصال مرة واحدة ─────────────────────────────────
+    startReconnectionManager();
+
+    // ── منع تجميد المتصفح (AudioContext + Web Locks + Heartbeat) ──────────
+    browserAliveKeeper.start();
+        const onConnect = () => {
       // Force refresh presence and rooms on reconnect
       fetchOnlineUsers(true);
       fetchRooms(true);
@@ -287,7 +301,9 @@ const PresenceEngine = () => {
       const rawUser = localStorage.getItem("user");
       if (rawUser) {
         const userId = JSON.parse(rawUser).id;
-        fetch(`/api/pm/unread?userId=${userId}`)
+        fetch(`/api/pm/unread?userId=${encodeURIComponent(userId)}`, {
+          headers: getAuthHeaders(),
+        })
           .then(r => r.json())
           .then(data => {
             if (data.success) setPmUnreadCount(data.count);
@@ -324,12 +340,15 @@ const PresenceEngine = () => {
       console.debug("[socket] user_status_update", new Date().toISOString(), data);
       if (!data?.userId && !data?.socketId) return;
       
-      const toMerge: any = {
+      const toMerge: Record<string, any> = {
         id: data.userId || "0",
         socketId: data.socketId,
-        username: data.username || "",
         role: data.role || "guest",
       };
+      if (data.username !== undefined) toMerge.username = data.username;
+      if (data.displayName) toMerge.displayName = data.displayName;
+      if (data.mentionName !== undefined) toMerge.mentionName = data.mentionName;
+      if (data.publicUserId !== undefined) toMerge.publicUserId = data.publicUserId;
       if (data.status !== undefined) toMerge.status = data.status;
       if (data.avatar !== undefined) toMerge.avatar = data.avatar;
       if (data.avatarUrl !== undefined && !toMerge.avatar) toMerge.avatar = data.avatarUrl;
@@ -342,24 +361,40 @@ const PresenceEngine = () => {
       mergeOnlineUser(hydratePresenceUser(toMerge));
     };
 
-    const onUserCountryUpdate = (data: { userId: string; socketId?: string; username?: string; role?: string; countryCode: string }) => {
+    const onUserCountryUpdate = (data: { userId: string; socketId?: string; username?: string; displayName?: string; mentionName?: string; publicUserId?: string; role?: string; countryCode: string }) => {
       if (!data?.userId && !data?.socketId) return;
-      mergeOnlineUser(hydratePresenceUser({
+      const toMerge: Record<string, any> = {
         id: data.userId || "0",
         socketId: data.socketId,
-        username: data.username || "",
-        role: data.role || "guest",
         countryCode: data.countryCode,
-      }));
+      };
+      if (data.username !== undefined) toMerge.username = data.username;
+      if (data.displayName) toMerge.displayName = data.displayName;
+      if (data.mentionName !== undefined) toMerge.mentionName = data.mentionName;
+      if (data.publicUserId !== undefined) toMerge.publicUserId = data.publicUserId;
+      if (data.role !== undefined) toMerge.role = data.role;
+      mergeOnlineUser(hydratePresenceUser(toMerge));
     };
 
     const onUserConnected = (data: any) => {
       console.debug("[socket] user_connected", new Date().toISOString(), data);
       if (data?.userId || data?.socketId || data?.username) {
+        const existingUsers = useRealtimeStore.getState().onlineUsers;
+        const existing = existingUsers.find((u: any) => 
+          (data.userId && String(u.id) === String(data.userId)) || 
+          (data.socketId && String(u.socketId) === String(data.socketId))
+        );
+        const resolvedDisplayName = (data.displayName && String(data.displayName).trim()) 
+          ? String(data.displayName).trim() 
+          : (existing?.displayName || data.username || "زائر");
+
         mergeOnlineUser(hydratePresenceUser({
           id: data.userId || "0",
           socketId: data.socketId,
           username: data.username || "زائر",
+          displayName: resolvedDisplayName,
+          mentionName: data.mentionName !== undefined ? data.mentionName : (existing?.mentionName || ""),
+          publicUserId: data.publicUserId !== undefined ? data.publicUserId : (existing?.publicUserId || ""),
           role: data.role || "guest",
           avatar: data.avatar || data.avatarUrl || "/pic.png",
           countryCode: data.countryCode || "SA",
@@ -406,6 +441,9 @@ const PresenceEngine = () => {
       // Only include fields present in data to avoid overwriting existing values with ""
       const update: Record<string, any> = { id: data.userId };
       if (data.username !== undefined) update.username = data.username;
+      if (data.displayName !== undefined) update.displayName = data.displayName;
+      if (data.mentionName !== undefined) update.mentionName = data.mentionName;
+      if (data.publicUserId !== undefined) update.publicUserId = data.publicUserId;
       if (data.avatar !== undefined || data.avatarUrl !== undefined) {
         update.avatar = data.avatar || data.avatarUrl;
         update.avatarUrl = data.avatar || data.avatarUrl;
@@ -434,7 +472,7 @@ const PresenceEngine = () => {
       // Update wall post author (avatar + display name + banner + icons)
       updateWallAuthorProfile(
         data.userId,
-        data.username,
+        data.displayName || data.username,
         data.avatar || data.avatarUrl,
         data.previousUsername,
         data.nameColor !== undefined ? data.nameColor : undefined,
@@ -570,7 +608,9 @@ const PresenceEngine = () => {
 
       // إذا كان المستخدم الحالي هو المستلم → جلب عدد غير المقروءة
       if (String(msg.receiverId) === String(currentUserId)) {
-        fetch(`/api/pm/unread?userId=${currentUserId}`)
+        fetch(`/api/pm/unread?userId=${encodeURIComponent(currentUserId)}`, {
+          headers: getAuthHeaders(),
+        })
           .then(r => r.json())
           .then(data => {
             if (data.success) setPmUnreadCount(data.count);
@@ -687,17 +727,37 @@ const PresenceEngine = () => {
       setAlerts((prev) => [...prev, newAlert]);
     };
 
-    const onMutedState = (data: { muted: boolean }) => {
+    const onMutedState = (data: { muted?: boolean; roomMuted?: boolean; roomId?: string }) => {
       console.log("[PresenceEngine] muted_state received:", data);
-      useRealtimeStore.getState().setIsMuted(data.muted);
-      try {
-        const rawUser = localStorage.getItem("user");
-        if (rawUser) {
-          const user = JSON.parse(rawUser);
-          user.muted = data.muted;
-          localStorage.setItem("user", JSON.stringify(user));
-        }
-      } catch {}
+      // الكتم العام (اختياري حتى لا تُبلش المحادثة عند فحوص كتم الغرفة فقط)
+      if (typeof data.muted === "boolean") {
+        useRealtimeStore.getState().setIsMuted(data.muted);
+        try {
+          const rawUser = localStorage.getItem("user");
+          if (rawUser) {
+            const user = JSON.parse(rawUser);
+            user.muted = data.muted;
+            localStorage.setItem("user", JSON.stringify(user));
+          }
+        } catch {}
+      }
+      // الكتم الغرفي: توثيقه محلياً (يرافق الحقل المتبقي من السيرفر مع رسائل الغرفة)
+      if (typeof data.roomMuted === "boolean") {
+        try {
+          const rawUser = localStorage.getItem("user");
+          if (rawUser) {
+            const user = JSON.parse(rawUser);
+            const roomMutedMap = (user.roomMutedRooms && typeof user.roomMutedRooms === "object") ? user.roomMutedRooms : {};
+            if (data.roomId) {
+              if (data.roomMuted) roomMutedMap[String(data.roomId)] = true;
+              else delete roomMutedMap[String(data.roomId)];
+            }
+            user.roomMuted = data.roomMuted;
+            user.roomMutedRooms = roomMutedMap;
+            localStorage.setItem("user", JSON.stringify(user));
+          }
+        } catch {}
+      }
     };
 
     const handleUserMuteUpdated = (e: any) => {
@@ -770,6 +830,9 @@ const PresenceEngine = () => {
       window.removeEventListener('mousemove', resetTimer);
       window.removeEventListener('keydown', resetTimer);
       clearTimeout(idleTimer);
+
+      // ── إيقاف BrowserAliveKeeper عند unmount ──────────────────────────
+      browserAliveKeeper.stop();
     };
   }, [
     setPresence, 

@@ -27,6 +27,12 @@ export type RequestedVoiceProviderSelection =
   | { provider: "webrtc"; accountId: null }
   | { provider: "livekit"; accountId: string };
 
+export interface VoiceProviderRuntimeConfig {
+  url: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
 export interface CreateVoiceProviderAccountInput {
   id: string;
   name: string;
@@ -46,6 +52,13 @@ export class VoiceProviderAccountNotFoundError extends Error {
   constructor() {
     super("Voice provider account was not found");
     this.name = "VoiceProviderAccountNotFoundError";
+  }
+}
+
+export class VoiceProviderCredentialsRequiredError extends Error {
+  constructor() {
+    super("Voice provider credentials are required when creating an account");
+    this.name = "VoiceProviderCredentialsRequiredError";
   }
 }
 
@@ -128,6 +141,74 @@ export function createVoiceProviderStore(database: VoiceProviderQueryExecutor = 
     };
   };
 
+  const createAccount = async (
+    input: CreateVoiceProviderAccountInput,
+  ): Promise<PublicVoiceProviderAccount> => {
+    const apiKey = encryptVoiceProviderSecret(input.apiKey);
+    const apiSecret = encryptVoiceProviderSecret(input.apiSecret);
+    const result = await database.query(
+      `INSERT INTO voice_provider_accounts
+         (id, name, url, api_key_encrypted, api_secret_encrypted)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+       RETURNING ${PUBLIC_ACCOUNT_COLUMNS}`,
+      [
+        input.id,
+        input.name,
+        input.url,
+        JSON.stringify(apiKey),
+        JSON.stringify(apiSecret),
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Voice provider account was not created");
+    return toPublicAccount(row);
+  };
+
+  const updateAccount = async (
+    accountId: string,
+    input: UpdateVoiceProviderAccountInput,
+  ): Promise<PublicVoiceProviderAccount | null> => {
+    const apiKey = input.apiKey === undefined
+      ? null
+      : JSON.stringify(encryptVoiceProviderSecret(input.apiKey));
+    const apiSecret = input.apiSecret === undefined
+      ? null
+      : JSON.stringify(encryptVoiceProviderSecret(input.apiSecret));
+    const result = await database.query(
+      `UPDATE voice_provider_accounts
+       SET name = $2,
+           url = $3,
+           api_key_encrypted = COALESCE($4::jsonb, api_key_encrypted),
+           api_secret_encrypted = COALESCE($5::jsonb, api_secret_encrypted),
+           updated_at = now()
+       WHERE id = $1
+       RETURNING ${PUBLIC_ACCOUNT_COLUMNS}`,
+      [accountId, input.name, input.url, apiKey, apiSecret],
+    );
+    const row = result.rows[0];
+    return row ? toPublicAccount(row) : null;
+  };
+
+  const putAccount = async (
+    accountId: string,
+    input: UpdateVoiceProviderAccountInput,
+  ): Promise<{ account: PublicVoiceProviderAccount; created: boolean }> => {
+    const existing = await updateAccount(accountId, input);
+    if (existing) return { account: existing, created: false };
+
+    if (input.apiKey === undefined || input.apiSecret === undefined) {
+      throw new VoiceProviderCredentialsRequiredError();
+    }
+
+    const account = await createAccount({
+      id: accountId,
+      ...input,
+      apiKey: input.apiKey,
+      apiSecret: input.apiSecret,
+    });
+    return { account, created: true };
+  };
+
   return {
     async listAccounts(): Promise<PublicVoiceProviderAccount[]> {
       const result = await database.query(
@@ -138,53 +219,11 @@ export function createVoiceProviderStore(database: VoiceProviderQueryExecutor = 
       return result.rows.map(toPublicAccount);
     },
 
-    async createAccount(
-      input: CreateVoiceProviderAccountInput,
-    ): Promise<PublicVoiceProviderAccount> {
-      const apiKey = encryptVoiceProviderSecret(input.apiKey);
-      const apiSecret = encryptVoiceProviderSecret(input.apiSecret);
-      const result = await database.query(
-        `INSERT INTO voice_provider_accounts
-           (id, name, url, api_key_encrypted, api_secret_encrypted)
-         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
-         RETURNING ${PUBLIC_ACCOUNT_COLUMNS}`,
-        [
-          input.id,
-          input.name,
-          input.url,
-          JSON.stringify(apiKey),
-          JSON.stringify(apiSecret),
-        ],
-      );
-      const row = result.rows[0];
-      if (!row) throw new Error("Voice provider account was not created");
-      return toPublicAccount(row);
-    },
+    createAccount,
 
-    async updateAccount(
-      accountId: string,
-      input: UpdateVoiceProviderAccountInput,
-    ): Promise<PublicVoiceProviderAccount | null> {
-      const apiKey = input.apiKey === undefined
-        ? null
-        : JSON.stringify(encryptVoiceProviderSecret(input.apiKey));
-      const apiSecret = input.apiSecret === undefined
-        ? null
-        : JSON.stringify(encryptVoiceProviderSecret(input.apiSecret));
-      const result = await database.query(
-        `UPDATE voice_provider_accounts
-         SET name = $2,
-             url = $3,
-             api_key_encrypted = COALESCE($4::jsonb, api_key_encrypted),
-             api_secret_encrypted = COALESCE($5::jsonb, api_secret_encrypted),
-             updated_at = now()
-         WHERE id = $1
-         RETURNING ${PUBLIC_ACCOUNT_COLUMNS}`,
-        [accountId, input.name, input.url, apiKey, apiSecret],
-      );
-      const row = result.rows[0];
-      return row ? toPublicAccount(row) : null;
-    },
+    updateAccount,
+
+    putAccount,
 
     async deleteAccount(accountId: string): Promise<boolean> {
       const result = await database.query(
@@ -197,6 +236,32 @@ export function createVoiceProviderStore(database: VoiceProviderQueryExecutor = 
     },
 
     getCredentials,
+
+    async getRuntimeConfig(): Promise<VoiceProviderRuntimeConfig | null> {
+      const result = await database.query(
+        `SELECT selection.provider,
+                selection.livekit_account_id,
+                account.url,
+                account.api_key_encrypted,
+                account.api_secret_encrypted
+         FROM voice_provider_selection AS selection
+         LEFT JOIN voice_provider_accounts AS account
+           ON account.id = selection.livekit_account_id
+         WHERE selection.id = 1`,
+      );
+      const row = result.rows[0];
+      if (!row || row.provider === "webrtc") return null;
+      if (row.provider !== "livekit") {
+        throw new Error("Stored voice provider selection is invalid");
+      }
+
+      requiredString(row, "livekit_account_id");
+      return {
+        url: requiredString(row, "url"),
+        apiKey: decryptVoiceProviderSecret(row.api_key_encrypted),
+        apiSecret: decryptVoiceProviderSecret(row.api_secret_encrypted),
+      };
+    },
 
     async getRequestedSelection(): Promise<RequestedVoiceProviderSelection> {
       const result = await database.query(

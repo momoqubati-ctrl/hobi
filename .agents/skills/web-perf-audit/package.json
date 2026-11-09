@@ -1,0 +1,20 @@
+{
+  "name": "web-perf-audit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web performance + RUM audit engine for the web-perf-audit Agent Skill. CrUX/PSI field data, Lighthouse lab analysis, response headers, static causes and chrome-devtools MCP traces — one ranked PERFORMANCE_AUDIT.md plus a phased PERFORMANCE_PLAN.md, with budget and per-deploy regression gates.",
+  "scripts": {
+    "audit": "node scripts/run.mjs",
+    "field": "node scripts/crux.mjs",
+    "lab": "node scripts/psi.mjs",
+    "budgets": "node scripts/budgets.mjs",
+    "compare": "node scripts/compare.mjs",
+    "selftest": "node scripts/selftest.mjs",
+    "validate": "python3 scripts/validate-report.py"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

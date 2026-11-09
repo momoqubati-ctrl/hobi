@@ -1,0 +1,175 @@
+import { defineEventHandler, setResponseStatus, setResponseHeader } from "h3";
+import { getAdminContext } from "../services/adminAccess";
+
+const DB_BROWSER_HTML = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تصفح قاعدة البيانات</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,sans-serif;background:#0f172a;color:#e2e8f0;padding:16px}
+h1{font-size:18px;margin-bottom:12px;color:#38bdf8}
+.topbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.topbar input{flex:1;min-width:120px;padding:8px 12px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#e2e8f0;font-size:13px}
+.topbar select{padding:8px 12px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#e2e8f0;font-size:13px}
+.topbar button,.topbar label{padding:8px 16px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#38bdf8;cursor:pointer;font-size:13px;font-weight:bold;white-space:nowrap}
+.topbar button:hover,.topbar label:hover{background:#334155}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#1e293b;color:#94a3b8;padding:10px 8px;text-align:left;position:sticky;top:0;white-space:nowrap;border-bottom:2px solid #334155;font-family:monospace}
+td{padding:8px;border-bottom:1px solid #1e293b;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1}
+tr:hover td{background:#1e293b}
+.error{color:#f87171;padding:12px;border:1px solid #f87171;border-radius:8px;margin-bottom:12px}
+.loading{text-align:center;padding:40px;color:#64748b}
+.pagination{display:flex;gap:8px;margin-top:12px;justify-content:center;align-items:center}
+.pagination button{padding:6px 14px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#38bdf8;cursor:pointer;font-size:12px}
+.pagination button:disabled{opacity:0.4;cursor:not-allowed}
+.pagination span{color:#94a3b8;font-size:13px}
+table.row-detail{width:auto;margin:12px 0}
+table.row-detail td{padding:6px 12px;border-bottom:1px solid #334155;white-space:normal;max-width:none}
+table.row-detail td:first-child{color:#94a3b8;font-weight:bold;white-space:nowrap}
+.row-expand{max-width:100%;white-space:normal !important;word-break:break-all}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:bold;background:#1e3a5f;color:#38bdf8}
+</style>
+</head>
+<body>
+<h1>&#128451; تصفح قاعدة البيانات</h1>
+<div class="topbar">
+  <input id="auth" placeholder="Admin Token / Password" type="password" />
+  <select id="tableSelect"><option value="">-- اختر جدول --</option></select>
+  <button onclick="loadTable()">&#8635; تحميل</button>
+  <label>&#128193; CSV <input type="file" id="csvFile" accept=".csv" style="display:none" onchange="importCSV()"/></label>
+  <label>&#128228; SQL <input type="file" id="sqlFile" accept=".sql" style="display:none" onchange="importSQL()"/></label>
+</div>
+<div id="info"></div>
+<div id="content"><div class="loading">اختر جدولًا من القائمة</div></div>
+
+<script>
+let currentTable='',page=0,limit=50;
+function getAuth(){return document.getElementById('auth').value||''}
+async function api(url,body){
+  const h={'Content-Type':'application/json'};
+  if(getAuth())h['Authorization']='Bearer '+getAuth();
+  const opts={headers:h};
+  if(body){opts.method='POST';opts.body=JSON.stringify(body);}
+  const r=await fetch(url,opts);
+  if(!r.ok){const t=await r.text();throw new Error(t);}
+  return r.json();
+}
+async function loadTables(){
+  try{
+    const d=await api('/api/admin/database');
+    const s=document.getElementById('tableSelect');
+    s.innerHTML='<option value="">-- اختر جدول --</option>';
+    (d.tables||[]).forEach(t=>{
+      const o=document.createElement('option');
+      o.value=t.name;o.textContent=t.name+' ('+t.rowCount+')';
+      s.appendChild(o);
+    });
+    s.onchange=()=>{if(s.value){currentTable=s.value;page=0;loadTable();}};
+  }catch(e){document.getElementById('info').innerHTML='<div class="error">'+e.message+'</div>';}
+}
+async function loadTable(){
+  currentTable=document.getElementById('tableSelect').value||currentTable;
+  if(!currentTable){return;}
+  try{
+    const d=await api('/api/admin/database?table='+encodeURIComponent(currentTable)+'&limit='+limit+'&offset='+(page*limit));
+    document.getElementById('info').innerHTML='<div style="margin-bottom:8px;color:#94a3b8;font-size:12px">الجدول: <b style="color:#38bdf8">'+d.selectedTable+'</b> | السجلات: <b>'+d.totalRows+'</b> | الصفحة: <b>'+(page+1)+'</b>/' + Math.ceil(d.totalRows/limit)+'</div>';
+    renderTable(d.columns||[],d.rows||[],d.primaryKey||'id');
+  }catch(e){document.getElementById('content').innerHTML='<div class="error">'+e.message+'</div>';}
+}
+function renderTable(cols,rows,pk){
+  if(!cols.length){document.getElementById('content').innerHTML='<div class="error">لا توجد أعمدة</div>';return;}
+  let h='<table><thead><tr><th>#</th>';
+  cols.forEach(c=>{h+='<th>'+c.name+' <span style="font-weight:normal;opacity:0.5">'+(c.type||'')+'</span></th>';});
+  h+='</tr></thead><tbody>';
+  if(!rows.length){h+='<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:24px">لا توجد بيانات</td></tr>';}
+  rows.forEach((r,i)=>{
+    h+='<tr onclick="toggleRow(this,\''+encodeURIComponent(JSON.stringify(r))+'\')" style="cursor:pointer"><td style="color:#64748b">'+((page*limit)+i+1)+'</td>';
+    cols.forEach(c=>{
+      const v=r[c.name];
+      const sv=v===null?'<span style="color:#475569">NULL</span>':String(v).length>80?String(v).slice(0,80)+'...':String(v);
+      h+='<td>'+sv+'</td>';
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  const totalPages=Math.ceil(rows.length/limit);
+  h+='<div class="pagination">';
+  h+='<button '+(page<=0?'disabled':'')+' onclick="page--;loadTable()">&#8594; السابق</button>';
+  h+='<span>صف '+((page*limit)+1)+'-'+Math.min((page+1)*limit,rows.length)+'</span>';
+  h+='<button onclick="page++;loadTable()">التالي &#8592;</button>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function toggleRow(tr,encoded){
+  const r=tr.nextElementSibling;
+  if(r&&r.classList.contains('detail-row')){r.remove();return;}
+  const data=JSON.parse(decodeURIComponent(encoded));
+  let h='<tr class="detail-row"><td colspan="99"><table class="row-detail">';
+  Object.entries(data).forEach(([k,v])=>{
+    h+='<tr><td>'+k+'</td><td>'+ (v===null?'<span style="color:#475569">NULL</span>':String(v).length>200?'<span class="row-expand">'+String(v)+'</span>':String(v))+'</td></tr>';
+  });
+  h+='</table></td></tr>';
+  tr.insertAdjacentHTML('afterend',h);
+}
+async function importCSV(){
+  const f=document.getElementById('csvFile').files[0];if(!f)return;
+  const text=await f.text();const lines=text.split('\\n').filter(l=>l.trim());
+  if(lines.length<2){alert('ملف CSV فارغ');return;}
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const vals=lines[i].match(/(".*?"|[^,]+)/g)||[];
+    const row={};headers.forEach((h,j)=>{row[h]=(vals[j]||'').replace(/"/g,'').trim();});
+    rows.push(row);
+  }
+  let ok=0,bad=0;
+  for(const row of rows){
+    try{await api('/api/admin/database?table='+encodeURIComponent(currentTable),row);ok++;}
+    catch(e){bad++;}
+  }
+  alert('تم: '+ok+' نجح، '+bad+' فشل');loadTable();
+}
+async function importSQL(){
+  const f=document.getElementById('sqlFile').files[0];if(!f)return;
+  const sql=await f.text();
+  try{
+    const r=await fetch('/api/admin/database',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getAuth()},body:JSON.stringify({sql})});
+    const d=await r.json();alert(d.message||'تم');loadTable();
+  }catch(e){alert('خطأ: '+e.message);}
+}
+loadTables();
+// Save auth to sessionStorage instead of persistent localStorage
+document.getElementById('auth').value=sessionStorage.getItem('db_auth')||'';
+document.getElementById('auth').onchange=function(){sessionStorage.setItem('db_auth',this.value);};
+</script>
+</body>
+</html>`;
+
+export default defineEventHandler((event) => {
+  const admin = getAdminContext(event);
+  const isDev = process.env.NODE_ENV !== "production";
+
+  // In production, database browser must NEVER be exposed publicly without verified owner auth
+  if (!isDev) {
+    if (!admin.ok || admin.role !== "owner") {
+      setResponseStatus(event, 403);
+      return "403 Forbidden: الوصول إلى متصفح قاعدة البيانات مقيد للمالك فقط.";
+    }
+  } else {
+    // In dev mode, require valid admin or owner token
+    if (!admin.ok) {
+      setResponseStatus(event, admin.statusCode || 401);
+      return "401 Unauthorized: يرجى تزويد توكن المشرف عبر ترويسة Authorization أو معامِل ?token=";
+    }
+  }
+
+  setResponseHeader(event, "Content-Type", "text/html; charset=utf-8");
+  setResponseHeader(event, "X-Frame-Options", "DENY");
+  setResponseHeader(event, "X-Content-Type-Options", "nosniff");
+  setResponseHeader(event, "Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+
+  return DB_BROWSER_HTML;
+});

@@ -26,7 +26,8 @@ import {
   Loader2,
   ChevronRight,
   Youtube,
-  Sparkles
+  Sparkles,
+  Megaphone
 } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,6 +35,9 @@ import { showSuccess, showError } from "@/utils/toast";
 import FrameSelector from "./FrameSelector";
 import MemberCardBgSelector from "./MemberCardBgSelector";
 import { SeatFrameSelector } from "./SeatFrameSelector";
+import AnnouncementComposer from "./AnnouncementComposer";
+import AnnouncementSoundSettings from "./AnnouncementSoundSettings";
+import { getAllowedAnnouncementTypes } from "@/lib/announcements";
 
 type PresenceStatus = "online" | "busy" | "away";
 
@@ -52,11 +56,15 @@ const SettingsPanel = () => {
   const [showFrameSelector, setShowFrameSelector] = useState(false);
   const [showSeatFrameSelector, setShowSeatFrameSelector] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showAnnouncementComposer, setShowAnnouncementComposer] = useState(false);
+  const userPermissions = useRealtimeStore((state) => state.userPermissions);
+  const canSendAnnouncement = getAllowedAnnouncementTypes(userPermissions).length > 0;
 
   const [newAvatar, setNewAvatar] = useState<string | null>(null);
   const [newCover, setNewCover] = useState<string | null>(null);
   const [newStatusMsg, setNewStatusMsg] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [newMentionName, setNewMentionName] = useState("");
   const [newNameColor, setNewNameColor] = useState("#000000");
   const [newMessageColor, setNewMessageColor] = useState("#000000");
   const [newStatusFontColor, setNewStatusFontColor] = useState("#000000");
@@ -65,12 +73,10 @@ const SettingsPanel = () => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
-  // Load current manual status from sessionStorage
-  const [activeStatus, setActiveStatus] = useState<PresenceStatus>(() => {
-    const stored = sessionStorage.getItem("manualStatus");
-    if (stored === "busy" || stored === "away") return stored;
-    return "online";
-  });
+  // Sync manual status with the shared realtime store
+  const myManualStatus = useRealtimeStore((state) => state.myManualStatus);
+  const setMyManualStatus = useRealtimeStore((state) => state.setMyManualStatus);
+  const activeStatus: PresenceStatus = (myManualStatus === "busy" || myManualStatus === "away") ? myManualStatus : "online";
 
   const currentUser = React.useMemo(() => {
     try {
@@ -103,6 +109,7 @@ const SettingsPanel = () => {
         messageColor: typeof user.messageColor === "string" && user.messageColor.trim() ? user.messageColor : "#000000",
         statusFontColor: typeof user.statusFontColor === "string" && user.statusFontColor.trim() ? user.statusFontColor : "#000000",
         youtubeUrl: typeof user.youtubeUrl === "string" ? user.youtubeUrl : "",
+        mentionName: typeof user.mentionName === "string" ? user.mentionName : "",
       };
     } catch {
       return null;
@@ -114,7 +121,10 @@ const SettingsPanel = () => {
     setNewCover(null);
     const isPlaceholder = currentUser?.statusMsg === "(عضو جديد)" || currentUser?.statusMsg === "( غير مسجل )" || currentUser?.profileMsg === "(عضو جديد)" || currentUser?.profileMsg === "( غير مسجل )";
     setNewStatusMsg(isPlaceholder ? "" : currentUser?.statusMsg || currentUser?.profileMsg || "");
-    setNewDisplayName(currentUser?.name || "");
+    const onlineUsersList = useRealtimeStore.getState().onlineUsers;
+    const onlineMe = onlineUsersList.find((u: any) => String(u.id) === String(currentUser?.id));
+    setNewDisplayName(currentUser?.displayName || currentUser?.name || (onlineMe as any)?.displayName || "");
+    setNewMentionName(currentUser?.mentionName || (onlineMe as any)?.mentionName || "");
     setNewNameColor(currentUser?.nameColor || "#000000");
     setNewMessageColor(currentUser?.messageColor || "#000000");
     setNewStatusFontColor(currentUser?.statusFontColor || "#000000");
@@ -180,6 +190,7 @@ const SettingsPanel = () => {
           cover: newCover,
           profileMsg: newStatusMsg,
           displayName: newDisplayName.trim() || undefined,
+          mentionName: newMentionName.trim() || "",
           nameColor: newNameColor,
           messageColor: newMessageColor,
           statusFontColor: newStatusFontColor,
@@ -230,6 +241,12 @@ const SettingsPanel = () => {
           }
           if (data.displayName) {
             user.name = data.displayName;
+            user.displayName = data.displayName;
+          }
+          if (data.updates?.mentionName !== undefined) {
+            user.mentionName = data.updates.mentionName;
+          } else if (newMentionName.trim()) {
+            user.mentionName = newMentionName.trim();
           }
           if (data.nameColor) {
             user.nameColor = data.nameColor;
@@ -254,6 +271,7 @@ const SettingsPanel = () => {
           socket.emit("profile_update", {
             avatar: normalizedAvatar || undefined,
             displayName: data.displayName || undefined,
+            mentionName: newMentionName.trim() || undefined,
             cover: normalizedCover || undefined,
             ...(data.updates?.profileMsg !== undefined ? { profileMsg: data.updates.profileMsg } : {}),
             ...(data.nameColor ? { nameColor: data.nameColor } : {}),
@@ -319,16 +337,9 @@ const SettingsPanel = () => {
   };
 
   const handleStatusChange = (status: PresenceStatus) => {
-    setActiveStatus(status);
+    setMyManualStatus(status === "online" ? null : status);
     const socket = getSocket();
-
-    if (status === "online") {
-      // Clear manual status → revert to automatic idle detection
-      sessionStorage.removeItem("manualStatus");
-      socket.emit("status_update", { status: "online" });
-    } else {
-      // Set manual status (busy or away) → persists for the session
-      sessionStorage.setItem("manualStatus", status);
+    if (socket) {
       socket.emit("status_update", { status });
     }
   };
@@ -422,6 +433,28 @@ const SettingsPanel = () => {
               className="rounded-xl border-border bg-muted/50 text-xs font-bold"
               maxLength={40}
             />
+          </div>
+
+          {/* Mention Name (@) */}
+          <div className="space-y-2">
+            <Label htmlFor="mentionName" className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+              <span>اسم المنشن (@)</span>
+              <span className="text-[10px] text-muted-foreground/80 font-normal">للإشارة إليك في الغرف والمحادثات</span>
+            </Label>
+            <div className="relative">
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-bold font-mono">@</span>
+              <Input
+                id="mentionName"
+                type="text"
+                placeholder="مثال: james"
+                value={newMentionName}
+                onChange={(e) => setNewMentionName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                className="rounded-xl border-border bg-muted/50 text-xs font-bold font-mono pr-7 text-right"
+                maxLength={32}
+                dir="ltr"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">يظهر للمستخدمين كاسم إشارة معتمد (اتركه فارغاً إن كنت لا تريده)</p>
           </div>
 
           {/* Status Message Msg */}
@@ -648,7 +681,24 @@ const SettingsPanel = () => {
         </p>
       </div>
 
-      {/* Theme Toggle */}
+        {canSendAnnouncement && (
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-muted-foreground px-2 uppercase tracking-wider">الإعلانات</h4>
+            <SettingsItem
+              icon={<Megaphone size={20} className="text-primary" />}
+              label="إرسال إعلان"
+              onClick={() => setShowAnnouncementComposer(true)}
+            />
+            <AnnouncementComposer
+              open={showAnnouncementComposer}
+              onOpenChange={setShowAnnouncementComposer}
+            />
+          </div>
+        )}
+
+      <AnnouncementSoundSettings />
+
+        {/* Theme Toggle */}
       <div className="space-y-3">
         <h4 className="text-xs font-bold text-muted-foreground px-2 uppercase tracking-wider">المظهر</h4>
         <button 

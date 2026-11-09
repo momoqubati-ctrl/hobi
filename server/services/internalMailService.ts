@@ -1,18 +1,79 @@
 import { dbPool } from "../db";
 
+type IdentityQueryResult = {
+  rows: Array<{ user_id?: string; identity_key?: string }>;
+};
+type IdentityQuery = (sql: string, params: string[]) => Promise<IdentityQueryResult>;
+
+const queryIdentity: IdentityQuery = (sql, params) => dbPool.query(sql, params);
+
+export async function resolveInternalMailUserId(
+  inputId: string,
+  query: IdentityQuery = queryIdentity,
+): Promise<string> {
+  const result = await query(
+    `SELECT DISTINCT u.id::text AS user_id
+     FROM users u
+     WHERE u.id::text = $1 OR u.uid::text = $1 OR u.idreg::text = $1`,
+    [inputId],
+  );
+  const userIds = [...new Set(result.rows.map((row) => row.user_id).filter(
+    (userId): userId is string => typeof userId === "string" && userId.length > 0,
+  ))];
+  if (userIds.length !== 1) {
+    throw new Error(userIds.length === 0
+      ? "Unknown internal mail participant"
+      : "Ambiguous internal mail participant");
+  }
+  return userIds[0];
+}
+
+async function getMailIdentityKeys(
+  userId: string,
+  query: IdentityQuery = queryIdentity,
+): Promise<string[]> {
+  const account = await query(
+    "SELECT id::text AS user_id FROM users WHERE id::text = $1",
+    [userId],
+  );
+  if (account.rows.length !== 1 || account.rows[0].user_id !== userId) {
+    throw new Error("Unknown internal mail account");
+  }
+
+  const legacyKeys = await query(
+    `SELECT candidate.identity_key
+     FROM (
+       SELECT uid::text AS identity_key FROM users
+       WHERE id::text = $1 AND uid IS NOT NULL AND uid::text <> ''
+       UNION
+       SELECT idreg::text AS identity_key FROM users
+       WHERE id::text = $1 AND idreg IS NOT NULL AND idreg::text <> ''
+     ) candidate
+     WHERE (
+       SELECT COUNT(DISTINCT matched.id)
+       FROM users matched
+       WHERE matched.id::text = candidate.identity_key
+          OR matched.uid::text = candidate.identity_key
+          OR matched.idreg::text = candidate.identity_key
+     ) = 1`,
+    [userId],
+  );
+  return [...new Set([
+    userId,
+    ...legacyKeys.rows
+      .map((row) => row.identity_key)
+      .filter((key): key is string => typeof key === "string" && key.length > 0),
+  ])];
+}
+
 export const sendMail = async (senderId: string, recipientId: string, body: string) => {
   if (!body.trim()) throw new Error("نص الرسالة فارغ");
 
+  const [canonicalSenderId, canonicalRecipientId] = await Promise.all([
+    resolveInternalMailUserId(senderId),
+    resolveInternalMailUserId(recipientId),
+  ]);
   const subject = body.length > 100 ? body.slice(0, 100) + "..." : body;
-
-  const result = await dbPool.query(
-    `INSERT INTO internal_mail (sender_id, recipient_id, subject, body)
-     VALUES ($1, $2, $3, $4)
-     RETURNING *`,
-    [senderId, recipientId, subject, body],
-  );
-
-  const row = result.rows[0];
 
   const senderRes = await dbPool.query(
     `SELECT COALESCE(NULLIF(u.topic,''), NULLIF(u.username,'')) as name, u.pic as avatar,
@@ -22,8 +83,8 @@ export const sendMail = async (senderId: string, recipientId: string, body: stri
             (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as role_icon_url
      FROM users u
      LEFT JOIN user_profiles up ON up.user_id = u.id
-     WHERE u.id = $1 OR u.uid = $1 OR u.idreg::text = $1 LIMIT 1`,
-    [senderId],
+     WHERE u.id::text = $1`,
+    [canonicalSenderId],
   );
   const recipientRes = await dbPool.query(
     `SELECT COALESCE(NULLIF(u.topic,''), NULLIF(u.username,'')) as name, u.pic as avatar,
@@ -33,17 +94,28 @@ export const sendMail = async (senderId: string, recipientId: string, body: stri
             (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as role_icon_url
      FROM users u
      LEFT JOIN user_profiles up ON up.user_id = u.id
-     WHERE u.id = $1 OR u.uid = $1 OR u.idreg::text = $1 LIMIT 1`,
-    [recipientId],
+     WHERE u.id::text = $1`,
+    [canonicalRecipientId],
   );
 
   const senderUser = senderRes.rows[0];
   const recipientUser = recipientRes.rows[0];
+  if (!senderUser || !recipientUser) {
+    throw new Error("Internal mail participant no longer exists");
+  }
+
+  const result = await dbPool.query(
+    `INSERT INTO internal_mail (sender_id, recipient_id, subject, body)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [canonicalSenderId, canonicalRecipientId, subject, body],
+  );
+  const row = result.rows[0];
 
   return {
     id: String(row.id),
-    senderId: row.sender_id,
-    recipientId: row.recipient_id,
+    senderId: canonicalSenderId,
+    recipientId: canonicalRecipientId,
     subject: row.subject,
     body: row.body,
     readAt: row.read_at ? new Date(row.read_at).toISOString() : null,
@@ -68,6 +140,7 @@ export const sendMail = async (senderId: string, recipientId: string, body: stri
 };
 
 export const getInbox = async (userId: string) => {
+  const identityKeys = await getMailIdentityKeys(userId);
   const mails = await dbPool.query(
     `SELECT im.*,
             COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as sender_name,
@@ -79,11 +152,11 @@ export const getInbox = async (userId: string) => {
             up.gifted_promotion_icon_url as sender_gifted_promotion_icon_url,
             (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as sender_role_icon_url
      FROM internal_mail im
-     LEFT JOIN users u ON u.id = im.sender_id OR u.uid = im.sender_id OR u.idreg::text = im.sender_id
+     LEFT JOIN users u ON u.id::text = im.sender_id
      LEFT JOIN user_profiles up ON up.user_id = u.id
-     WHERE im.recipient_id = $1
+     WHERE im.recipient_id = ANY($1::text[])
      ORDER BY im.created_at DESC`,
-    [userId],
+    [identityKeys],
   );
 
   return mails.rows.map((row: any) => ({
@@ -106,6 +179,7 @@ export const getInbox = async (userId: string) => {
 };
 
 export const getOutbox = async (userId: string) => {
+  const identityKeys = await getMailIdentityKeys(userId);
   const mails = await dbPool.query(
     `SELECT im.*,
             COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as recipient_name,
@@ -116,11 +190,11 @@ export const getOutbox = async (userId: string) => {
             up.gifted_promotion_icon_url as recipient_gifted_promotion_icon_url,
             (SELECT r.icon_url FROM user_role_assignments ura JOIN roles r ON r.id = ura.role_id AND r.is_active = true WHERE ura.user_id = u.id ORDER BY r.rank DESC LIMIT 1) as recipient_role_icon_url
      FROM internal_mail im
-     LEFT JOIN users u ON u.id = im.recipient_id OR u.uid = im.recipient_id OR u.idreg::text = im.recipient_id
+     LEFT JOIN users u ON u.id::text = im.recipient_id
      LEFT JOIN user_profiles up ON up.user_id = u.id
-     WHERE im.sender_id = $1
+     WHERE im.sender_id = ANY($1::text[])
      ORDER BY im.created_at DESC`,
-    [userId],
+    [identityKeys],
   );
 
   return mails.rows.map((row: any) => ({
@@ -142,25 +216,28 @@ export const getOutbox = async (userId: string) => {
 };
 
 export const markAsRead = async (mailId: string, userId: string) => {
+  const identityKeys = await getMailIdentityKeys(userId);
   await dbPool.query(
     `UPDATE internal_mail SET read_at = now()
-     WHERE id = $1 AND recipient_id = $2 AND read_at IS NULL`,
-    [mailId, userId],
+     WHERE id = $1 AND recipient_id = ANY($2::text[]) AND read_at IS NULL`,
+    [mailId, identityKeys],
   );
 };
 
 export const deleteMail = async (mailId: string, userId: string) => {
+  const identityKeys = await getMailIdentityKeys(userId);
   await dbPool.query(
     `DELETE FROM internal_mail
-     WHERE id = $1 AND (sender_id = $2 OR recipient_id = $2)`,
-    [mailId, userId],
+     WHERE id = $1 AND (sender_id = ANY($2::text[]) OR recipient_id = ANY($2::text[]))`,
+    [mailId, identityKeys],
   );
 };
 
 export const getUnreadCount = async (userId: string) => {
+  const identityKeys = await getMailIdentityKeys(userId);
   const result = await dbPool.query(
-    "SELECT COUNT(*)::int as count FROM internal_mail WHERE recipient_id = $1 AND read_at IS NULL",
-    [userId],
+    "SELECT COUNT(*)::int as count FROM internal_mail WHERE recipient_id = ANY($1::text[]) AND read_at IS NULL",
+    [identityKeys],
   );
   return result.rows[0].count;
 };

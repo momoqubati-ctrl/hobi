@@ -5,6 +5,7 @@ import { X, Check, Loader2, Image, Palette } from "lucide-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import { canUseVisualResource } from "../admin/powers/permissionDefs";
 
 interface Theme {
   id: string;
@@ -30,6 +31,9 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"color" | "image">("color");
   const [customColor, setCustomColor] = useState("#000000");
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canUseColor = canUseVisualResource(permissions, "custombg");
+  const canUseImage = canUseVisualResource(permissions, "chattem");
 
   const getAuthHeaders = () => ({
     Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
@@ -38,6 +42,7 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
 
   useEffect(() => {
     const currentUser = JSON.parse(localStorage.getItem("user") || "null");
+    const preferredTab = currentUser?.memberCardBgUrl?.startsWith("#") ? "color" : "image";
     if (currentUser?.memberCardBgUrl) {
       setSelectedBg(currentUser.memberCardBgUrl);
       if (currentUser.memberCardBgUrl.startsWith("#")) {
@@ -47,6 +52,7 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
         setTab("image");
       }
     }
+    setTab(preferredTab);
     fetch("/api/member-card-themes")
       .then((res) => res.json())
       .then((data) => {
@@ -57,6 +63,10 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
   }, []);
 
   const saveBg = async (bgUrl: string) => {
+    const canSave = bgUrl
+      ? bgUrl.startsWith("#") ? canUseColor : canUseImage
+      : selectedBg.startsWith("#") ? canUseColor : canUseImage;
+    if (!canSave) return;
     setSaving(true);
     try {
       const res = await fetch("/api/user/member-card-bg", {
@@ -92,14 +102,17 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
   };
 
   const handleColorSelect = (color: string) => {
+    if (!canUseColor) return;
     saveBg(color);
   };
 
   const handleImageSelect = (url: string) => {
+    if (!canUseImage) return;
     saveBg(url);
   };
 
   const handleRemove = () => {
+    if (selectedBg.startsWith("#") ? !canUseColor : !canUseImage) return;
     saveBg("");
   };
 
@@ -113,28 +126,38 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-muted rounded-lg p-1">
-        <button
-          onClick={() => setTab("color")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition ${
-            tab === "color" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Palette size={14} />
-          لون ثابت
-        </button>
-        <button
-          onClick={() => setTab("image")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition ${
-            tab === "image" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Image size={14} />
-          صورة
-        </button>
-      </div>
+      {(canUseColor || canUseImage) && (
+        <div className="flex gap-1 bg-muted rounded-lg p-1">
+          {canUseColor && (
+            <button
+              onClick={() => setTab("color")}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition ${
+                tab === "color" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Palette size={14} />
+              لون ثابت
+            </button>
+          )}
+          {canUseImage && (
+            <button
+              onClick={() => setTab("image")}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition ${
+                tab === "image" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Image size={14} />
+              صورة
+            </button>
+          )}
+        </div>
+      )}
 
-      {tab === "color" ? (
+      {!canUseColor && !canUseImage ? (
+        <p role="status" className="py-8 text-center text-xs text-muted-foreground">
+          لا تملك صلاحية تغيير خلفية بطاقة العضو
+        </p>
+      ) : tab === "color" && canUseColor ? (
         <div className="space-y-3">
           <div className="grid grid-cols-8 gap-2">
             {PRESET_COLORS.map((color) => (
@@ -175,7 +198,7 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
             </button>
           </div>
         </div>
-      ) : (
+      ) : canUseImage ? (
         <div>
           {loading ? (
             <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -210,9 +233,9 @@ const MemberCardBgSelector = ({ onClose }: MemberCardBgSelectorProps) => {
             </div>
           )}
         </div>
-      )}
+      ) : null}
 
-      {selectedBg && (
+      {selectedBg && (selectedBg.startsWith("#") ? canUseColor : canUseImage) && (
         <div className="flex justify-center">
           <button
             onClick={handleRemove}

@@ -1,0 +1,26 @@
+{
+  "/": {
+    "url": "https://example.com/",
+    "status": 200,
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=0, must-revalidate",
+      "x-vercel-cache": "MISS"
+    },
+    "redirects": [
+      {
+        "from": "http://example.com/",
+        "to": "https://example.com/",
+        "status": 308
+      }
+    ],
+    "bytes": 68000,
+    "ttfbMs": 2100,
+    "ttfbSamples": [
+      2100,
+      2240,
+      2180
+    ],
+    "error": null
+  }
+}

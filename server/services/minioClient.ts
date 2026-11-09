@@ -14,7 +14,12 @@ const MINIO_PUBLIC_URL = process.env.MINIO_PUBLIC_URL || defaultPublicUrl;
 let client: Client | null = null;
 let enabled = false;
 
-export const isMinioEnabled = () => enabled;
+export const isMinioEnabled = () => {
+  if (!client) {
+    getMinioClient();
+  }
+  return enabled;
+};
 
 export const getMinioClient = (): Client | null => {
   if (!client) {

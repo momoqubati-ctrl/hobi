@@ -1,184 +1,161 @@
 import { dbPool } from "../db";
+import {
+  EphemeralPrivateMessageStore,
+  type EphemeralPmSession,
+  type EphemeralPmUser,
+} from "./ephemeralPrivateMessageStore";
 
-const buildConversationId = (a: string, b: string) =>
-  [a, b].sort().join(":");
+type Queryable = Pick<typeof dbPool, "query">;
 
-/**
- * يوحّد معرّف المستخدم إلى uid النصي لأنه:
- * 1) يطابق localStorage.user.id المُستخدم في الواجهة
- * 2) يطابق ما يتم تخزينه في private_messages.sender_id / receiver_id
- * 3) ثابت ولا يتغير بين تسجيلات الدخول
- *
- * يقبل أي شكل من المعرّف (uid, id uuid, idreg) ويُرجع uid دائماً.
- */
-const resolveUserKey = async (rawId: string): Promise<string> => {
+export class PrivateMessageIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PrivateMessageIdentityError";
+  }
+}
+
+export type PrivateMessageIdentity = {
+  id: string;
+  uid: string;
+  storageKey: string;
+};
+
+export type PrivateMessageUser = EphemeralPmUser & {
+  nameColor: string;
+  messageColor: string;
+};
+
+const getSharedStore = (): EphemeralPrivateMessageStore => {
+  const proc = (typeof process !== "undefined" ? process : {}) as any;
+  const glob = (typeof globalThis !== "undefined" ? globalThis : {}) as any;
+  const nodeGlob = (typeof global !== "undefined" ? global : {}) as any;
+
+  const existing =
+    proc.__hobiEphemeralPrivateMessageStore__ ||
+    glob.__hobiEphemeralPrivateMessageStore__ ||
+    nodeGlob.__hobiEphemeralPrivateMessageStore__;
+
+  if (existing) {
+    Object.setPrototypeOf(existing, EphemeralPrivateMessageStore.prototype);
+    proc.__hobiEphemeralPrivateMessageStore__ = existing;
+    glob.__hobiEphemeralPrivateMessageStore__ = existing;
+    nodeGlob.__hobiEphemeralPrivateMessageStore__ = existing;
+    return existing;
+  }
+
+  const store = new EphemeralPrivateMessageStore();
+  proc.__hobiEphemeralPrivateMessageStore__ = store;
+  glob.__hobiEphemeralPrivateMessageStore__ = store;
+  nodeGlob.__hobiEphemeralPrivateMessageStore__ = store;
+  return store;
+};
+
+export const privateMessageStore = new Proxy({} as EphemeralPrivateMessageStore, {
+  get(_target, prop, receiver) {
+    const store = getSharedStore() as any;
+    const value = Reflect.get(store, prop, receiver);
+    return typeof value === "function" ? value.bind(store) : value;
+  },
+  set(_target, prop, value, receiver) {
+    const store = getSharedStore() as any;
+    return Reflect.set(store, prop, value, receiver);
+  },
+});
+
+export const isEphemeralPrivateMessagingEnabled = (
+  environment: NodeJS.ProcessEnv = process.env,
+) => {
+  if (environment.SOCKET_SHARD_ID?.trim()) return false;
+  return environment.NODE_ENV !== "production" ||
+    environment.PM_EPHEMERAL_SINGLE_PROCESS === "true";
+};
+
+export const registerPrivateMessageSession = (session: EphemeralPmSession): boolean =>
+  isEphemeralPrivateMessagingEnabled() && privateMessageStore.registerSession(session);
+
+export const endPrivateMessageSession = (
+  sessionId: string,
+  reason: "logout" | "expired" = "logout",
+) => privateMessageStore.endSession(sessionId, reason);
+
+export const resolveUserIdentity = async (
+  rawId: string,
+  database: Queryable = dbPool,
+): Promise<PrivateMessageIdentity | null> => {
   const id = String(rawId || "").trim();
-  if (!id) return id;
-  const res = await dbPool.query(
-    `SELECT uid, id::text AS id FROM users
-     WHERE uid = $1 OR id::text = $1 OR idreg::text = $1 OR lower(username) = lower($1)
-     LIMIT 1`,
+  if (!id) return null;
+
+  const identityResult = await database.query(
+    `SELECT id::text AS id, uid::text AS uid
+     FROM users
+     WHERE id::text = $1
+        OR uid::text = $1
+        OR idreg::text = $1
+        OR lower(username) = lower($1)`,
     [id],
   );
-  if (res.rows[0]) {
-    return String(res.rows[0].uid || res.rows[0].id || id);
+
+  if (identityResult.rows.length > 1) {
+    throw new PrivateMessageIdentityError("User identifier is ambiguous");
   }
-  return id;
+  const user = identityResult.rows[0];
+  if (!user) return null;
+
+  const accountId = String(user.id || "");
+  const uid = String(user.uid || accountId);
+  if (!accountId) {
+    throw new PrivateMessageIdentityError("Resolved user has no internal account ID");
+  }
+
+  return { id: accountId, uid, storageKey: uid };
 };
 
-export const sendPrivateMessage = async (
-  senderId: string,
-  receiverId: string,
-  body: string,
-) => {
-  if (!body.trim()) throw new Error("الرسالة فارغة");
+export const resolvePrivateMessageUser = async (
+  userId: string,
+  database: Queryable = dbPool,
+): Promise<PrivateMessageUser | null> => {
+  const normalizedId = String(userId || "").trim();
+  if (!normalizedId) return null;
 
-  // توحيد المعرّفين إلى uid لضمان تطابقها مع localStorage
-  const normalizedSender = await resolveUserKey(senderId);
-  const normalizedReceiver = await resolveUserKey(receiverId);
-
-  const conversationId = buildConversationId(normalizedSender, normalizedReceiver);
-
-  const result = await dbPool.query(
-    `INSERT INTO private_messages (conversation_id, sender_id, receiver_id, body)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, conversation_id, sender_id, receiver_id, body, read_at, created_at`,
-    [conversationId, normalizedSender, normalizedReceiver, body],
-  );
-
-  const row = result.rows[0];
-  return {
-    id: String(row.id),
-    conversationId: row.conversation_id,
-    senderId: row.sender_id,
-    receiverId: row.receiver_id,
-    body: row.body,
-    readAt: row.read_at,
-    createdAt: row.created_at,
-  };
-};
-
-export const getConversations = async (userId: string) => {
-  // توحيد المعرّف إلى uid ليوافق المعرّفات المخزّنة في private_messages
-  const normalizedId = await resolveUserKey(userId);
-
-  const result = await dbPool.query(
-    `SELECT DISTINCT ON (pm.conversation_id)
-            pm.conversation_id, pm.id, pm.body, pm.sender_id, pm.receiver_id,
-            pm.created_at, pm.read_at,
-            CASE WHEN pm.sender_id = $1 THEN pm.receiver_id ELSE pm.sender_id END as other_user_id
-     FROM private_messages pm
-     WHERE pm.sender_id = $1 OR pm.receiver_id = $1
-     ORDER BY pm.conversation_id, pm.created_at DESC`,
+  const result = await database.query(
+    `SELECT u.id::text AS id,
+            COALESCE(NULLIF(u.topic, ''), u.username) AS name,
+            COALESCE(NULLIF(u.pic, ''), '/pic.png') AS avatar,
+            COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, ''), '') AS name_color,
+            COALESCE(NULLIF(up.message_color, ''), NULLIF(u.mcol, ''), '') AS message_color
+     FROM users u
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE u.id::text = $1
+        OR u.uid::text = $1
+        OR u.idreg::text = $1
+        OR lower(u.username) = lower($1)
+     LIMIT 1`,
     [normalizedId],
   );
-
-  // جلب أسماء وصور المستخدمين الآخرين
-  const otherIds = [...new Set(result.rows.map((r: any) => r.other_user_id).filter((id: any) => id != null && id !== ""))];
-  if (otherIds.length === 0) return [];
-
-  // بناء المعاملات بدون $1 مُهمل - PostgreSQL لا يستطيع تحديد نوع معامل غير مُستخدم في الاستعلام
-  const params: any[] = [];
-  let idx = 1;
-  const idPlaceholders = otherIds.map(() => `$${idx++}`).join(",");
-  const uidPlaceholders = otherIds.map(() => `$${idx++}`).join(",");
-  const namePlaceholders = otherIds.map(() => `$${idx++}`).join(",");
-
-  params.push(...otherIds, ...otherIds, ...otherIds.map((id: string) => String(id).toLowerCase()));
-
-  const usersRes = await dbPool.query(
-    `SELECT id, uid, username, topic as display_name, pic FROM users WHERE id::text IN (${idPlaceholders}) OR uid::text IN (${uidPlaceholders}) OR lower(username) IN (${namePlaceholders})`,
-    params,
-  );
-  const userMap = new Map<string, any>();
-  for (const u of usersRes.rows) {
-    userMap.set(String(u.id), u);
-    if (u.uid) userMap.set(String(u.uid), u);
-    if (u.username) userMap.set(u.username.toLowerCase(), u);
-  }
-
-  // جلب عدد الرسائل غير المقروءة
-  const unreadRes = await dbPool.query(
-    `SELECT conversation_id, COUNT(*)::int as unread
-     FROM private_messages
-     WHERE receiver_id = $1 AND read_at IS NULL
-     GROUP BY conversation_id`,
-    [normalizedId],
-  );
-  const unreadMap = new Map<string, number>();
-  for (const r of unreadRes.rows) {
-    unreadMap.set(r.conversation_id, r.unread);
-  }
-
-  return result.rows.map((row: any) => {
-    const otherUser = userMap.get(row.other_user_id) || userMap.get(String(row.other_user_id)) || userMap.get(String(row.other_user_id).toLowerCase()) || {};
+  const user = result.rows[0];
+  if (user) {
     return {
-      conversationId: row.conversation_id,
-      lastMessage: row.body,
-      lastMessageAt: row.created_at,
-      otherUser: {
-        id: row.other_user_id,
-        name: otherUser.display_name || otherUser.username || "عضو",
-        avatar: otherUser.pic || "/pic.png",
-      },
-      unreadCount: unreadMap.get(row.conversation_id) || 0,
+      id: String(user.id),
+      name: String(user.name || "عضو"),
+      avatar: String(user.avatar || "/pic.png"),
+      nameColor: String(user.name_color || ""),
+      messageColor: String(user.message_color || ""),
     };
-  });
-};
-
-export const getMessages = async (conversationId: string, userId: string, limit = 50, beforeId?: string) => {
-  const normalizedId = await resolveUserKey(userId);
-
-  let query = `
-    SELECT id, conversation_id, sender_id, receiver_id, body, read_at, created_at
-    FROM private_messages
-    WHERE conversation_id = $1
-  `;
-  const params: any[] = [conversationId];
-
-  if (beforeId) {
-    query += ` AND created_at < (SELECT created_at FROM private_messages WHERE id = $2)`;
-    params.push(beforeId);
   }
 
-  query += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
-  params.push(limit);
+  try {
+    const { findInMemoryUser } = await import("./authService");
+    const memUser = findInMemoryUser(normalizedId);
+    if (memUser) {
+      return {
+        id: memUser.id,
+        name: memUser.displayName || memUser.username || "عضو",
+        avatar: memUser.profile?.avatar || "/pic.png",
+        nameColor: memUser.profile?.nameColor || "",
+        messageColor: memUser.profile?.messageColor || "",
+      };
+    }
+  } catch {}
 
-  const result = await dbPool.query(query, params);
-
-  // تعليم الرسائل كمقروءة
-  await dbPool.query(
-    `UPDATE private_messages SET read_at = now()
-     WHERE conversation_id = $1 AND receiver_id = $2 AND read_at IS NULL`,
-    [conversationId, normalizedId],
-  );
-
-  return result.rows.reverse().map((row: any) => ({
-    id: String(row.id),
-    conversationId: row.conversation_id,
-    senderId: row.sender_id,
-    receiverId: row.receiver_id,
-    body: row.body,
-    readAt: row.read_at,
-    createdAt: row.created_at,
-    isMine: row.sender_id === normalizedId,
-  }));
-};
-
-export const markConversationRead = async (conversationId: string, userId: string) => {
-  const normalizedId = await resolveUserKey(userId);
-  await dbPool.query(
-    `UPDATE private_messages SET read_at = now()
-     WHERE conversation_id = $1 AND receiver_id = $2 AND read_at IS NULL`,
-    [conversationId, normalizedId],
-  );
-};
-
-export const getUnreadCount = async (userId: string) => {
-  const normalizedId = await resolveUserKey(userId);
-  const result = await dbPool.query(
-    "SELECT COUNT(*)::int as count FROM private_messages WHERE receiver_id = $1 AND read_at IS NULL",
-    [normalizedId],
-  );
-  return result.rows[0].count;
+  return null;
 };

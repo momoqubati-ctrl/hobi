@@ -1,17 +1,20 @@
-import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { readBody, setResponseStatus } from "h3";
 import { createFolder } from "../../../services/fileService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const body = await readBody(event);
-  const { userId, name, parentPath } = body;
+  const userId = auth.userId;
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  const parentPath = typeof body?.parentPath === "string" ? body.parentPath : "/";
 
-  if (!userId || !name?.trim()) {
+  if (!name) {
     setResponseStatus(event, 400);
-    return { success: false, message: "userId, name مطلوبان" };
+    return { success: false, message: "اسم المجلد مطلوب" };
   }
 
   try {
-    const folder = await createFolder(userId, name, parentPath || "/");
+    const folder = await createFolder(userId, name, parentPath);
     return { success: true, folder };
   } catch (error: any) {
     setResponseStatus(event, 400);

@@ -11,7 +11,9 @@ import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import VoiceMessagePlayer from "./VoiceMessagePlayer";
 import EmojiPickerPopover, { EmojiPanel } from "./EmojiPickerPopover";
 import { getSocket } from "@/lib/socket";
+import { getAuthHeaders } from "@/lib/authSession";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import GiftSendAction from "./GiftSendAction";
 const showMuteAlert = (message: string) => {
   let detail: any = {
     alertId: String(Date.now()),
@@ -45,8 +47,50 @@ import { fetchStickerCategories, StickerCategory } from "@/lib/stickerData";
 import { compressImage, COMPRESS_PRESETS } from "@/lib/image-compress";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
+import { PermissionGate } from "@/components/ui/PermissionGate";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
 
 const FACE_MARKER_RE = /\u200B\[\[FACE:(\d+)\]\]\u200B/g;
+const PRIVATE_MEDIA_ENABLED = true;
+
+const usePrivateMediaUrl = (url?: string) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string>();
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    if (!url?.startsWith("/api/pm/media/")) {
+      setResolvedUrl(url);
+      setLoadFailed(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    setResolvedUrl(undefined);
+    setLoadFailed(false);
+    fetch(url, { headers: getAuthHeaders(), signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("تعذر تحميل الوسيط المؤقت");
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setResolvedUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error("[PrivateChat] Failed to load ephemeral media:", error);
+          setLoadFailed(true);
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  return { url: resolvedUrl, failed: loadFailed };
+};
 
 const renderTextWithFaces = (text: string, faceUrls?: string[]) => {
   if (!faceUrls || faceUrls.length === 0) return <>{text}</>;
@@ -99,7 +143,7 @@ interface PMMessage {
   replyToText?: string;
   replyToSenderName?: string;
   replyToMediaUrl?: string;
-  replyToMediaType?: "image" | "video";
+  replyToMediaType?: "image" | "video" | "audio";
   animatedFaces?: string[];
   nameColor?: string;
   statusFontColor?: string;
@@ -113,6 +157,40 @@ interface PendingMedia {
   file: File;
   previewUrl: string;
   type: "image" | "video";
+}
+
+function PrivateMediaContent({ message }: { message: PMMessage }) {
+  const { url: mediaUrl, failed } = usePrivateMediaUrl(message.mediaUrl);
+  if (!mediaUrl) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {failed ? "تعذر تحميل الوسيط المؤقت" : "جارٍ تحميل الوسيط..."}
+      </span>
+    );
+  }
+
+  if (message.mediaType === "audio") {
+    return <VoiceMessagePlayer src={mediaUrl} />;
+  }
+  if (message.mediaType === "video") {
+    return (
+      <video
+        src={mediaUrl}
+        controls
+        className="max-w-full max-h-[250px] rounded-xl object-cover"
+        preload="metadata"
+      />
+    );
+  }
+  return (
+    <img
+      src={mediaUrl}
+      alt="صورة"
+      className="max-w-full max-h-[250px] rounded-xl object-cover cursor-pointer hover:opacity-90 transition"
+      onClick={() => window.open(mediaUrl, "_blank", "noopener,noreferrer")}
+      loading="lazy"
+    />
+  );
 }
 
 const normalizePrivateMessage = (
@@ -146,7 +224,13 @@ const normalizePrivateMessage = (
 
 interface PrivateChatProps {
   conversationId: string;
-  otherUser: { id: string; name: string; avatar: string };
+  otherUser: {
+    id: string;
+    name: string;
+    avatar: string;
+    nameColor?: string;
+    statusFontColor?: string;
+  };
   currentUserId: string;
   onBack: () => void;
   onOpenProfile?: (userId: string) => void;
@@ -190,12 +274,21 @@ const PrivateChat = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reactionPickerRef = useRef<HTMLDivElement>(null);
   const { setPmUnreadCount, onlineUsers } = useRealtimeStore();
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canSendPrivateChat = hasPermissionAccess(permissions, "private_chat.use");
+  const canSendPrivateMedia = PRIVATE_MEDIA_ENABLED && hasPermissionAccess(permissions, "private_media.use");
+  const canSendPrivateYoutube = hasPermissionAccess(permissions, "private_youtube.use");
+  const canSendPrivateAudio = canSendPrivateMedia &&
+    hasPermissionAccess(permissions, "private_audio_message.use");
+  const canUseChatEffects = hasPermissionAccess(permissions, "chat_effects.use");
+  const canReactToPrivateMessages = hasPermissionAccess(permissions, "private_reactions.use");
   const [selectedVideo, setSelectedVideo] = useState<YTVideo | null>(null);
   const [showYouTubeSearch, setShowYouTubeSearch] = useState(false);
   const [activeYouTubeEmbedUrl, setActiveYouTubeEmbedUrl] = useState<string | null>(null);
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
   const recorder = useVoiceRecorder();
+  const { audioBlob, clearRecording } = recorder;
   const [callLogs, setCallLogs] = useState<CallLogMessage[]>([
     {
       id: "demo_call_1",
@@ -255,6 +348,32 @@ const PrivateChat = ({
   }, [conversationId]);
 
   useEffect(() => {
+    const socket = getSocket();
+    const clearConversation = () => {
+      setMessages([]);
+      setText("");
+      setReplyToMsg(null);
+      setPendingMedia((pending) => {
+        if (pending) URL.revokeObjectURL(pending.previewUrl);
+        return null;
+      });
+      recorder.clearRecording();
+    };
+    const onConversationExpired = (data: { conversationId?: string }) => {
+      if (data?.conversationId !== conversationId) return;
+      clearConversation();
+      onBack();
+    };
+
+    window.addEventListener("app-auth-logout", clearConversation);
+    socket?.on("pm:conversation_expired", onConversationExpired);
+    return () => {
+      window.removeEventListener("app-auth-logout", clearConversation);
+      socket?.off("pm:conversation_expired", onConversationExpired);
+    };
+  }, [conversationId, onBack, recorder.clearRecording]);
+
+  useEffect(() => {
     if (!showStickers) return;
     let cancelled = false;
     fetchStickerCategories().then((cats) => {
@@ -281,6 +400,7 @@ const PrivateChat = ({
   // ─── إرسال تفاعل ─────────────────────────────────────────────────────────
 
   const handleReact = useCallback((messageId: string, reaction: ReactionType) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "private_reactions.use")) return;
     const socket = getSocket();
     if (!socket || !socket.connected) return;
 
@@ -288,6 +408,11 @@ const PrivateChat = ({
       messageId,
       conversationId,
       reaction,
+    }, (response: { success?: boolean; reactions?: Record<string, ReactionType> }) => {
+      if (!response?.success || !response.reactions) return;
+      setMessages((previous) => previous.map((message) =>
+        message.id === messageId ? { ...message, reactions: response.reactions } : message,
+      ));
     });
 
     setActiveReactionMsgId(null);
@@ -295,7 +420,10 @@ const PrivateChat = ({
 
   // ─── رفع الملف到 السيرفر ─────────────────────────────────────────────────
 
-  const uploadFile = useCallback(async (file: File): Promise<{ url: string; type: "image" | "video" } | null> => {
+  const uploadFile = useCallback(async (
+    file: File,
+    receiverId: string,
+  ): Promise<{ mediaId: string; type: "image" | "video" } | null> => {
     try {
       let fileToUpload = file;
       const isImage = file.type.startsWith("image/") && !file.type.startsWith("image/gif");
@@ -305,58 +433,41 @@ const PrivateChat = ({
         fileToUpload = result.file;
       }
 
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(",")[1] || "");
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(fileToUpload);
-      });
-
-      const token = localStorage.getItem("authToken") || "";
       const res = await fetch("/api/pm/upload", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          "Content-Type": fileToUpload.type,
+          ...getAuthHeaders(),
+          "x-pm-recipient-id": receiverId,
+          "x-pm-media-type": fileToUpload.type.startsWith("image/") ? "image" : "video",
         },
-        body: JSON.stringify({
-          file: base64,
-          filename: file.name,
-          contentType: file.type,
-        }),
+        body: fileToUpload,
       });
 
-      const data = await res.json();
-      if (data.success && data.url) {
-        return { url: data.url, type: data.type as "image" | "video" };
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && typeof data.mediaId === "string") {
+        return { mediaId: data.mediaId, type: data.mediaType as "image" | "video" };
       }
-      return null;
+      return { error: data.message || "فشل رفع الملف" };
     } catch {
-      return null;
+      return { error: "تعذر الاتصال بالخادم لرفع الملف" };
     }
   }, []);
 
-  const uploadAudio = useCallback(async (blob: Blob): Promise<string | undefined> => {
+  const uploadAudio = useCallback(async (blob: Blob, receiverId: string): Promise<string | undefined> => {
     try {
-      const token = localStorage.getItem("authToken");
-      if (!token) throw new Error("جلسة غير صالحة");
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(",")[1]);
-        reader.onerror = () => reject(new Error("فشل قراءة الملف"));
-        reader.readAsDataURL(blob);
-      });
-      const ext = blob.type.includes("webm") ? "webm" : "mp3";
       const res = await fetch("/api/pm/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: blob.type }),
+        headers: {
+          "Content-Type": blob.type,
+          ...getAuthHeaders(),
+          "x-pm-recipient-id": receiverId,
+          "x-pm-media-type": "audio",
+        },
+        body: blob,
       });
       const data = await res.json();
-      if (data.success) return data.url;
+      if (res.ok && data.success && typeof data.mediaId === "string") return data.mediaId;
       throw new Error(data.message || "فشل رفع التسجيل");
     } catch {
       return undefined;
@@ -364,17 +475,27 @@ const PrivateChat = ({
   }, []);
 
   const handleSendVoice = useCallback(async () => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "private_audio_message.use") ||
+      !hasPermissionAccess(useRealtimeStore.getState().userPermissions, "private_media.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
     }
-    if (!recorder.audioBlob || !otherUser?.id) return;
+    if (!audioBlob || !otherUser?.id || !socketConnected) return;
     setSending(true);
     try {
-      const url = await uploadAudio(recorder.audioBlob);
-      if (url) {
-        const clientId = `pending_${Date.now()}_${Math.random()}`;
-        const pendingMsg: PMMessage = {
+      const mediaId = await uploadAudio(audioBlob, otherUser.id);
+      if (!mediaId) {
+        alert("تعذر رفع التسجيل الصوتي مؤقتًا. حاول مرة أخرى.");
+        return;
+      }
+      const socket = getSocket();
+      if (!socket?.connected) {
+        alert("انقطع اتصال الدردشة؛ لم يتم إرسال التسجيل.");
+        return;
+      }
+      const clientId = `pending_${Date.now()}_${Math.random()}`;
+      const pendingMsg: PMMessage = {
           id: clientId,
           clientId,
           conversationId,
@@ -383,7 +504,7 @@ const PrivateChat = ({
           senderAvatar: myAvatar,
           receiverId: otherUser.id,
           text: "",
-          mediaUrl: url,
+          mediaUrl: undefined,
           mediaType: "audio" as const,
           reactions: {},
           createdAt: new Date().toISOString(),
@@ -391,62 +512,60 @@ const PrivateChat = ({
           pending: true,
           failed: false,
         };
-        setMessages(prev => [...prev, pendingMsg]);
+      setMessages(prev => [...prev, pendingMsg]);
 
-        const socket = getSocket();
-        if (socket?.connected) {
-          socket.emit("pm:send", {
-            toUserId: otherUser.id,
-            text: "",
-            clientId,
-            mediaUrl: url,
-            mediaType: "audio",
-          }, (ackErrorOrRes: any, ackRes?: any) => {
-            const res = ackRes ?? (ackErrorOrRes?.message === "operation has timed out" ? null : ackErrorOrRes);
-            if (res?.success && res.message) {
-              const sentMessage = normalizePrivateMessage(res.message, {
-                clientId, conversationId, senderId: currentUserId,
-                senderName: currentUser?.name || currentUser?.username || "",
-                senderAvatar: myAvatar, receiverId: otherUser.id,
-                text: "", mediaUrl: url, mediaType: "audio" as const,
-              });
-              setMessages(prev => prev.map(m => m.clientId === clientId ? sentMessage : m));
-            } else {
-              setMessages(prev => prev.map(m => m.clientId === clientId ? { ...m, pending: false, failed: true } : m));
-            }
+      socket.emit("pm:send", {
+        toUserId: otherUser.id,
+        text: "",
+        clientId,
+        mediaId,
+        mediaType: "audio",
+      }, (ackErrorOrRes: any, ackRes?: any) => {
+        const res = ackRes ?? (ackErrorOrRes?.message === "operation has timed out" ? null : ackErrorOrRes);
+        if (res?.success && res.message) {
+          const sentMessage = normalizePrivateMessage(res.message, {
+            clientId, conversationId, senderId: currentUserId,
+            senderName: currentUser?.name || currentUser?.username || "",
+            senderAvatar: myAvatar, receiverId: otherUser.id,
+            text: "", mediaUrl: undefined, mediaType: "audio" as const,
           });
+          setMessages(prev => prev.map(m => m.clientId === clientId ? sentMessage : m));
+        } else {
+          setMessages(prev => prev.map(m => m.clientId === clientId ? { ...m, pending: false, failed: true } : m));
         }
-      }
+      });
+      clearRecording();
     } finally {
       setSending(false);
-      recorder.clearRecording();
     }
-  }, [recorder.audioBlob, otherUser?.id, uploadAudio, conversationId, currentUserId, currentUser?.name, currentUser?.username, myAvatar]);
+  }, [audioBlob, clearRecording, otherUser?.id, uploadAudio, conversationId, currentUserId, currentUser?.name, currentUser?.username, myAvatar, socketConnected]);
 
   // ─── اختيار ملف ───────────────────────────────────────────────────────────
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!PRIVATE_MEDIA_ENABLED) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 50 * 1024 * 1024) {
-      alert("حجم الملف يتجاوز 50 ميجابايت");
-      return;
-    }
-
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
+    const isImage = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+    const isVideo = ["video/mp4", "video/webm"].includes(file.type);
 
     if (!isImage && !isVideo) {
-      alert("الملفات المدعومة: الصور والفيديو فقط");
+      alert("الملفات المدعومة: صور JPEG أو PNG أو WebP وفيديو MP4 أو WebM فقط");
       return;
     }
 
+    if (file.size > 5 * 1024 * 1024) {
+      alert("حجم الصورة أو الفيديو لا يمكن أن يتجاوز 5 ميجابايت");
+      return;
+    }
+
+    if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
     const previewUrl = URL.createObjectURL(file);
     setPendingMedia({ file, previewUrl, type: isImage ? "image" : "video" });
 
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }, []);
+  }, [pendingMedia]);
 
   const handleRemoveMedia = useCallback(() => {
     if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
@@ -456,6 +575,11 @@ const PrivateChat = ({
   // ─── إرسال رسالة ──────────────────────────────────────────────────────────
 
   const handleSend = useCallback(async () => {
+    if (pendingMedia && !PRIVATE_MEDIA_ENABLED) return;
+    const currentPermissions = useRealtimeStore.getState().userPermissions;
+    if (!hasPermissionAccess(currentPermissions, "private_chat.use")) return;
+    if (pendingMedia && !hasPermissionAccess(currentPermissions, "private_media.use")) return;
+    if (selectedVideo && !hasPermissionAccess(currentPermissions, "private_youtube.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -492,7 +616,7 @@ const PrivateChat = ({
           processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
         }
       }
-      if (matchedUrls.length > 0) {
+      if (matchedUrls.length > 0 && hasPermissionAccess(currentPermissions, "chat_effects.use")) {
         msgText = processedText;
         animatedFaceUrls = matchedUrls;
       }
@@ -500,18 +624,18 @@ const PrivateChat = ({
 
     const clientId = `pending_${Date.now()}_${Math.random()}`;
 
-    let mediaUrl = "";
     let mediaType: "image" | "video" | undefined;
+    let mediaId: string | undefined;
 
     if (hasMedia) {
       setUploading(true);
-      const uploaded = await uploadFile(pendingMedia.file);
+      const uploaded = await uploadFile(pendingMedia.file, otherUser.id);
       setUploading(false);
-      if (!uploaded) {
-        alert("فشل رفع الملف");
+      if (!uploaded?.mediaId || !uploaded?.type) {
+        alert(uploaded?.error || "فشل رفع الملف");
         return;
       }
-      mediaUrl = uploaded.url;
+      mediaId = uploaded.mediaId;
       mediaType = uploaded.type;
     }
 
@@ -524,7 +648,7 @@ const PrivateChat = ({
       senderAvatar: "",
       receiverId: otherUser.id,
       text: msgText,
-      mediaUrl: mediaUrl || undefined,
+      mediaUrl: pendingMedia?.previewUrl,
       mediaType,
       reactions: {},
       replyToId: replyToMsg?.id || undefined,
@@ -548,7 +672,7 @@ const PrivateChat = ({
       senderAvatar: myAvatar,
       receiverId: otherUser.id,
       text: msgText,
-      mediaUrl: mediaUrl || undefined,
+      mediaUrl: mediaId ? `/api/pm/media/${mediaId}` : undefined,
       mediaType,
       replyToId: currentReplyTo?.id || undefined,
       replyToText: currentReplyTo?.text || undefined,
@@ -576,7 +700,7 @@ const PrivateChat = ({
         toUserId: otherUser.id,
         text: msgText,
         clientId,
-        mediaUrl: mediaUrl || undefined,
+        mediaId,
         mediaType,
         replyToId: currentReplyTo?.id || undefined,
         animatedFaces: animatedFaceUrls && animatedFaceUrls.length > 0 ? animatedFaceUrls : undefined,
@@ -593,14 +717,18 @@ const PrivateChat = ({
                 : m,
             ),
           );
+          if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
         } else {
-          if (!mediaUrl) {
+          console.error("[PM:send] failed:", res?.error || ackErrorOrRes);
+          if (!mediaId) {
             try {
               const apiRes = await fetch("/api/pm/send", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  ...getAuthHeaders(),
+                },
                 body: JSON.stringify({
-                  senderId: currentUserId,
                   receiverId: otherUser.id,
                   text: msgText,
                   clientId,
@@ -617,6 +745,7 @@ const PrivateChat = ({
                       : m,
                   ),
                 );
+                if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
                 return;
               }
             } catch {
@@ -625,15 +754,21 @@ const PrivateChat = ({
           }
           setMessages(prev =>
             prev.map(m =>
-              m.clientId === clientId ? { ...m, pending: false, failed: true } : m,
+              m.clientId === clientId
+                ? { ...m, mediaUrl: undefined, pending: false, failed: true }
+                : m,
             ),
           );
+          if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
         }
       },
     );
   }, [text, pendingMedia, sending, conversationId, currentUserId, otherUser.id, uploadFile, replyToMsg, selectedVideo, animatedFaces, currentUser?.name, currentUser?.username, myAvatar]);
 
-  const handleSendSticker = useCallback(async (stickerUrl: string) => {
+  const handleSendSticker = useCallback(async (stickerId: string, stickerUrl: string) => {
+    const currentPermissions = useRealtimeStore.getState().userPermissions;
+    if (!hasPermissionAccess(currentPermissions, "chat_effects.use") ||
+      !hasPermissionAccess(currentPermissions, "private_media.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -674,7 +809,7 @@ const PrivateChat = ({
         toUserId: otherUser.id,
         text: "",
         clientId,
-        mediaUrl: stickerUrl,
+        stickerId,
         mediaType: "image",
       },
       (ackErrorOrRes: any, ackRes?: any) => {
@@ -705,7 +840,7 @@ const PrivateChat = ({
         }
       },
     );
-  }, [conversationId, currentUserId, otherUser.id, uploadFile, currentUser?.name, currentUser?.username, myAvatar, closeAllPanels]);
+  }, [conversationId, currentUserId, otherUser.id, currentUser?.name, currentUser?.username, myAvatar, closeAllPanels]);
 
   // ─── جلب السجل التاريخي ──────────────────────────────────────────────────
 
@@ -967,37 +1102,9 @@ const PrivateChat = ({
 
   const renderMedia = (msg: PMMessage) => {
     if (!msg.mediaUrl) return null;
-
-    if (msg.mediaType === "audio") {
-      return (
-        <div className="mb-1.5 overflow-hidden rounded-xl">
-          <VoiceMessagePlayer src={msg.mediaUrl} />
-        </div>
-      );
-    }
-
-    if (msg.mediaType === "video") {
-      return (
-        <div className="mb-1.5 overflow-hidden rounded-xl">
-          <video
-            src={msg.mediaUrl}
-            controls
-            className="max-w-full max-h-[250px] rounded-xl object-cover"
-            preload="metadata"
-          />
-        </div>
-      );
-    }
-
     return (
       <div className="mb-1.5 overflow-hidden rounded-xl">
-        <img
-          src={msg.mediaUrl}
-          alt="صورة"
-          className="max-w-full max-h-[250px] rounded-xl object-cover cursor-pointer hover:opacity-90 transition"
-          onClick={() => window.open(msg.mediaUrl, "_blank")}
-          loading="lazy"
-        />
+        <PrivateMediaContent message={msg} />
       </div>
     );
   };
@@ -1066,7 +1173,13 @@ const PrivateChat = ({
             <p className="text-[10px] text-muted-foreground font-medium">محادثة خاصة</p>
           )}
         </div>
+        <GiftSendAction
+          recipient={{ id: String(otherUserData.id || ""), name: resolvedName || "عضو" }}
+          iconOnly
+          className="rounded-xl h-9 w-9 shrink-0"
+        />
         {/* زر بدء الاتصال الصوتي */}
+        <PermissionGate requiredPermissions={["private_voice_call.use"]}>
         <Button
           variant="ghost"
           size="icon"
@@ -1091,8 +1204,10 @@ const PrivateChat = ({
         >
           <PhoneCall size={18} />
         </Button>
+        </PermissionGate>
 
         {/* زر بدء مكالمة فيديو */}
+        <PermissionGate requiredPermissions={["private_video_call.use"]}>
         <Button
           variant="ghost"
           size="icon"
@@ -1118,6 +1233,7 @@ const PrivateChat = ({
         >
           <Video size={18} />
         </Button>
+        </PermissionGate>
 
         <div className="shrink-0" title={socketConnected ? "متصل" : "غير متصل"}>
           {socketConnected
@@ -1138,13 +1254,13 @@ const PrivateChat = ({
               allowFullScreen
               title="YouTube Player"
             />
-            <button
+            {canReactToPrivateMessages && <button
               onClick={() => setActiveYouTubeEmbedUrl(null)}
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-600 text-white flex items-center justify-center transition shadow-lg z-40"
               title="إغلاق المشغل"
             >
               <X size={16} />
-            </button>
+            </button>}
           </div>
         </div>
       )}
@@ -1156,7 +1272,9 @@ const PrivateChat = ({
           <ChatCallLog
             key={log.id}
             log={log}
-            onCallBack={() => setTriggerCall((prev) => !prev)}
+            onCallBack={hasPermissionAccess(permissions, "private_voice_call.use")
+              ? () => setTriggerCall((prev) => !prev)
+              : undefined}
           />
         ))}
         {loading ? (
@@ -1218,18 +1336,18 @@ const PrivateChat = ({
                             >
                               <SmilePlus size={14} className="text-muted-foreground" />
                             </button>
-                            <button
+                            {canSendPrivateChat && <button
                               onClick={() => setReplyToMsg(msg)}
                               className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition"
                               title="رد"
                             >
                               <Reply size={14} className="text-muted-foreground" />
-                            </button>
+                            </button>}
                           </div>
                         )}
 
                         {/* قائمة اختيار التفاعل */}
-                        {renderReactionPicker(msg.id)}
+                        {canReactToPrivateMessages && renderReactionPicker(msg.id)}
 
                         {/* فقاعة الرسالة */}
                         <div
@@ -1347,7 +1465,7 @@ const PrivateChat = ({
       </div>
 
       {/* شريط معاينة الرد */}
-      {replyToMsg && (
+      {canSendPrivateChat && replyToMsg && (
         <div className="px-4 pt-2 border-t bg-white dark:bg-slate-900">
           <div className="flex items-center gap-3 px-3 py-2 bg-muted/50 rounded-xl border-r-4 border-primary">
             <Reply size={16} className="text-primary shrink-0" />
@@ -1370,7 +1488,7 @@ const PrivateChat = ({
       )}
 
       {/* معاينة الوسائط */}
-      {pendingMedia && (
+      {canSendPrivateMedia && pendingMedia && (
         <div className="px-4 pt-2 border-t bg-white dark:bg-slate-900">
           <div className="relative inline-block">
             {pendingMedia.type === "image" ? (
@@ -1402,9 +1520,9 @@ const PrivateChat = ({
       )}
 
       {/* حقل الإدخال */}
-      <div ref={inputAreaRef} className="flex flex-col border-t bg-white dark:bg-slate-900 shadow-sm relative">
+      {canSendPrivateChat && <div ref={inputAreaRef} className="flex flex-col border-t bg-white dark:bg-slate-900 shadow-sm relative">
         {/* معاينة الفيديو المختار من يوتيوب */}
-        {selectedVideo && (
+        {canSendPrivateYoutube && selectedVideo && (
           <div className="px-4 pt-2 border-b bg-white dark:bg-slate-900">
             <div className="flex items-center gap-3 px-3 py-1.5 bg-muted/50 rounded-xl border-r-4 border-red-500">
               <div className="relative shrink-0 w-12 h-8 rounded-lg overflow-hidden bg-slate-200">
@@ -1431,7 +1549,7 @@ const PrivateChat = ({
         )}
 
         {/* لوحة البحث في يوتيوب */}
-        {showYouTubeSearch && (
+        {canSendPrivateYoutube && showYouTubeSearch && (
           <div className="p-3 border-b bg-white dark:bg-slate-900 animate-in slide-in-from-bottom duration-200">
             <YouTubeSearchInline
               onSelectVideo={(video) => setSelectedVideo(video)}
@@ -1451,7 +1569,7 @@ const PrivateChat = ({
         />
 
         {/* لوحة الفيسات المتحركة */}
-        {showFaces && (
+        {canUseChatEffects && showFaces && (
           <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
             <div className="p-2 text-[10px] text-muted-foreground font-bold">
               اكتب الاختصار في حقل الكتابة (مثال: ف1)
@@ -1476,7 +1594,7 @@ const PrivateChat = ({
         )}
 
         {/* لوحة الملصقات */}
-        {showStickers && (
+        {canSendPrivateMedia && canUseChatEffects && showStickers && (
           <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
             <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
               {stickerCategories.map((cat) => (
@@ -1500,7 +1618,7 @@ const PrivateChat = ({
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => handleSendSticker(s.image_url)}
+                  onClick={() => handleSendSticker(s.id, s.image_url)}
                   className="w-[120px] h-[120px] flex items-center justify-center rounded-xl hover:bg-muted transition active:scale-90 overflow-hidden shrink-0"
                 >
                   <img src={s.image_url} alt={s.name} className="w-full h-full object-contain" />
@@ -1511,7 +1629,7 @@ const PrivateChat = ({
         )}
 
         {/* شريط التسجيل الصوتي */}
-        {recorder.isRecording && (
+        {canSendPrivateAudio && recorder.isRecording && (
           <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-red-50 dark:bg-red-950/20">
             <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
             <span className="text-[10px] font-bold text-red-600">{formatDuration(recorder.duration)}</span>
@@ -1523,7 +1641,7 @@ const PrivateChat = ({
             </button>
           </div>
         )}
-        {recorder.audioBlob && !recorder.isRecording && (
+        {canSendPrivateAudio && recorder.audioBlob && !recorder.isRecording && (
           <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-muted/50">
             <audio src={recorder.audioUrl!} controls className="flex-1 h-8" />
             <button type="button" onClick={recorder.clearRecording} className="text-xs font-bold text-muted-foreground hover:text-red-600 px-2 py-1 rounded-lg hover:bg-muted transition">
@@ -1557,7 +1675,7 @@ const PrivateChat = ({
             </PopoverTrigger>
             <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
               <div className="flex gap-1">
-                <button
+                {canSendPrivateMedia && <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
@@ -1568,8 +1686,8 @@ const PrivateChat = ({
                 >
                   <ImagePlus size={22} className="text-muted-foreground" />
                   <span className="text-[9px] font-bold">صورة</span>
-                </button>
-                <button
+                </button>}
+                {canSendPrivateYoutube && <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
@@ -1581,8 +1699,8 @@ const PrivateChat = ({
                 >
                   <Youtube size={22} className="text-red-500" />
                   <span className="text-[9px] font-bold">يوتيوب</span>
-                </button>
-                <button
+                </button>}
+                {canSendPrivateMedia && canUseChatEffects && <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
@@ -1594,8 +1712,8 @@ const PrivateChat = ({
                 >
                   <span className="text-[20px] leading-none">🖼️</span>
                   <span className="text-[9px] font-bold">ملصقات</span>
-                </button>
-                <button
+                </button>}
+                {canUseChatEffects && <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
@@ -1607,7 +1725,7 @@ const PrivateChat = ({
                 >
                   <Smile size={22} className="text-orange-500" />
                   <span className="text-[9px] font-bold">فيسات</span>
-                </button>
+                </button>}
                 <button
                   type="button"
                   onClick={() => {
@@ -1621,7 +1739,7 @@ const PrivateChat = ({
                   <SmilePlus size={22} className="text-yellow-500" />
                   <span className="text-[9px] font-bold">إيموجي</span>
                 </button>
-                <button
+                {canSendPrivateAudio && <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
@@ -1636,7 +1754,7 @@ const PrivateChat = ({
                 >
                   {recorder.isRecording ? <MicOff size={22} /> : <Mic size={22} className="text-red-500" />}
                   <span className="text-[9px] font-bold">{recorder.isRecording ? "إيقاف" : "صوت"}</span>
-                </button>
+                </button>}
               </div>
             </PopoverContent>
           </Popover>
@@ -1659,7 +1777,7 @@ const PrivateChat = ({
             {(sending || uploading) ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
           </Button>
         </div>
-      </div>
+      </div>}
 
 
     </div>

@@ -2,6 +2,9 @@ import { defineEventHandler, readBody, getQuery, setResponseStatus } from "h3";
 import {
   assertSafeTableName,
   getPrimaryKeyColumn,
+  isAdminDatabaseAccessError,
+  isAdminTableWritable,
+  isWalletWriteFenceError,
   updateTableRow,
   tableExists,
 } from "../../../services/legacyAdminService";
@@ -22,6 +25,11 @@ export default defineEventHandler(async (event) => {
     return { success: false, message: "اسم الجدول مطلوب" };
   }
 
+  if (!isAdminTableWritable(tableName)) {
+    setResponseStatus(event, 409);
+    return { success: false, message: "لا يمكن تعديل هذا الجدول من محرر قاعدة البيانات" };
+  }
+
   try {
     if (!(await tableExists(tableName))) {
       setResponseStatus(event, 404);
@@ -38,9 +46,17 @@ export default defineEventHandler(async (event) => {
     const updatedRow = await updateTableRow(tableName, pkColumn, body.pkValue, body.data);
     
     return { success: true, row: updatedRow };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Admin database update error:", err);
+    if (isAdminDatabaseAccessError(err)) {
+      setResponseStatus(event, 409);
+      return { success: false, message: "لا يمكن تعديل هذا الحقل من محرر قاعدة البيانات" };
+    }
+    if (isWalletWriteFenceError(err)) {
+      setResponseStatus(event, 409);
+      return { success: false, message: "لا يمكن تعديل أرصدة العملات مباشرة" };
+    }
     setResponseStatus(event, 500);
-    return { success: false, message: err.message || "تعذر تحديث البيانات" };
+    return { success: false, message: "تعذر تحديث البيانات" };
   }
 });

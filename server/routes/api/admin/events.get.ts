@@ -1,19 +1,19 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { db } from "../../../db";
 import { moderationEvents, users, rooms } from "../../../db/schema";
-import { desc, eq, ilike } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { getAdminContext } from "../../../services/adminAccess";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   const admin = getAdminContext(event);
   if (!admin.ok) {
     setResponseStatus(event, admin.statusCode);
-    return { success: false, message: admin.message };
+    return { success: false, message: admin.message, error: admin.message };
   }
 
   const query = getQuery(event);
-  const search = query.search as string;
 
   try {
     const targetUsers = alias(users, "target_users");
@@ -40,7 +40,6 @@ export default defineEventHandler(async (event) => {
       events: results
     };
   } catch (err: any) {
-    console.error("Admin events error:", err);
-    return { success: false, error: err.message };
+    return handleApiError(event, err);
   }
 });

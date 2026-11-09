@@ -4,11 +4,18 @@
  */
 import { redis, isRedisEnabled } from "../services/redis";
 import { publishGlobalEvent } from "./SocketBroker";
+import {
+  fetchVitePresenceUsers,
+  type BridgedPresenceUser,
+} from "./presenceBridge";
 
 export type OnlineUser = {
   id: string;
   socketId: string;
   username: string;
+  displayName?: string;
+  mentionName?: string;
+  publicUserId?: string;
   role: string;
   avatar: string;
   countryCode: string;
@@ -42,40 +49,69 @@ const localSockets = new Map<string, OnlineUser>();
 const localRoomMembers = new Map<string, Set<string>>(); // roomId -> Set of socketIds
 const localOnlineSockets = new Set<string>();
 
+type VitePresenceRuntime = {
+  __vite_connected_users__?: Map<string, OnlineUser>;
+  __vite_room_members_map__?: Map<string, Set<string>>;
+};
+
+function getVitePresenceRuntime(): VitePresenceRuntime {
+  const globalRuntime = globalThis as typeof globalThis & VitePresenceRuntime;
+  const processRuntime = process as NodeJS.Process & VitePresenceRuntime;
+  return {
+    __vite_connected_users__:
+      globalRuntime.__vite_connected_users__ ?? processRuntime.__vite_connected_users__,
+    __vite_room_members_map__:
+      globalRuntime.__vite_room_members_map__ ?? processRuntime.__vite_room_members_map__,
+  };
+}
+
 // مفاتيح Redis
 const getSocketKey = (socketId: string) => `socket:presence:${socketId}`;
 const getRoomKey = (roomId: string) => `room:members:${roomId}`;
 const ONLINE_SOCKETS_KEY = "online:sockets";
 
-function getPresenceIdentity(user: Pick<OnlineUser, "id" | "username" | "role">): string {
+function getPresenceIdentity(user: Pick<OnlineUser, "id" | "username" | "role" | "displayName">): string {
   const id = String(user.id || "").trim();
   if (id && id !== "0") return `id:${id}`;
 
   const username = String(user.username || "").trim().toLowerCase();
   if (username && user.role !== "guest") return `username:${username}`;
 
+  // للزوار بدون id صالح: نستخدم اسم العرض كهوية بديلة حتى لا يُحسب الزائر
+  // مرة لكل جلسة. (تسمية الزوار فريدة بين المتصلين — تُرفض الأسماء المستعملة)
+  const displayName = String((user as any).displayName || "").trim().toLowerCase();
+  if (displayName) return `guestname:${displayName}`;
+  if (username) return `guestusername:${username}`;
+
   return "";
 }
 
 async function getDedupedOnlineUsers(): Promise<OnlineUser[]> {
   let users: OnlineUser[] = [];
+  const viteUsers = Array.from(getVitePresenceRuntime().__vite_connected_users__?.values() ?? []);
 
   if (!isRedisEnabled) {
-    users = Array.from(localSockets.values());
-    console.debug("[presence] getDedupedOnlineUsers (local) count=", users.length);
+    users = [...localSockets.values(), ...viteUsers];
+    console.debug(
+      "[presence] getDedupedOnlineUsers (local + Vite) count=",
+      users.length,
+    );
   } else {
     try {
       const socketIds = await redis.smembers(ONLINE_SOCKETS_KEY);
       if (socketIds.length > 0) {
         const usersPromises = socketIds.map((sid) => getConnectedUser(sid));
-        users = (await Promise.all(usersPromises)).filter((u): u is OnlineUser => u !== undefined);
+        users = [
+          ...(await Promise.all(usersPromises)).filter((u): u is OnlineUser => u !== undefined),
+          ...viteUsers,
+        ];
       } else {
-        users = Array.from(localSockets.values());
+        users = [...localSockets.values(), ...viteUsers];
       }
     } catch (err) {
       console.warn("[presence] Redis smembers failed, falling back to local memory:", err);
       console.debug("[presence] getDedupedOnlineUsers fallback to local due to redis error");
-      users = Array.from(localSockets.values());
+      users = [...localSockets.values(), ...viteUsers];
     }
   }
 
@@ -105,6 +141,23 @@ async function getDedupedOnlineUsers(): Promise<OnlineUser[]> {
   return [...byIdentity.values(), ...guests];
 }
 
+export async function getAnnouncementOnlineUsers(
+  fetchRemoteUsers: () => Promise<BridgedPresenceUser[]> = fetchVitePresenceUsers,
+): Promise<BridgedPresenceUser[]> {
+  const localUsers = await getDedupedOnlineUsers();
+  if (isRedisEnabled || getVitePresenceRuntime().__vite_connected_users__ instanceof Map) {
+    return localUsers.map(({ id, role, roomId }) => ({ id, role, roomId }));
+  }
+
+  const remoteUsers = await fetchRemoteUsers();
+  const usersById = new Map<string, BridgedPresenceUser>();
+  for (const user of [...localUsers, ...remoteUsers]) {
+    const id = String(user.id || "").trim();
+    if (id && id !== "0") usersById.set(id, { id, role: user.role, roomId: user.roomId });
+  }
+  return [...usersById.values()];
+}
+
 /**
  * يضيف مستخدم متصل
  */
@@ -125,6 +178,9 @@ export async function addConnectedUser(socketId: string, user: Omit<OnlineUser, 
     const data = {
       id: String(user.id),
       username: String(user.username),
+      displayName: String((user as any).displayName || user.username),
+      mentionName: String((user as any).mentionName || ""),
+      publicUserId: String((user as any).publicUserId || ""),
       role: String(user.role),
       avatar: String(user.avatar),
       countryCode: String(user.countryCode),
@@ -375,7 +431,7 @@ export async function getRoomMembers(roomId: string): Promise<OnlineUser[]> {
     }
 
     // 2. From globalThis.__vite_room_members_map__ (Vite dev mode)
-    const viteRoomMembersMap = (globalThis as any).__vite_room_members_map__;
+    const viteRoomMembersMap = getVitePresenceRuntime().__vite_room_members_map__;
     if (viteRoomMembersMap instanceof Map) {
       const vSids = viteRoomMembersMap.get(roomId) || viteRoomMembersMap.get(altRoomId);
       if (vSids) {
@@ -396,7 +452,7 @@ export async function getRoomMembers(roomId: string): Promise<OnlineUser[]> {
     } catch (_) {}
 
     const ioInstance = getIOInstance() || (globalThis as any).__socket_io_instance__;
-    const viteConnectedUsers = (globalThis as any).__vite_connected_users__;
+    const viteConnectedUsers = getVitePresenceRuntime().__vite_connected_users__;
     const usersMap = new Map<string, OnlineUser>();
 
     for (const sid of candidateSocketIds) {
@@ -480,6 +536,34 @@ export async function getRoomMembers(roomId: string): Promise<OnlineUser[]> {
   }
 }
 
+export async function isUserConnectedToRoom(
+  userId: string,
+  roomId: string,
+  fetchRemoteUsers: () => Promise<BridgedPresenceUser[]> = fetchVitePresenceUsers,
+): Promise<boolean> {
+  const targetUserId = String(userId || "").trim();
+  const targetRoomId = String(roomId || "").trim();
+  if (!targetUserId || !targetRoomId) return false;
+
+  const roomMembers = await getRoomMembers(targetRoomId);
+  if (roomMembers.some(
+    (member) =>
+      String(member.id) === targetUserId &&
+      String(member.roomId) === targetRoomId,
+  )) {
+    return true;
+  }
+
+  if (isRedisEnabled) return false;
+
+  const remoteUsers = await fetchRemoteUsers();
+  return remoteUsers.some(
+    (member) =>
+      String(member.id) === targetUserId &&
+      String(member.roomId) === targetRoomId,
+  );
+}
+
 /**
  * يحصل على عدد أعضاء غرفة
  */
@@ -491,7 +575,7 @@ export async function getRoomMemberCount(roomId: string): Promise<number> {
     localCount = Math.max(localCount, altLocalCount);
 
     let viteCount = 0;
-    const viteRoomMembersMap = (globalThis as any).__vite_room_members_map__;
+    const viteRoomMembersMap = getVitePresenceRuntime().__vite_room_members_map__;
     if (viteRoomMembersMap instanceof Map) {
       viteCount = Math.max(
         viteRoomMembersMap.get(roomId)?.size ?? 0,
@@ -561,6 +645,9 @@ export async function getConnectedUser(socketId: string): Promise<OnlineUser | u
       id: data.id,
       socketId,
       username: data.username,
+      displayName: data.displayName || data.username,
+      mentionName: data.mentionName || "",
+      publicUserId: data.publicUserId || "",
       role: data.role,
       avatar: data.avatar,
       countryCode: data.countryCode,
@@ -709,6 +796,3 @@ export async function updateUserRolePresence(userId: string, role: string, roleI
     }
   }
 }
-
-
-

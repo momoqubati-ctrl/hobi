@@ -40,6 +40,12 @@ export function isTokenValid(token: string | null): boolean {
   return true;
 }
 
+export function getAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = window.localStorage.getItem(TOKEN_KEY) || window.localStorage.getItem(LEGACY_TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /**
  * الحصول على الجلسة النشطة الحالية (إن وجدت وكانت صالحة)
  */
@@ -70,16 +76,11 @@ export function getActiveSession(): { token: string; user: AuthUser } | null {
  * إنهاء جلسة المستخدم بالكامل وإغلاق السوكيت وتنظيف التخزين المحلي وإخطار السيرفر
  */
 export async function terminateUserSession(notifyServer = true): Promise<void> {
-  const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
-  const userRaw = localStorage.getItem(USER_KEY) || localStorage.getItem(LEGACY_USER_KEY);
-  let userId: string | undefined;
-
   try {
-    if (userRaw) {
-      const parsed = JSON.parse(userRaw);
-      userId = parsed.id ? String(parsed.id) : undefined;
-    }
+    // تتبّع مؤقت: من أنهي الجلسة؟
+    console.warn("[CLIENT_SOCKET_TRACE] terminateUserSession (notifyServer=" + notifyServer + ") from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
   } catch {}
+  const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
 
   // 1. قطع اتصال السوكيت فوراً وإرسال حدث الخروج لإسقاط الحضور
   try {
@@ -88,23 +89,21 @@ export async function terminateUserSession(notifyServer = true): Promise<void> {
     console.error("[authSession] logoutSocket failed:", err);
   }
 
+  // إيقاف منع التجميد فوراً (dynamic import لتجنب circular dependency)
+  try {
+    const { browserAliveKeeper } = await import("./browserAliveKeeper");
+    browserAliveKeeper.stop();
+  } catch (_) {}
+
   // 2. إخطار السيرفر بإنهاء كافة الجلسات المرتبطة بهذا المستخدم
-  if (notifyServer && (token || userId)) {
+  if (notifyServer && token) {
     try {
-      if (userId) {
-        fetch("/__terminate_user_sessions__", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId }),
-        }).catch(() => {});
-      }
       fetch("/api/auth/logout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ userId }),
       }).catch((err) => {
         console.warn("[authSession] /api/auth/logout network error:", err);
       });

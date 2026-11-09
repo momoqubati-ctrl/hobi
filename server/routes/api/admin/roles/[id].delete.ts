@@ -2,6 +2,8 @@ import { defineEventHandler, getRouterParam, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
 import { guardAdminAction, logAdminAudit } from "../../../../services/adminPermissions";
 import { invalidatePermissionCache } from "../../../../services/permissionEngine";
+import { isSiteOwnerRoleName } from "../../../../services/siteOwner";
+import { handleApiError } from "../../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -11,6 +13,27 @@ export default defineEventHandler(async (event) => {
     if (!roleId) {
       setResponseStatus(event, 400);
       return { success: false, message: "معرف الرتبة مطلوب" };
+    }
+
+    const roleRes = await dbPool.query(
+      "SELECT is_default, is_owner, name FROM roles WHERE id = $1 LIMIT 1",
+      [roleId],
+    );
+    if (!roleRes.rows[0]) {
+      setResponseStatus(event, 404);
+      return { success: false, message: "الرتبة غير موجودة" };
+    }
+    if (roleRes.rows[0].is_default) {
+      setResponseStatus(event, 400);
+      return { success: false, message: "لا يمكن حذف رتبة الأعضاء الافتراضية" };
+    }
+    if (roleRes.rows[0].is_owner) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "رتبة المالك محمية ولا يمكن حذفها" };
+    }
+    if (isSiteOwnerRoleName(roleRes.rows[0].name)) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "مجموعة مالك الموقع محمية ولا يمكن حذفها" };
     }
 
     // حذف صلاحيات الرتبة أولاً
@@ -45,7 +68,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, message: "تم حذف الرتبة بنجاح" };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

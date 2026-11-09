@@ -35,7 +35,7 @@ const CACHE_TTL = 30000; // تحديث القواعد كل 30 ثانية تلق�
 /**
  * جلب القواعد مع دعم التخزين المؤقت
  */
-async function getRules() {
+async function getRules(failClosed = false) {
   const now = Date.now();
   if (cachedRules && (now - lastCacheTime < CACHE_TTL)) {
     return cachedRules;
@@ -53,6 +53,7 @@ async function getRules() {
     return cachedRules;
   } catch (err) {
     console.error("Failed to fetch filter rules:", err);
+    if (failClosed) throw err;
     return cachedRules || [];
   }
 }
@@ -67,18 +68,24 @@ export const clearFilterCache = () => {
 /**
  * يقوم بفحص النص مقابل قواعد الفلتر بسرعة فائقة
  */
-export const processText = async (params: {
+type ProcessTextParams = {
   text: string;
   source: string;
   user: { username: string; topic: string; ip: string };
   target?: string;
-}): Promise<FilterResult> => {
+  suppressSideEffects?: boolean;
+};
+
+const processTextWithPolicy = async (
+  params: ProcessTextParams,
+  failClosed: boolean,
+): Promise<FilterResult> => {
   const { text, source, user, target } = params;
   
   if (!text) return { originalText: "", filteredText: "", hasMatch: false, action: null, matchedWords: [] };
 
   // جلب القواعد من الكاش (سريع جداً)
-  const rules = await getRules();
+  const rules = await getRules(failClosed);
 
   const bmsgs = rules.filter(r => r.path === 'bmsgs').map(r => String(r.v || "").trim()).filter(Boolean);
   const wmsgs = rules.filter(r => r.path === 'wmsgs').map(r => String(r.v || "").trim()).filter(Boolean);
@@ -115,7 +122,7 @@ export const processText = async (params: {
 
   const finalAction: FilterAction | null = hasBlockMatch ? "block" : hasWatchMatch ? "watch" : null;
 
-  if (finalAction) {
+  if (finalAction && !params.suppressSideEffects) {
     // التسجيل في السجل يتم في الخلفية لعدم تعطيل الرسالة
     logDetection({
       v: matchedWords.join(", "),
@@ -150,6 +157,12 @@ export const processText = async (params: {
 
   return { originalText: text, filteredText, hasMatch: !!finalAction, action: finalAction, matchedWords };
 };
+
+export const processText = (params: ProcessTextParams): Promise<FilterResult> =>
+  processTextWithPolicy(params, false);
+
+export const processTextStrict = (params: ProcessTextParams): Promise<FilterResult> =>
+  processTextWithPolicy(params, true);
 
 async function logDetection(data: any) {
   try {

@@ -5,6 +5,7 @@ import { X, Check, Loader2 } from "lucide-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import { canUseVisualResource } from "../admin/powers/permissionDefs";
 
 interface Frame {
   id: string;
@@ -21,6 +22,8 @@ const FrameSelector = ({ onClose }: FrameSelectorProps) => {
   const [loading, setLoading] = useState(true);
   const [selectedUrl, setSelectedUrl] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canUseFrame = canUseVisualResource(permissions, "frame");
 
   const getAuthHeaders = () => ({
     Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
@@ -42,6 +45,7 @@ const FrameSelector = ({ onClose }: FrameSelectorProps) => {
   }, []);
 
   const handleSelect = async (url: string) => {
+    if (!canUseFrame) return;
     setSaving(true);
     try {
       const res = await fetch("/api/user/frame", {
@@ -77,6 +81,7 @@ const FrameSelector = ({ onClose }: FrameSelectorProps) => {
   };
 
   const handleRemove = async () => {
+    if (!canUseFrame) return;
     setSaving(true);
     try {
       const res = await fetch("/api/user/frame", {
@@ -131,28 +136,39 @@ const FrameSelector = ({ onClose }: FrameSelectorProps) => {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
           {frames.map((frame) => (
-            <button
-              key={frame.id}
-              onClick={() => handleSelect(frame.image_url)}
-              disabled={saving}
-              className={`relative rounded-lg overflow-hidden border-2 transition-all ${
-                selectedUrl === frame.image_url
-                  ? "border-primary shadow-md shadow-primary/20"
-                  : "border-border hover:border-primary/50"
-              }`}
-            >
-              <img src={frame.image_url} alt={frame.name} className="w-full h-auto" />
-              {selectedUrl === frame.image_url && (
-                <div className="absolute top-1 right-1 p-0.5 rounded-full bg-primary text-white">
-                  <Check size={12} />
-                </div>
-              )}
-            </button>
+            canUseFrame ? (
+              <button
+                key={frame.id}
+                onClick={() => handleSelect(frame.image_url)}
+                disabled={saving}
+                className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                  selectedUrl === frame.image_url
+                    ? "border-primary shadow-md shadow-primary/20"
+                    : "border-border hover:border-primary/50"
+                }`}
+              >
+                <img src={frame.image_url} alt={frame.name} className="w-full h-auto" />
+                {selectedUrl === frame.image_url && (
+                  <div className="absolute top-1 right-1 p-0.5 rounded-full bg-primary text-white">
+                    <Check size={12} />
+                  </div>
+                )}
+              </button>
+            ) : (
+              <div key={frame.id} className="relative overflow-hidden rounded-lg border-2 border-border">
+                <img src={frame.image_url} alt={frame.name} className="w-full h-auto" />
+                {selectedUrl === frame.image_url && (
+                  <div className="absolute top-1 right-1 p-0.5 rounded-full bg-primary text-white">
+                    <Check size={12} />
+                  </div>
+                )}
+              </div>
+            )
           ))}
         </div>
       )}
 
-      {selectedUrl && (
+      {selectedUrl && canUseFrame && (
         <div className="flex justify-center">
           <button
             onClick={handleRemove}
@@ -162,6 +178,11 @@ const FrameSelector = ({ onClose }: FrameSelectorProps) => {
             {saving ? "جاري الحفظ..." : "إزالة الإطار"}
           </button>
         </div>
+      )}
+      {!canUseFrame && (
+        <p role="status" className="text-center text-xs text-muted-foreground">
+          لا تملك صلاحية استخدام إطارات الصور
+        </p>
       )}
     </div>
   );

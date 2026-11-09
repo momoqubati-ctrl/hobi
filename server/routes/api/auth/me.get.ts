@@ -24,6 +24,10 @@ export default defineEventHandler(async (event) => {
 
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (parsed?.type === "wallet_agent" || parsed?.type === "hosting_owner") {
+      setResponseStatus(event, 401);
+      return { success: false, message: "نوع الجلسة غير صالح لهذا المسار" };
+    }
     if (!parsed?.exp || Date.now() > Number(parsed.exp)) {
       setResponseStatus(event, 401);
       return { success: false, message: "انتهت صلاحية الجلسة" };
@@ -43,7 +47,7 @@ export default defineEventHandler(async (event) => {
       rankPriority: context.rankPriority,
       isStaff: context.isStaff,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Auth me error:", err);
     setResponseStatus(event, 500);
     return { success: false, message: "حدث خطأ أثناء جلب سياق الحساب" };

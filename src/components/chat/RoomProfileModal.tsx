@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -38,6 +38,7 @@ import { showSuccess, showError } from "@/utils/toast";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { getLevelBadgeClass, getRoomRoleBadgeInfo } from "./MemberList";
+import GiftSendAction from "./GiftSendAction";
 
 export function RoomVerifiedBadgeIcon({ className = "w-9 h-9" }: { className?: string }) {
   return (
@@ -477,12 +478,15 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
     setIsLiking(true);
 
     try {
+      const token = localStorage.getItem("authToken") || "";
       const res = await fetch("/api/rooms/likes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           roomId: activeRoom?.id || roomId,
-          userId: currentUserId,
         }),
       });
       const data = await res.json();
@@ -606,13 +610,23 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Role Badge */}
-                    {roleInfo && (
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] leading-none shrink-0 ${roleInfo.cls}`}>
-                        <span>{roleInfo.icon}</span>
-                        <span>{roleInfo.name}</span>
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <GiftSendAction
+                        recipient={{
+                          id: String(member.id || ""),
+                          name: String(member.username || "عضو"),
+                          role: member.role,
+                        }}
+                        iconOnly
+                        className="h-8 w-8 rounded-full"
+                      />
+                      {roleInfo && (
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] leading-none ${roleInfo.cls}`}>
+                          <span>{roleInfo.icon}</span>
+                          <span>{roleInfo.name}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -635,7 +649,7 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
               <div className="relative h-44 w-full bg-gradient-to-b from-[#2a1355] via-[#1f103d] to-[#130928] overflow-hidden flex flex-col justify-between p-4">
                 {/* الغلاف إذا توفر */}
                 {activeRoom?.coverUrl && (
-                  <img 
+                  <img loading="lazy" 
                     src={activeRoom.coverUrl} 
                     alt="غلاف الغرفة" 
                     className="absolute inset-0 w-full h-full object-cover opacity-35"
@@ -930,7 +944,7 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
                                 <RoomVerifiedBadgeIcon className="w-9 h-9" />
                               ) : b.type === "custom" ? (
                                 typeof b.icon === "string" && (b.icon.startsWith("http") || b.icon.startsWith("/")) ? (
-                                  <img src={b.icon} alt={b.name} className="w-full h-full object-contain rounded-full" />
+                                  <img loading="lazy" src={b.icon} alt={b.name} className="w-full h-full object-contain rounded-full" />
                                 ) : (
                                   <div className="w-full h-full rounded-full bg-purple-600 text-white flex items-center justify-center shadow-xs">
                                     <Award size={18} />

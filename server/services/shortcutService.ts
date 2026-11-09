@@ -4,7 +4,7 @@ const CACHE_TTL_MS = 30_000;
 let cachedShortcuts: { shortcut: string; replacement: string }[] | null = null;
 let lastCacheTime = 0;
 
-async function getShortcuts() {
+async function getShortcuts(failClosed = false) {
   const now = Date.now();
   if (cachedShortcuts && now - lastCacheTime < CACHE_TTL_MS) {
     return cachedShortcuts;
@@ -20,6 +20,7 @@ async function getShortcuts() {
     return cachedShortcuts;
   } catch (err) {
     console.error("Failed to fetch shortcuts:", err);
+    if (failClosed) throw err;
     return cachedShortcuts || [];
   }
 }
@@ -28,9 +29,9 @@ export const clearShortcutCache = () => {
   cachedShortcuts = null;
 };
 
-export async function applyShortcuts(text: string): Promise<string> {
+async function applyShortcutsWithPolicy(text: string, failClosed: boolean): Promise<string> {
   if (!text) return text;
-  const shortcuts = await getShortcuts();
+  const shortcuts = await getShortcuts(failClosed);
   if (shortcuts.length === 0) return text;
 
   let result = text;
@@ -42,3 +43,9 @@ export async function applyShortcuts(text: string): Promise<string> {
   }
   return result;
 }
+
+export const applyShortcuts = (text: string): Promise<string> =>
+  applyShortcutsWithPolicy(text, false);
+
+export const applyShortcutsStrict = (text: string): Promise<string> =>
+  applyShortcutsWithPolicy(text, true);

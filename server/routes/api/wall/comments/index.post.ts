@@ -5,27 +5,48 @@ import { applyShortcuts } from "../../../../services/shortcutService";
 import { createNotification } from "../../../../services/notificationService";
 import { dbPool } from "../../../../db";
 import { publishGlobalEvent } from "../../../../socket/SocketBroker";
+import { getUserAuthContext } from "../../../../services/adminAccess";
+import { hasChatFeatureAccess } from "../../../../services/chatAuthorization";
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody(event);
-  const { postId, authorId, authorName, authorRole, text, parentId } = body;
+  const auth = getUserAuthContext(event);
 
-  if (!postId || !authorId || !text) {
+  if (!auth.ok) {
+    setResponseStatus(event, auth.statusCode);
+    return { success: false, message: auth.message };
+  }
+  const body = await readBody<Record<string, unknown> | null>(event);
+  const postId = body?.postId;
+  const text = body?.text;
+  const parentId = body?.parentId;
+  if (
+    (typeof postId !== "string" && typeof postId !== "number") ||
+    !String(postId).trim() ||
+    typeof text !== "string" ||
+    !text.trim()
+  ) {
     setResponseStatus(event, 400);
     return { success: false, message: "البيانات ناقصة" };
   }
+  if (text.length > 1000) {
+    setResponseStatus(event, 413);
+    return { success: false, message: "التعليق طويل جداً" };
+  }
+  if (!(await hasChatFeatureAccess({ id: auth.userId, role: auth.role }, ["wall_comments.use"]))) {
+    setResponseStatus(event, 403);
+    return { success: false, message: "لا تملك صلاحية التعليق على الحائط" };
+  }
 
   try {
-    const isGuest = authorRole === "guest" || String(authorId).startsWith("guest-");
-    const userRes = isGuest
-      ? { rows: [] as any[] }
+    const userRes = auth.role === "guest"
+      ? { rows: [] }
       : await dbPool.query(
           `SELECT u.username, u.topic, u.pic, u.muted as legacy_muted, up.muted as profile_muted 
            FROM users u
            LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
            WHERE CAST(u.uid AS text) = $1 OR CAST(u.id AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($1) 
            LIMIT 1`,
-          [authorId],
+          [auth.userId],
         );
     const user = userRes.rows[0];
     const isMuted = user ? (Boolean(user.profile_muted) || Boolean(user.legacy_muted && user.legacy_muted !== 0 && user.legacy_muted !== "0")) : false;
@@ -33,7 +54,7 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403);
       return { success: false, message: "تم منعك من الحديث في الدردشة" };
     }
-    const fallbackName = authorName || authorId;
+    const fallbackName = auth.username;
 
     const expanded = await applyShortcuts(text);
     const filterRes = await processText({
@@ -47,7 +68,7 @@ export default defineEventHandler(async (event) => {
       return { success: false, message: "التعليق مخالف للقوانين" };
     }
 
-    const comment = await createWallComment(postId, authorId, fallbackName, filterRes.filteredText, parentId);
+    const comment = await createWallComment(String(postId), auth.userId, fallbackName, filterRes.filteredText, parentId);
 
     // Notification: if reply → notify comment author, else notify post author
     try {
@@ -58,8 +79,8 @@ export default defineEventHandler(async (event) => {
         );
         if (parentRes.rows.length > 0) {
           const parentAuthorId = parentRes.rows[0].author_id;
-          if (parentAuthorId && String(parentAuthorId) !== String(authorId)) {
-            await createNotification(parentAuthorId, authorId, "reply", "wall_comment", comment.id, {
+          if (parentAuthorId && String(parentAuthorId) !== String(auth.userId)) {
+            await createNotification(parentAuthorId, auth.userId, "reply", "wall_comment", comment.id, {
               postId,
               commentBody: text.slice(0, 100),
             }).catch(() => {});
@@ -72,14 +93,16 @@ export default defineEventHandler(async (event) => {
         );
         if (postRes.rows.length > 0) {
           const postAuthorId = postRes.rows[0].uid;
-          if (postAuthorId && String(postAuthorId) !== String(authorId)) {
-            await createNotification(postAuthorId, authorId, "comment", "wall_post", postId, {
+          if (postAuthorId && String(postAuthorId) !== String(auth.userId)) {
+            await createNotification(postAuthorId, auth.userId, "comment", "wall_post", postId, {
               commentBody: text.slice(0, 100),
             }).catch(() => {});
           }
         }
       }
-    } catch (_) {}
+    } catch (error) {
+      console.error("Wall comment notification error:", error);
+    }
 
     publishGlobalEvent("wall_comment_created", comment).catch(() => {});
     return { success: true, comment };

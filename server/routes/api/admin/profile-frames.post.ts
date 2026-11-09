@@ -1,10 +1,9 @@
 import { defineEventHandler, readBody } from "h3";
 import { dbPool } from "../../../db";
-import { getAdminContext } from "../../../services/adminAccess";
+import { guardAdminAction } from "../../../services/adminPermissions";
 
 export default defineEventHandler(async (event) => {
-  const admin = getAdminContext(event);
-  if (!admin.ok) return { success: false, message: admin.message };
+  await guardAdminAction(event, "admin_profileframes");
 
   const body = await readBody<{ name?: string; image_url: string; link?: string; sort_order?: number }>(event);
   if (!body?.image_url?.trim()) return { success: false, message: "رابط الصورة مطلوب" };

@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
          r.mic AS "micSlots",
          r.pic AS "avatarUrl",
          r.owner,
-         u.topic AS "ownerName",
+         COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), u.username) AS "ownerName",
          u.username AS "ownerUsername",
          r.color,
          r.welcome,

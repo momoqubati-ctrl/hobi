@@ -1,6 +1,7 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
+import { defineEventHandler, getQuery } from "h3";
 import { dbPool } from "../../../db";
 import { guardAdminAction } from "../../../services/adminPermissions";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -16,7 +17,7 @@ export default defineEventHandler(async (event) => {
 
     if (search) {
       params.push(`%${search}%`);
-      where = `WHERE u_actor.topic ILIKE $3 OR u_target.topic ILIKE $3 OR r.topic ILIKE $3 OR me.event_type ILIKE $3`;
+      where = `WHERE u_actor.display_name ILIKE $3 OR u_actor.topic ILIKE $3 OR u_target.display_name ILIKE $3 OR u_target.topic ILIKE $3 OR r.topic ILIKE $3 OR me.event_type ILIKE $3`;
     }
 
     const result = await dbPool.query(
@@ -26,9 +27,9 @@ export default defineEventHandler(async (event) => {
         me.reason,
         me.created_at as "createdAt",
         me.metadata,
-        u_actor.topic as "actorName",
+        COALESCE(NULLIF(u_actor.display_name, ''), NULLIF(u_actor.topic, ''), u_actor.username) as "actorName",
         u_actor.power as "actorRole",
-        u_target.topic as "targetName",
+        COALESCE(NULLIF(u_target.display_name, ''), NULLIF(u_target.topic, ''), u_target.username) as "targetName",
         u_target.idreg as "targetIdreg",
         r.topic as "roomName"
        FROM moderation_events me
@@ -43,6 +44,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, events: result.rows };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

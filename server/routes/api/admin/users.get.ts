@@ -1,12 +1,13 @@
 import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
 import { getAdminContext } from "../../../services/adminAccess";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   const admin = getAdminContext(event);
   if (!admin.ok) {
     setResponseStatus(event, admin.statusCode);
-    return { success: false, message: admin.message };
+    return { success: false, message: admin.message, error: admin.message };
   }
 
   const query = getQuery(event);
@@ -51,7 +52,6 @@ export default defineEventHandler(async (event) => {
       users: results.rows
     };
   } catch (err: any) {
-    console.error("Admin users error:", err);
-    return { success: false, error: err.message };
+    return handleApiError(event, err);
   }
 });

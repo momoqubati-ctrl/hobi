@@ -1,13 +1,15 @@
-import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { readBody, setResponseStatus } from "h3";
 import { markAsRead } from "../../../services/notificationService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const body = await readBody(event);
-  const { notificationId, userId } = body;
+  const notificationId = typeof body?.notificationId === "string" ? body.notificationId.trim() : "";
+  const userId = auth.userId;
 
-  if (!notificationId || !userId) {
+  if (!notificationId) {
     setResponseStatus(event, 400);
-    return { success: false, message: "notificationId, userId مطلوبان" };
+    return { success: false, message: "notificationId مطلوب" };
   }
 
   try {
@@ -15,6 +17,7 @@ export default defineEventHandler(async (event) => {
     return { success: true };
   } catch (error) {
     console.error("markNotificationRead error:", error);
+    setResponseStatus(event, 500);
     return { success: false, message: "تعذر تحديث الحالة" };
   }
 });

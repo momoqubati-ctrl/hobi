@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   decryptVoiceProviderSecret,
   encryptVoiceProviderSecret,
+  VoiceProviderEncryptionConfigurationError,
 } from "../server/services/voiceProviderEncryption";
 
 const VALID_KEY = Buffer.alloc(32, 0x56).toString("base64");
@@ -45,7 +46,7 @@ test("voice provider encryption rejects a missing key", async () => {
   await withEncryptionKey(undefined, () => {
     assert.throws(
       () => encryptVoiceProviderSecret("livekit-api-secret-value"),
-      /VOICE_PROVIDER_ENCRYPTION_KEY/,
+      VoiceProviderEncryptionConfigurationError,
     );
   });
 });
@@ -54,14 +55,14 @@ test("voice provider encryption rejects malformed or incorrectly sized keys", as
   await withEncryptionKey("not-base64!", () => {
     assert.throws(
       () => encryptVoiceProviderSecret("livekit-api-secret-value"),
-      /VOICE_PROVIDER_ENCRYPTION_KEY/,
+      VoiceProviderEncryptionConfigurationError,
     );
   });
 
   await withEncryptionKey(Buffer.from("too-short").toString("base64"), () => {
     assert.throws(
       () => encryptVoiceProviderSecret("livekit-api-secret-value"),
-      /VOICE_PROVIDER_ENCRYPTION_KEY/,
+      VoiceProviderEncryptionConfigurationError,
     );
   });
 });

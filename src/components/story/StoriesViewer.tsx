@@ -3,6 +3,7 @@ import { X, Heart, MessageCircle, Share2, Gift, Eye, Trash2, Loader2, Volume2, V
 import { useStoriesStore, getStoriesByUser, Story } from "@/lib/stories-store";
 import { getSocket } from "@/lib/socket";
 import ViewerOverlay from "./ViewerOverlay";
+import { PermissionGate } from "@/components/ui/PermissionGate";
 
 const IMAGE_STORY_DURATION_MS = 5000;
 
@@ -322,6 +323,7 @@ const StoriesViewer = () => {
             </div>
             {/* زر متابعة (+) فوق/بجانب صورة البروفايل */}
             {!isOwner && currentUser && !currentStory.followedByMe && (
+              <PermissionGate requiredPermissions={["story_interactions.use"]}>
               <button
                 type="button"
                 onClick={handleFollowAuthor}
@@ -335,6 +337,7 @@ const StoriesViewer = () => {
                   <Plus className="h-2.5 w-2.5 stroke-[3]" />
                 )}
               </button>
+              </PermissionGate>
             )}
           </div>
           <div>
@@ -499,27 +502,33 @@ const StoriesViewer = () => {
           </button>
         )}
 
-        <button onClick={handleLike} className="flex flex-col items-center gap-1 text-white/90 hover:text-white group" title="إعجاب">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 group-hover:bg-white/20 transition-all border border-white/10">
-            <Heart className={`h-5 w-5 transition-transform active:scale-125 ${currentStory.likedByMe ? "fill-red-500 text-red-500" : ""}`} />
-          </div>
-          <span className="text-[10px] font-bold">{currentStory.likeCount}</span>
-        </button>
+        <PermissionGate requiredPermissions={["story_interactions.use"]}>
+          <button onClick={handleLike} className="flex flex-col items-center gap-1 text-white/90 hover:text-white group" title="إعجاب">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 group-hover:bg-white/20 transition-all border border-white/10">
+              <Heart className={`h-5 w-5 transition-transform active:scale-125 ${currentStory.likedByMe ? "fill-red-500 text-red-500" : ""}`} />
+            </div>
+            <span className="text-[10px] font-bold">{currentStory.likeCount}</span>
+          </button>
+        </PermissionGate>
 
-        <button onClick={handleShare} className="flex flex-col items-center gap-1 text-white/90 hover:text-white group" title="مشاركة">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 group-hover:bg-white/20 transition-all border border-white/10">
-            <Share2 className="h-5 w-5" />
-          </div>
-          <span className="text-[10px] font-bold">مشاركة</span>
-        </button>
+        <PermissionGate requiredPermissions={["story_interactions.use"]}>
+          <button onClick={handleShare} className="flex flex-col items-center gap-1 text-white/90 hover:text-white group" title="مشاركة">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 group-hover:bg-white/20 transition-all border border-white/10">
+              <Share2 className="h-5 w-5" />
+            </div>
+            <span className="text-[10px] font-bold">مشاركة</span>
+          </button>
+        </PermissionGate>
 
         {isOwner && (
+          <PermissionGate requiredPermissions={["story_publish.use"]}>
           <button onClick={handleDelete} className="flex flex-col items-center gap-1 text-red-400 hover:text-red-300 group" title="حذف القصة">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 group-hover:bg-red-500/20 transition-all border border-red-500/20">
               <Trash2 className="h-5 w-5" />
             </div>
             <span className="text-[10px] font-bold">حذف</span>
           </button>
+          </PermissionGate>
         )}
       </div>
 

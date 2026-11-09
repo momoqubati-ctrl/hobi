@@ -12,10 +12,13 @@ import { listRooms, addMessage, getRoomMessage, updateRoomMessageReactions, crea
 import { processText } from "../services/filterService";
 import { applyShortcuts } from "../services/shortcutService";
 import { hasPermission } from "../services/permissionEngine";
+import { getMessagePermissionRequirements } from "../../src/lib/chatFeaturePermissions";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
 import { eventBus } from "../core/events/EventBus";
 import { bootstrapWorkers } from "../workers";
 import { randomUUID } from "node:crypto";
 import { vacateUserFromAllSeats } from "./voiceStageHandlers";
+import { disconnectConfiguredLiveKitParticipant } from "../services/livekitVoicePermissions";
 
 const TYPING_THROTTLE_MS = 900;
 const typingTimers = new Map<string, NodeJS.Timeout>();
@@ -24,6 +27,17 @@ const pendingLeaves = new Map<string, { roomId: string; timeout: NodeJS.Timeout 
 export function registerRoomHandlers(io: Server, socket: Socket): void {
   const user = socket.data.user;
   bootstrapWorkers();
+  const disconnectLiveKitParticipant = async (roomId: string) => {
+    try {
+      await disconnectConfiguredLiveKitParticipant(roomId, String(user.id || ""));
+    } catch (error) {
+      console.error("[LiveKit] Failed to disconnect participant after leaving room", {
+        roomId,
+        identity: String(user.id || ""),
+        error,
+      });
+    }
+  };
 
   // الانضمام لغرفة تنبيهات المشرفين إذا كان يملك الصلاحية
   if (user.role === 'admin' || user.role === 'owner') {
@@ -379,6 +393,42 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       console.error("Room kick check error:", e);
     }
 
+    // ── ترطيب حالة الكتم الغرفي للغرفة (فصل عن الكتم العام) ──
+    try {
+      let muteCanonicalRoomId = roomId;
+      try {
+        const { resolveRoomId } = await import("./roomAccess");
+        muteCanonicalRoomId = (await resolveRoomId(roomId)) || roomId;
+      } catch (_) {}
+      const { roomMuteService } = await import("../services/roomMuteService");
+      const userMutedRooms = (socket.data.user as any).roomMutedRooms instanceof Set
+        ? (socket.data.user as any).roomMutedRooms
+        : ((socket.data.user as any).roomMutedRooms = new Set<string>());
+      const wasRoomMuted = userMutedRooms.has(muteCanonicalRoomId) || userMutedRooms.has(roomId);
+      const isRoomMuted = await roomMuteService.isRoomMutedForUser([muteCanonicalRoomId, roomId], String(user.id || ""));
+      if (isRoomMuted) {
+        userMutedRooms.add(muteCanonicalRoomId);
+        userMutedRooms.add(roomId);
+        userMutedRooms.add(`room:${muteCanonicalRoomId}`);
+        userMutedRooms.add(`room:${roomId}`);
+      } else {
+        userMutedRooms.delete(muteCanonicalRoomId);
+        userMutedRooms.delete(roomId);
+        userMutedRooms.delete(`room:${muteCanonicalRoomId}`);
+        userMutedRooms.delete(`room:${roomId}`);
+      }
+      // إبلاغ العميل بحالة الكتم لهذه الغرفة فقط عند أول دخول أو عند التغيير
+      if (isRoomMuted || wasRoomMuted) {
+        socket.emit("muted_state", {
+          muted: Boolean((socket.data.user as any).muted),
+          roomMuted: isRoomMuted,
+          roomId: muteCanonicalRoomId,
+        });
+      }
+    } catch (e) {
+      console.warn("Room mute hydration failed:", e);
+    }
+
     // جلب قائمة الغرف مرة واحدة وإعادة استخدامها في كل الفحوصات (Fix #9)
     let allRooms: Awaited<ReturnType<typeof listRooms>> = [];
     try {
@@ -459,26 +509,30 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       pendingLeaves.delete(socket.id);
     }
 
-  const userKey = user.id;
-  const pendingDisconnect = pendingDisconnects.get(userKey);
     let isReconnect = false;
 
-    if (pendingDisconnect) {
+    // البحث عن معلّقات قطع اتصال لهذه الجلسة أو لأي جلسة سابقة لنفس المستخدم
+    // (المفاتيح الآن socketId لكل جلسة — نمسح البنية بدلاً من المفتاح المباشر)
+    for (const [pKey, pEntry] of Array.from(pendingDisconnects.entries())) {
+      const isOwn = pKey === socket.id || pEntry.socketId === socket.id;
+      const isSameUser = String((pEntry.userData as any)?.id || "") === String(user.id);
+      if (!isOwn && !isSameUser) continue;
+
       // إلغاء مؤقت الخروج بالكامل!
-      clearTimeout(pendingDisconnect.timeout);
-      if (pendingDisconnect.presenceTimeout) {
-        clearTimeout(pendingDisconnect.presenceTimeout);
-      }
-  pendingDisconnects.delete(userKey);
+      if (pEntry.timeout) clearTimeout(pEntry.timeout);
+      if (pEntry.presenceTimeout) clearTimeout(pEntry.presenceTimeout);
+      pendingDisconnects.delete(pKey);
 
       // إزالة السوكت القديم من الحضور فوراً لمنع الازدواجية
-      const oldSocketId = pendingDisconnect.socketId;
-      await removeConnectedUser(oldSocketId);
+      const oldSocketId = pEntry.socketId;
+      if (oldSocketId !== socket.id) {
+        await removeConnectedUser(oldSocketId);
+      }
 
-      if (pendingDisconnect.roomId === roomId) {
+      if (pEntry.roomId === roomId) {
         isReconnect = true;
       } else {
-        previousRoomId = pendingDisconnect.roomId;
+        previousRoomId = pEntry.roomId;
       }
     }
     
@@ -508,6 +562,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
 
       socket.leave(`room:${previousRoomId}`);
       await leaveRoom(socket.id, previousRoomId);
+      await disconnectLiveKitParticipant(previousRoomId);
       await vacateUserFromAllSeats(user.id, io, user.username);
 
       const prevCountAfter = await getRoomMemberCount(previousRoomId);
@@ -715,9 +770,28 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return;
       }
 
+      const requiredPermissions = getMessagePermissionRequirements({
+        channel: "room",
+        text,
+        mediaType,
+        hasMedia: Boolean(mediaUrl || data?.mediaUrls?.length),
+        hasEffects: Boolean(data?.sticker || data?.animatedFaces?.length),
+      });
+      if (!(await hasChatFeatureAccess(user, requiredPermissions))) {
+        callback?.({ success: false, message: "لا تملك صلاحية استخدام إحدى ميزات الرسالة" });
+        return;
+      }
+
       // فحص الإسكات - المستخدم المكتوم لا يمكنه إرسال رسائل
       if ((socket.data.user as any).muted) {
         callback?.({ success: false, muted: true, message: "تم منعك من الحديث في الدردشة" });
+        return;
+      }
+
+      // فحص الكتم الغرفي (منفصل عن العام): يمنع فقط داخل الغرفة المكتوم عليها
+      const roomMutedRoomsFlag = (socket.data.user as any).roomMutedRooms;
+      if (roomMutedRoomsFlag instanceof Set && (roomMutedRoomsFlag.has(roomId) || roomMutedRoomsFlag.has(`room:${roomId}`))) {
+        callback?.({ success: false, muted: true, roomMuted: true, message: "تم منعك من الحديث في هذه الغرفة" });
         return;
       }
 
@@ -759,7 +833,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       const message = addMessage({
         roomId,
         clientId,
-        user: user.username,
+        user: (socket.data.user as any)?.displayName || (user as any)?.displayName || user.username,
         userId: String(user.id || ""),
         role: user.role,
         countryCode: user.countryCode,
@@ -811,9 +885,19 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return callback?.({ success: false, error: "نوع تفاعل غير صالح" });
       }
 
+      if (!(await hasChatFeatureAccess(user, ["room_reactions.use"]))) {
+        return callback?.({ success: false, error: "لا تملك صلاحية التفاعل مع رسائل الغرف" });
+      }
+
       // فحص الإسكات
       if ((socket.data.user as any).muted) {
         return callback?.({ success: false, muted: true, error: "تم منعك من الحديث في الدردشة" });
+      }
+
+      // فحص الكتم الغرفي (منفصل عن العام)
+      const reactRoomMutedFlag = (socket.data.user as any).roomMutedRooms;
+      if (reactRoomMutedFlag instanceof Set && (reactRoomMutedFlag.has(roomId) || reactRoomMutedFlag.has(`room:${roomId}`))) {
+        return callback?.({ success: false, muted: true, roomMuted: true, error: "تم منعك من الحديث في هذه الغرفة" });
       }
 
       const msg = getRoomMessage(roomId, messageId);
@@ -878,6 +962,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       console.log(`[KICK_TRACE_LEAVE] runLeave triggered (new server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket.data as any).kicked}`);
       socket.leave(`room:${roomId}`);
       await leaveRoom(socket.id, roomId);
+      await disconnectLiveKitParticipant(roomId);
       await vacateUserFromAllSeats(user.id, io, user.username);
       if (socket.data.user.roomId === roomId) {
         socket.data.user.roomId = "";
@@ -945,20 +1030,23 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     }
 
     const roomId = socket.data?.user?.roomId || "";
-    const userKey = user.id;
+    // مفتاح مؤقت قطع الاتصال لكل "جلسة" (socketId) وليس للمستخدم، حتى لا يُلغى مؤقّت
+    // جلسة قديمة عند انقطاع جلسة ثانية لنفس المستخدم ويبقى سجلها معلقاً للأبد
+    const socketKey = socket.id;
 
-    if (pendingDisconnects.has(userKey)) {
-      const prev = pendingDisconnects.get(userKey)!;
-      if (prev.timeout) clearTimeout(prev.timeout);
-      if (prev.presenceTimeout) clearTimeout(prev.presenceTimeout);
-      pendingDisconnects.delete(userKey);
+    const ownPending = pendingDisconnects.get(socketKey);
+    if (ownPending) {
+      if (ownPending.timeout) clearTimeout(ownPending.timeout);
+      if (ownPending.presenceTimeout) clearTimeout(ownPending.presenceTimeout);
+      pendingDisconnects.delete(socketKey);
     }
 
     const runDisconnect = async () => {
-      pendingDisconnects.delete(userKey);
+      pendingDisconnects.delete(socketKey);
       console.log(`[KICK_TRACE_DISCONNECT] runDisconnect triggered (new server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket.data as any).kicked}`);
 
       if (roomId) {
+        await disconnectLiveKitParticipant(roomId);
         await vacateUserFromAllSeats(user.id, io, user.username);
 
         // إذا كان العضو مطروداً لا نرسل رسالة "غادر الغرفة"
@@ -1028,7 +1116,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       runDisconnect().catch(err => console.error("Delayed disconnect failed:", err));
     }, 3000);
 
-    pendingDisconnects.set(userKey, {
+    pendingDisconnects.set(socketKey, {
       roomId,
       timeout,
       presenceTimeout: timeout,

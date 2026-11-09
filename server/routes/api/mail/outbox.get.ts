@@ -1,17 +1,9 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { getOutbox } from "../../../services/internalMailService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
-  const query = getQuery(event);
-  const userId = query.userId as string;
-
-  if (!userId) {
-    setResponseStatus(event, 400);
-    return { success: false, message: "userId مطلوب" };
-  }
-
+export default createAuthenticatedUserHandler(async (_event, auth) => {
   try {
-    const mails = await getOutbox(userId);
+    const mails = await getOutbox(auth.userId);
     return { success: true, mails };
   } catch (error) {
     console.error("getOutbox error:", error);

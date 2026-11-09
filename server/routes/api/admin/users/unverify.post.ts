@@ -1,12 +1,13 @@
 import { defineEventHandler, readBody, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
 import { guardAdminAction, logAdminAudit } from "../../../../services/adminPermissions";
+import { handleApiError } from "../../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
     const admin = await guardAdminAction(event, "edituser");
     const body = await readBody(event);
-    const { username } = body;
+    const { username } = body || {};
 
     if (!username) {
       setResponseStatus(event, 400);
@@ -40,7 +41,6 @@ export default defineEventHandler(async (event) => {
       message: `تم إلغاء توثيق العضو ${user.topic} بنجاح` 
     };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message || "حدث خطأ أثناء إلغاء التوثيق" };
+    return handleApiError(event, error);
   }
 });

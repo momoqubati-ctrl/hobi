@@ -10,6 +10,7 @@ import PrivateChat from "./PrivateChat";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { getCountryFlagSrc } from "@/lib/countries";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/authSession";
 
 // ─── أنواع البيانات ──────────────────────────────────────────────────────────
 
@@ -48,6 +49,11 @@ const getStoredUser = () => {
   catch { return null; }
 };
 
+const fetchPmUser = (userId: string) =>
+  fetch(`/api/pm/user?userId=${encodeURIComponent(userId)}`, {
+    headers: getAuthHeaders(),
+  });
+
 // ─── المكوّن الرئيسي ─────────────────────────────────────────────────────────
 
 const PrivateList = ({
@@ -71,6 +77,7 @@ const PrivateList = ({
   // ref لتجنب stale closure في handler الـ socket
   const selectedConvIdRef = useRef<string | null>(null);
   const pmUnreadRef = useRef(pmUnreadCount);
+  const recentPmClientIdsRef = useRef(new Set<string>());
 
   useEffect(() => { selectedConvIdRef.current = selectedConvId; }, [selectedConvId]);
   useEffect(() => { pmUnreadRef.current = pmUnreadCount; }, [pmUnreadCount]);
@@ -91,7 +98,7 @@ const PrivateList = ({
         for (const conv of res.conversations) {
           const other = conv.otherUser;
           if (other?.id && (other.name === "عضو" || other.name === "..." || other.avatar === "/pic.png")) {
-            fetch(`/api/pm/user?userId=${other.id}`)
+            fetchPmUser(other.id)
               .then(r => r.json())
               .then(data => {
                 if (data.success && data.user) {
@@ -124,6 +131,16 @@ const PrivateList = ({
     // تحديث القائمة عند وصول رسالة جديدة
     const onNewMessage = (msg: any) => {
       if (!msg?.conversationId) return;
+      if (msg.clientId) {
+        const dedupeKey = `${msg.senderId}:${msg.clientId}`;
+        const recentIds = recentPmClientIdsRef.current;
+        if (recentIds.has(dedupeKey)) return;
+        recentIds.add(dedupeKey);
+        if (recentIds.size > 200) {
+          const oldestId = recentIds.values().next().value;
+          if (oldestId !== undefined) recentIds.delete(oldestId);
+        }
+      }
 
       const currentOpenConvId = selectedConvIdRef.current;
 
@@ -156,7 +173,7 @@ const PrivateList = ({
           };
           // جلب البيانات الحقيقية للمستخدم الآخر إذا كان المرسل هو الحالي
           if (msg.senderId === currentUser?.id && msg.receiverId) {
-            fetch(`/api/pm/user?userId=${msg.receiverId}`)
+            fetchPmUser(msg.receiverId)
               .then(r => r.json())
               .then(data => {
                 if (data.success && data.user) {
@@ -211,10 +228,40 @@ const PrivateList = ({
     };
     socket.on("connect", onReconnect);
 
+    const onConversationExpired = (data: { conversationId?: string }) => {
+      if (!data?.conversationId) return;
+      setConversations((prev) => {
+        const remaining = prev.filter((conversation) =>
+          conversation.conversationId !== data.conversationId,
+        );
+        setPmUnreadCount(remaining.reduce((total, conversation) => total + conversation.unreadCount, 0));
+        return remaining;
+      });
+      if (selectedConvIdRef.current === data.conversationId) {
+        selectedConvIdRef.current = null;
+        setSelectedConvId(null);
+        setSelectedOtherUser(null);
+      }
+      recentPmClientIdsRef.current.clear();
+    };
+    socket.on("pm:conversation_expired", onConversationExpired);
+
+    const onAuthLogout = () => {
+      setConversations([]);
+      setSelectedConvId(null);
+      selectedConvIdRef.current = null;
+      setSelectedOtherUser(null);
+      setPmUnreadCount(0);
+      recentPmClientIdsRef.current.clear();
+    };
+    window.addEventListener("app-auth-logout", onAuthLogout);
+
     return () => {
       socket.off("pm:message", onNewMessage);
       socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("connect", onReconnect);
+      socket.off("pm:conversation_expired", onConversationExpired);
+      window.removeEventListener("app-auth-logout", onAuthLogout);
     };
   }, [fetchConversations, currentUser?.id, setPmUnreadCount]);
 
@@ -245,7 +292,7 @@ const PrivateList = ({
       setSelectedConvId(convId);
       onChatOpened?.();
 
-      fetch(`/api/pm/user?userId=${openWithUserId}`)
+      fetchPmUser(openWithUserId)
         .then(r => r.json())
         .then(data => {
           if (data.success && data.user) {
@@ -275,7 +322,7 @@ const PrivateList = ({
     // جلب البيانات الحديثة للمستخدم الآخر من قاعدة البيانات
     const otherId = conv.otherUser?.id;
     if (otherId && otherId !== "0") {
-      fetch(`/api/pm/user?userId=${otherId}`)
+      fetchPmUser(otherId)
         .then(r => r.json())
         .then(data => {
           if (data.success && data.user) {

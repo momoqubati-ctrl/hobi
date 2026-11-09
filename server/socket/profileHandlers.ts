@@ -4,66 +4,47 @@ import { createNotification } from "../services/notificationService";
 import { db, dbPool } from "../db";
 import { userProfiles } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { hasPermission, PermissionKey, getUserContext, invalidatePermissionCache } from "../services/permissionEngine";
+import { getUserContext, invalidatePermissionCache, canModerate } from "../services/permissionEngine";
+import { isSystemOwnerUsername } from "../services/systemOwner";
+import { isSiteOwnerUsername } from "../services/siteOwner";
 import { getAllOnlineUsers, updateUserRolePresence } from "./presenceManager";
 import { canExecuteAction, logModerationEvent, PowerAction, getPowerLevel, assignUserRole, getUserAuthoritativeRank } from "../services/powersService";
 import { listRooms } from "../services/chatStore";
 import { issueToken } from "../services/authService";
+import { voiceStageStore } from "../services/voiceStageStore";
+import { syncConfiguredLiveKitPublishPermission } from "../services/livekitVoicePermissions";
+import { canPublishFromSeat } from "../services/voiceTokenAccess";
+import { publishSocketEvent } from "./SocketBroker";
+import { canRunProfileAdminAction, ProfileAdminAction } from "../../src/lib/profileAdminPermissions";
+import { alertThrottle } from "../services/alertThrottle";
+import { SYSTEM_OWNER_RANK } from "../services/systemOwner";
 
-type AdminAction =
-  | "nick"
-  | "message"
-  | "likes"
-  | "site_badge"
-  | "power"
-  | "room_move"
-  | "room_kick"
-  | "room_mute"
-  | "room_unmute"
-  | "history"
-  | "kick"
-  | "delete_pic"
-  | "ban"
-  | "global_mute"
-  | "pull_to_room";
-
-const ADMIN_ACTION_PERMISSION: Partial<Record<AdminAction, PermissionKey>> = {
-  nick: "edituser",
-  message: "edituser",
-  likes: "ulike",
-  site_badge: "edituser",
-  power: "setpower",
-  room_move: "loveu",
-  pull_to_room: "loveu",
-  history: "history",
-  kick: "kick",
-  delete_pic: "kick",
-  ban: "ban",
-  global_mute: "meiut",
-};
+type AdminAction = ProfileAdminAction;
 
 const normalizeId = (value: unknown) => String(value || "").trim();
 
-const canRunAdminAction = async (socket: Socket, userId: string, action: AdminAction) => {
-  const role = String(socket.data.user?.role || "").toLowerCase().trim();
-  if (["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(role)) return true;
+const canRunAdminAction = async (...args: [string, AdminAction] | [Socket, string, AdminAction] | [string | Socket, string | AdminAction, AdminAction?]) => {
+  let userIdValue: string | undefined;
+  let actionValue: AdminAction | undefined;
 
-  if (action === "room_kick" || action === "room_mute" || action === "room_unmute") {
-    return ["moderator", "سوبر", "مشرف"].includes(role);
+  if (typeof args[0] === "string") {
+    userIdValue = args[0];
+    actionValue = args[1] as AdminAction | undefined;
+  } else {
+    userIdValue = typeof args[1] === "string" ? args[1] : (args[0] as any)?.data?.user?.id;
+    actionValue = (args[2] ?? args[1]) as AdminAction | undefined;
   }
 
-  const permission = ADMIN_ACTION_PERMISSION[action];
-  if (!permission) return false;
+  const userId = normalizeId(userIdValue);
+  if (!userId || !actionValue) {
+    return false;
+  }
 
   try {
-    return (
-      (await hasPermission(userId, `${permission}.edit` as any)) ||
-      (await hasPermission(userId, `${permission}.all` as any)) ||
-      (await hasPermission(userId, `${permission}.read` as any)) ||
-      (await hasPermission(userId, permission as any))
-    );
+    const context = await getUserContext(userId);
+    return canRunProfileAdminAction(Array.from(context.permissions), actionValue);
   } catch (error) {
-    console.warn(`[ProfilePermissions] failed to check ${permission} for ${userId}:`, error);
+    console.warn(`[ProfilePermissions] failed to check ${actionValue} for ${userId}:`, error);
     return false;
   }
 };
@@ -187,7 +168,18 @@ const applyLegacyProfileUpdate = async (profileId: string, updates: Record<strin
     legacyValues.push(value);
   };
 
-  if (updates.topic !== undefined) addLegacyField("topic", String(updates.topic).slice(0, 120));
+  const resolvedDisplayName = updates.display_name !== undefined
+    ? String(updates.display_name).trim().slice(0, 120)
+    : (updates.topic !== undefined ? String(updates.topic).trim().slice(0, 120) : undefined);
+
+  if (resolvedDisplayName !== undefined) {
+    addLegacyField("display_name", resolvedDisplayName);
+    addLegacyField("topic", resolvedDisplayName);
+  }
+  if (updates.mention_name !== undefined) {
+    const cleanM = String(updates.mention_name).toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    addLegacyField("mention_name", cleanM);
+  }
   if (updates.msg !== undefined) {
     const message = String(updates.msg).slice(0, 500);
     addLegacyField("msg", message);
@@ -262,10 +254,12 @@ const loadNameHistory = async (profileId: string) => {
 };
 
 export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
-  const userId = socket.data?.user?.id;
+  const getUserId = () => String(socket.data?.user?.id || (socket.handshake.auth as any)?.userId || (socket.handshake.auth as any)?.sub || "");
+  let userId = getUserId();
 
   socket.on("profile:view", async (data: { profileId: string; hidden?: boolean }, callback) => {
     try {
+      userId = getUserId();
       if (!userId) return callback?.({ error: "Unauthorized" });
 
       const requestedProfileId = normalizeId(data?.profileId);
@@ -300,13 +294,13 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (!profile) return callback?.({ error: "Profile not found" });
 
       const resolvedProfileId = normalizeId(profile.id || requestedProfileId);
-      const isHiddenVisit = Boolean(data.hidden && (await canRunAdminAction(socket, userId, "history")));
+      const isHiddenVisit = Boolean(data.hidden && (await canRunAdminAction(userId, "history")));
       await ProfileService.recordVisit(userId, resolvedProfileId, isHiddenVisit);
 
       const onlineTarget = await findOnlineUser(resolvedProfileId, profile.username);
       const stats = await ProfileService.getProfileStats(resolvedProfileId);
       const relationship = await ProfileService.getRelationship(userId, resolvedProfileId);
-      const canSeeVisitors = relationship.isSelf || (await canRunAdminAction(socket, userId, "history"));
+      const canSeeVisitors = relationship.isSelf || (await canRunAdminAction(userId, "history"));
       const visitors = canSeeVisitors ? ProfileService.getVisitors(resolvedProfileId) : [];
 
       const hydratedProfile = {
@@ -336,7 +330,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       if (!userId) return callback?.({ error: "Unauthorized" });
       const profileId = normalizeId(data?.profileId);
       const relationship = ProfileService.getRelationship(userId, profileId);
-      if (!relationship.isSelf && !(await canRunAdminAction(socket, userId, "history"))) {
+      if (!relationship.isSelf && !(await canRunAdminAction(userId, "history"))) {
         return callback?.({ error: "Permission denied" });
       }
       callback?.({ success: true, visitors: ProfileService.getVisitors(profileId) });
@@ -349,7 +343,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:adminUpdate", async (data: { profileId: string; updates: any }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const { profileId, updates } = data;
       await db.update(userProfiles).set(updates).where(eq(userProfiles.userId, profileId));
@@ -370,11 +364,28 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       const profileId = normalizeId(data?.profileId);
       const action = data?.action;
       if (!profileId || !action) return callback?.({ error: "Invalid action" });
-      if (!(await canRunAdminAction(socket, userId, action))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, action))) return callback?.({ error: "Permission denied" });
 
       const targetProfile = await ProfileService.getFullProfile(profileId);
       if (!targetProfile) return callback?.({ error: "Profile not found" });
       const target = await findOnlineUser(targetProfile.id, targetProfile.username);
+
+      // Security Foundation: Triple-lock protection & Hierarchy check
+      const targetUsername = String(targetProfile.username || "").toLowerCase();
+      const actorUsername = String(socket.data.user?.username || "").toLowerCase();
+      if (isSystemOwnerUsername(targetUsername) && !isSystemOwnerUsername(actorUsername)) {
+        return callback?.({ error: "لا يمكن تعديل بيانات مالك النظام" });
+      }
+      if (isSiteOwnerUsername(targetUsername) && !isSystemOwnerUsername(actorUsername) && !isSiteOwnerUsername(actorUsername)) {
+        return callback?.({ error: "لا يمكن تعديل بيانات مالك الموقع" });
+      }
+      const targetUserId = String(targetProfile.id || profileId);
+      if (targetUserId !== userId) {
+        const canMod = await canModerate(userId, targetUserId);
+        if (!canMod) {
+          return callback?.({ error: "لا يمكنك تنفيذ هذا الإجراء على عضو يملك رتبة مساوية أو أعلى من رتبتك" });
+        }
+      }
 
       if (["kick", "ban", "room_kick", "room_mute", "global_mute", "pull_to_room"].includes(action)) {
         if (String(targetProfile.id || profileId) === String(userId)) {
@@ -389,10 +400,21 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       let updates: Record<string, unknown> = {};
       let responsePayload: Record<string, unknown> = {};
+      let voicePermissionSyncFailed = false;
 
-      if (action === "nick") updates = { topic: data.value };
-      if (action === "message") updates = { msg: data.value };
-      if (action === "likes") updates = { wall_post_likes: data.value };
+      if (action === "nick") {
+        const rawVal = typeof data.value === "string" ? data.value.trim().slice(0, 120) : "";
+        if (!rawVal) return callback?.({ error: "الاسم المستعار غير صالح" });
+        updates = { display_name: rawVal, topic: rawVal };
+      }
+      if (action === "message") {
+        const rawVal = typeof data.value === "string" ? data.value.trim().slice(0, 255) : "";
+        updates = { msg: rawVal };
+      }
+      if (action === "likes") {
+        const rawVal = Math.max(0, Math.floor(Number(data.value) || 0));
+        updates = { wall_post_likes: rawVal };
+      }
       if (action === "site_badge") updates = { site_badge: data.value };
       if (action === "power") {
         if (String(targetProfile.id || profileId) === String(userId)) {
@@ -509,8 +531,8 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         });
       }
       if (action === "delete_pic") updates = { pic: "pic.png" };
-      if (action === "room_mute" || action === "global_mute") updates = { muted: 1 };
-      if (action === "room_unmute") updates = { muted: 0 };
+      if (action === "global_mute") updates = { muted: 1 };
+      if (action === "global_unmute") updates = { muted: 0 };
       if (action === "history") {
         responsePayload.history = await loadNameHistory(profileId);
       }
@@ -521,9 +543,9 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       
 
-      // تحديث حالة الإسكات على الـ socket للمستخدم المستهدف وإرسال إشعار
-      if (action === "room_mute" || action === "global_mute" || action === "room_unmute") {
-        const isMuted = action === "room_mute" || action === "global_mute";
+      // تحديث حالة الإسكات العام على الـ socket للمستخدم المستهدف وإرسال إشعار
+      if (action === "global_mute" || action === "global_unmute") {
+        const isMuted = action === "global_mute";
         
         // تحديث حالة الكتم لكافة السوكيتات النشطة للعضو
         const targetId = normalizeId(profileId).toLowerCase();
@@ -537,6 +559,24 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
             (s.data.user as any).muted = isMuted;
             s.emit("muted_state", { muted: isMuted });
           }
+        }
+
+        const voiceSeat = await voiceStageStore.setAccountMuted(
+          normalizeId(targetProfile.id || profileId),
+          isMuted,
+        );
+        if (voiceSeat) {
+          try {
+            await syncConfiguredLiveKitPublishPermission(
+              voiceSeat.roomId,
+              normalizeId(targetProfile.id || profileId),
+              canPublishFromSeat(voiceSeat.seat, voiceSeat.seat.role),
+            );
+          } catch (error) {
+            voicePermissionSyncFailed = true;
+            console.error("[Profile] Failed to synchronize LiveKit publishing after account mute change:", error);
+          }
+          await publishSocketEvent(voiceSeat.roomId, "voice_stage:seats_updated", voiceSeat.stage);
         }
 
         // إرسال تنبيه ديالوج للعضو المستهدف عند الإسكات العام
@@ -558,8 +598,8 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           io.to(`user:${profileId}`).emit("alert_received", alertPayload);
         }
 
-        // إرسال تنبيه ديالوج للعضو المستهدف عند إلغاء الإسكات
-        if (action === "room_unmute") {
+        // إرسال تنبيه ديالوج للعضو المستهدف عند عكس الإسكات العام
+        if (action === "global_unmute") {
           const adminName = socket.data.user?.username || "الإدارة";
           const adminAvatar = socket.data.user?.avatar || "/pic.png";
           const alertPayload = {
@@ -580,25 +620,163 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         responsePayload.notice = isMuted ? "تم تنفيذ الاسكات العام" : "تم الغاء الاسكات العام";
       }
 
-      if (target && (action === "kick" || action === "ban")) {
-        const adminName = socket.data.user?.username || "الإدارة";
-        const adminAvatar = socket.data.user?.avatar || "/pic.png";
-        const msg = data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك من الموقع");
-        // إرسال تنبيه مرئي
-        io.to(`user:${profileId}`).emit("alert_received", {
-          alertId: String(Date.now()),
-          fromUserId: userId,
-          fromUsername: adminName,
-          fromAvatar: adminAvatar,
-          fromBanner: (socket.data.user as any).giftedBannerUrl || "",
-          fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
-          fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
-          fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
-          message: msg,
-          timestamp: Date.now(),
-        });
-        // إرسال أمر تسجيل الخروج للسوكيت المستهدف
-        io.to(target.socketId).emit("force_logout", { message: msg });
+      // ── الكتم الغرفي المنفصل: يُكتب في room_mutes ولا يلمس الحقل العام ──
+      if (action === "room_mute" || action === "room_unmute") {
+        const { roomMuteService, deriveRoomIds } = await import("../services/roomMuteService");
+        const targetDbId = normalizeId(targetProfile.id || profileId);
+        const isTarget = (ud: any) => {
+          if (!ud) return false;
+          const sid = normalizeId(ud.id).toLowerCase();
+          const sname = normalizeId(ud.username).toLowerCase();
+          return sid === targetDbId.toLowerCase() || sname === normalizeId(targetProfile.username).toLowerCase();
+        };
+
+        if (action === "room_mute") {
+          // كشف غرفة العضو: data.roomId إن أرسلتها الواجهة، ثم presence، ثم فحص السوكيتات
+          let muteRoomId = normalizeId((data as any)?.roomId) || target?.roomId || "";
+          if (!muteRoomId) {
+            for (const [, s] of io.sockets.sockets) {
+              const ud = s.data?.user;
+              if (!ud || !isTarget(ud)) continue;
+              for (const rm of s.rooms) {
+                if (typeof rm === "string" && rm.startsWith("room:")) {
+                  muteRoomId = rm.substring(5);
+                  break;
+                }
+              }
+              if (muteRoomId) break;
+            }
+          }
+
+          if (!muteRoomId) {
+            return callback?.({ error: "العضو ليس متواجداً في أي غرفة حالياً" });
+          }
+
+          const { resolveRoomId } = await import("./roomAccess");
+          let resolvedRoomId = muteRoomId;
+          try {
+            resolvedRoomId = (await resolveRoomId(muteRoomId)) || muteRoomId;
+          } catch (_) {}
+
+          const applied = await roomMuteService.setRoomMute({
+            roomId: resolvedRoomId,
+            rawRoomId: muteRoomId,
+            userId: targetDbId,
+            mutedBy: userId,
+            reason: data.reason || "كتم بالغرفة من البروفايل",
+          });
+
+          let roomName = muteRoomId;
+          try {
+            const allRooms = await listRooms();
+            const found = allRooms.find((r: any) => r.id === muteRoomId || (r as any).slug === muteRoomId);
+            if (found?.name) roomName = found.name;
+          } catch (_) {}
+
+          // فرض الحالة على كل سوكيتات العضو (بدون لمس الكتم العام)
+          for (const [, s] of io.sockets.sockets) {
+            const ud = s.data?.user;
+            if (!ud || !isTarget(ud)) continue;
+            const flag = ud.roomMutedRooms instanceof Set ? ud.roomMutedRooms : (ud.roomMutedRooms = new Set<string>());
+            for (const rid of deriveRoomIds(resolvedRoomId, muteRoomId)) flag.add(rid);
+            s.emit("muted_state", { muted: Boolean(ud.muted), roomMuted: true, roomId: muteRoomId });
+          }
+
+          const adminName = socket.data.user?.username || "الإدارة";
+          const adminAvatar = socket.data.user?.avatar || "/pic.png";
+          io.to(`user:${profileId}`).emit("alert_received", {
+            alertId: String(Date.now()),
+            fromUserId: userId,
+            fromUsername: adminName,
+            fromAvatar: adminAvatar,
+            fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+            fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+            fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+            fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+            message: `تم منعك من الحديث في غرفة ${roomName}`,
+            timestamp: Date.now(),
+          });
+
+          responsePayload.notice = applied
+            ? `تم كتم العضو في غرفة ${roomName} فقط (بقية الغرف والخاص سليم)`
+            : `الكتم بالغرفة ${roomName} مفعّل مسبقاً على هذا العضو`;
+        } else {
+          const cleared = await roomMuteService.clearRoomMutesForUser(targetDbId);
+
+          for (const [, s] of io.sockets.sockets) {
+            const ud = s.data?.user;
+            if (!ud || !isTarget(ud)) continue;
+            ud.roomMutedRooms = new Set<string>();
+            s.emit("muted_state", { muted: Boolean(ud.muted), roomMuted: false, roomId: normalizeId(ud.roomId || "") });
+          }
+
+          if (cleared > 0) {
+            const adminName = socket.data.user?.username || "الإدارة";
+            const adminAvatar = socket.data.user?.avatar || "/pic.png";
+            io.to(`user:${profileId}`).emit("alert_received", {
+              alertId: String(Date.now()),
+              fromUserId: userId,
+              fromUsername: adminName,
+              fromAvatar: adminAvatar,
+              fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+              fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+              fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+              fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+              message: "تم السماح لك بالحديث داخل الغرف",
+              timestamp: Date.now(),
+            });
+          }
+
+          responsePayload.notice = cleared > 0
+            ? `تم فك الكتم الغرفي (${cleared}) دون التأثير على الإسكات العام`
+            : "لا يوجد كتم غرفي على هذا العضو (الإسكات العام له إجراء فصل بإلغائه)";
+        }
+      }
+
+      if (action === "kick" || action === "ban") {
+        let banFaces: string[] = [];
+
+        if (action === "ban") {
+          // الحظر الدائم الشامل أولاً: تسجيل الاسم + IP + بصمة الجهاز في moderation_bans
+          // بحيث يرفض الدخول بكل الطرق (عضو/زائر/تسجيل جديد/اتصال) حتى مع تغيير IP
+          const { applyPermanentSiteBan } = await import("../services/profileBanService");
+          const banRes = await applyPermanentSiteBan({
+            targetProfile: { id: targetProfile.id || profileId, username: targetProfile.username },
+            actorId: userId,
+            reason: data.reason || "حظر من البروفايل",
+          });
+          if (!banRes.banned) {
+            return callback?.({ error: banRes.deniedReason || "تعذر تسجيل الحظر الدائم" });
+          }
+          banFaces = banRes.banTypeSummary;
+        }
+
+        if (target) {
+          const adminName = socket.data.user?.username || "الإدارة";
+          const adminAvatar = socket.data.user?.avatar || "/pic.png";
+          const msg = data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك من الموقع");
+          // إرسال تنبيه مرئي
+          io.to(`user:${profileId}`).emit("alert_received", {
+            alertId: String(Date.now()),
+            fromUserId: userId,
+            fromUsername: adminName,
+            fromAvatar: adminAvatar,
+            fromBanner: (socket.data.user as any).giftedBannerUrl || "",
+            fromGiftIcon: (socket.data.user as any).giftedGiftIconUrl || "",
+            fromPromotionIcon: (socket.data.user as any).roleIconUrl || (socket.data.user as any).giftedPromotionIconUrl || "",
+            fromAvatarFrame: socket.data.user?.avatarFrameUrl || "",
+            message: msg,
+            timestamp: Date.now(),
+          });
+          // إجبار جميع أجهزة العضو على الخروج (بث على غرفة العضو كاملة وليس سوكيت واحد)
+          io.to(`user:${targetProfile.id || profileId}`).emit("force_logout", { message: msg });
+        }
+
+        if (action === "ban") {
+          responsePayload.notice = banFaces.length > 0
+            ? `تم الحظر النهائي (${banFaces.join(" + ")}) ولن يستطيع الدخول بأي طريقة`
+            : "تم الحظر النهائي للعضو";
+        }
       }
 
       if (action === "room_kick") {
@@ -889,10 +1067,11 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         metadata: { value: data.value },
       });
 
-      const newDisplayName = action === "nick" && data.value ? String(data.value).trim().slice(0, 120) : targetProfile.username;
+      const newDisplayName = action === "nick" && data.value ? String(data.value).trim().slice(0, 120) : (targetProfile.displayName || targetProfile.username);
       io.emit("user_profile_updated", {
         userId: targetProfile.id || profileId,
-        username: newDisplayName,
+        displayName: newDisplayName,
+        username: targetProfile.username,
         previousUsername: targetProfile.username,
         avatar: updates.pic ? "/pic.png" : undefined,
         avatarUrl: updates.pic ? "/pic.png" : undefined,
@@ -908,14 +1087,20 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           const io2 = getIO2();
           const targetSocket = io2?.sockets?.sockets?.get(target.socketId);
           if (targetSocket?.data?.user) {
-            targetSocket.data.user.username = newDisplayName;
+            targetSocket.data.user.displayName = newDisplayName;
           }
         } catch (e) {
           console.error("[ProfileAdminAction] Failed to update target socket username:", e);
         }
       }
 
-      callback?.({ success: true, ...responsePayload });
+      callback?.({
+        success: !voicePermissionSyncFailed,
+        ...responsePayload,
+        ...(voicePermissionSyncFailed
+          ? { error: "تم تغيير حالة الكتم لكن تعذرت مزامنة صلاحية الصوت" }
+          : {}),
+      });
     } catch (err) {
       console.error("[ProfileAdminAction] Error:", err);
       callback?.({ error: "Failed to execute action" });
@@ -982,12 +1167,34 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
 
+      // فحص صلاحيات التنبيه على السيرفر (كان غائباً — أي عضو كان يرسل تنبيهاً لأي عضو)
+      if (!(await canRunAdminAction(userId, "alert"))) return callback?.({ error: "Permission denied" });
+
+      // حد منع التكرار (Anti-Spam): 5 تنبيهات كحد أقصى في الدقيقة لكل مشرف
+      if (!alertThrottle.allowAttempt(userId)) {
+        return callback?.({ error: "أرسلت تنبيهات كثيرة، حاول مرة أخرى بعد دقيقة" });
+      }
+
       const profileId = normalizeId(data?.profileId);
       const message = String(data?.message || "").trim();
       if (!profileId) return callback?.({ error: "Profile not found" });
       if (!message) return callback?.({ error: "الرسالة مطلوبة" });
       if (message.length > 500) return callback?.({ error: "الرسالة طويلة جداً" });
       if (String(profileId) === String(userId)) return callback?.({ error: "لا يمكنك إرسال تنبيه لنفسك" });
+
+      // الهرمية: منع التنبيه لرتبة مساوية أو أعلى (اعتماد الرتبة الموثقة من قاعدة البيانات)
+      try {
+        const [actorRank, targetRank] = await Promise.all([
+          getUserAuthoritativeRank(userId),
+          getUserAuthoritativeRank(profileId),
+        ]);
+        if (!actorRank) return callback?.({ error: "Permission denied" });
+        if (targetRank && targetRank.id !== actorRank.id && targetRank.rank >= actorRank.rank && actorRank.rank !== SYSTEM_OWNER_RANK) {
+          return callback?.({ error: "لا يمكنك إرسال تنبيه لرتبة مساوية لك أو أعلى" });
+        }
+      } catch (err) {
+        console.warn("[ProfileSendAlert] hierarchy check failed:", err);
+      }
 
       let senderName = "عضو";
       let senderAvatar = "/pic.png";
@@ -1028,6 +1235,15 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         timestamp: Date.now(),
       });
 
+      // تدقيق الإشراف: توثيق من أرسل تنبيهاً لمن (كان ناقصاً سابقاً)
+      await logModerationEvent({
+        actorId: userId,
+        targetUserId: profileId,
+        eventType: "profile.send_alert",
+        reason: "",
+        metadata: { message: message.slice(0, 200) },
+      });
+
       callback?.({ success: true });
     } catch (err) {
       console.error("[ProfileSendAlert] Error:", err);
@@ -1041,7 +1257,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:gift_banner", async (data: { profileId: string; iconUrl: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       const iconUrl = String(data?.iconUrl || "").trim();
@@ -1097,7 +1313,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:remove_banner", async (data: { profileId: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       if (!profileId) return callback?.({ error: "Profile not found" });
@@ -1139,7 +1355,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:gift_gift_icon", async (data: { profileId: string; iconUrl: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       const iconUrl = String(data?.iconUrl || "").trim();
@@ -1187,7 +1403,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:remove_gift_icon", async (data: { profileId: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       if (!profileId) return callback?.({ error: "Profile not found" });
@@ -1229,7 +1445,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:gift_promotion_icon", async (data: { profileId: string; iconUrl: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       const iconUrl = String(data?.iconUrl || "").trim();
@@ -1277,7 +1493,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
   socket.on("profile:remove_promotion_icon", async (data: { profileId: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
-      if (!(await canRunAdminAction(socket, userId, "site_badge"))) return callback?.({ error: "Permission denied" });
+      if (!(await canRunAdminAction(userId, "site_badge"))) return callback?.({ error: "Permission denied" });
 
       const profileId = normalizeId(data?.profileId);
       if (!profileId) return callback?.({ error: "Profile not found" });

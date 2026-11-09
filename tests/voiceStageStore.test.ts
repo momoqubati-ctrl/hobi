@@ -72,6 +72,29 @@ test("seat locks, mute state, removal, and active-seat lookup stay consistent", 
   assert.deepEqual(await store.listActiveSeats(), []);
 });
 
+test("account mute state is tracked separately from a speaker's self-mute state", async () => {
+  const store = createStore();
+  await store.ensureStage(createStage("room-a"));
+  await store.takeSeat("room-a", createSeat("user-1", 0));
+  await store.toggleMute("room-a", "user-1", true);
+
+  const globallyMuted = await store.setAccountMuted("user-1", true);
+  assert.equal(globallyMuted?.seat.accountMuted, true);
+  assert.equal(globallyMuted?.seat.isMuted, true);
+
+  const unmuted = await store.setAccountMuted("user-1", false);
+  assert.equal(unmuted?.seat.accountMuted, false);
+  assert.equal(unmuted?.seat.isMuted, true);
+});
+
+test("only one maintenance pass can claim a shared permission-reconciliation minute", async () => {
+  const store = createStore();
+
+  assert.equal(await store.claimPermissionReconciliationTick(12), true);
+  assert.equal(await store.claimPermissionReconciliationTick(12), false);
+  assert.equal(await store.claimPermissionReconciliationTick(13), true);
+});
+
 test("production voice-stage storage refuses to fall back to process memory", async () => {
   const store = new VoiceStageStore({ redisEnabled: false, nodeEnv: "production" });
 

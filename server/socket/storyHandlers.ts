@@ -14,6 +14,7 @@ import {
   incrementShareCount,
   isStoriesEnabled,
 } from "../services/storyService";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
 
 export function registerStoryHandlers(io: Server, socket: Socket): void {
   const userData = socket.data?.user || {};
@@ -65,6 +66,9 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
   }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await hasChatFeatureAccess(userData, ["story_publish.use"]))) {
+        return callback?.({ error: "لا تملك صلاحية نشر القصص" });
+      }
 
       // منع الروابط في النص
       if (data.caption && /https?:\/\/[^\s]+/i.test(data.caption)) {
@@ -95,6 +99,9 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
   socket.on("stories:delete", async (data: { storyId: string }, callback) => {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
+      if (!(await hasChatFeatureAccess(userData, ["story_publish.use"]))) {
+        return callback?.({ error: "لا تملك صلاحية حذف القصص" });
+      }
       if (!data?.storyId) return callback?.({ error: "Story ID required" });
 
       const deleted = await deleteStory(data.storyId, userId);
@@ -174,6 +181,9 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
     try {
       if (!userId) return callback?.({ error: "Unauthorized" });
       if (!data?.storyId) return callback?.({ error: "Story ID required" });
+      if (!(await hasChatFeatureAccess(userData, ["story_interactions.use"]))) {
+        return callback?.({ error: "لا تملك صلاحية التفاعل مع القصص" });
+      }
 
       const result = await reactToStory(data.storyId, userId, data.type || "like", userData.username);
 
@@ -211,6 +221,9 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
   socket.on("stories:share", async (data: { storyId: string }, callback) => {
     try {
       if (!data?.storyId) return callback?.({ error: "Story ID required" });
+      if (!(await hasChatFeatureAccess(userData, ["story_interactions.use"]))) {
+        return callback?.({ error: "لا تملك صلاحية التفاعل مع القصص" });
+      }
 
       await incrementShareCount(data.storyId);
 

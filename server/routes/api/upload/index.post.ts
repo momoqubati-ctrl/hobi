@@ -1,61 +1,53 @@
-import { defineEventHandler, getHeader, readBody } from "h3";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { getUserAuthContext } from "../../../services/adminAccess";
 import { saveUploadBuffer } from "../../../services/uploadStorage";
 
-const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
-
-const verifySignature = (payload: string, signature: string) => {
-  const expected = createHmac("sha256", getSecret()).update(payload).digest("base64url");
-  const expectedBuffer = Buffer.from(expected);
-  const actualBuffer = Buffer.from(signature || "");
-  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
-};
+const ALLOWED_UPLOAD_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "mp4", "webm", "mov", "avi"]);
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024; // 50MB
 
 export default defineEventHandler(async (event) => {
   try {
-    const authHeader = getHeader(event, "authorization") || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-    const [payload, signature] = token.split(".");
-    if (!payload || !signature || !verifySignature(payload, signature)) {
-      return { success: false, message: "جلسة غير صالحة" };
+    const auth = getUserAuthContext(event);
+    if (!auth.ok || !auth.userId) {
+      setResponseStatus(event, auth.ok ? 401 : auth.statusCode);
+      return { success: false, message: auth.ok ? "جلسة غير صالحة" : auth.message };
     }
 
-    let userId = "";
-    try {
-      const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-      userId = parsed.sub || parsed.username || "anonymous";
-    } catch { userId = "anonymous"; }
-
-    const body = await readBody<{ file?: string; filename?: string }>(event);
-    if (!body?.file || !body?.filename) {
-      return { success: false, message: "الملف مطلوب" };
+    const body = await readBody<{ file?: unknown; filename?: unknown }>(event);
+    if (typeof body?.file !== "string" || !body.file || typeof body?.filename !== "string" || !body.filename) {
+      setResponseStatus(event, 400);
+      return { success: false, message: "الملف واسم الملف مطلوبان" };
     }
 
     const matches = body.filename.match(/\.(\w+)$/);
     const extension = matches ? matches[1].toLowerCase() : "";
-    if (!["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi"].includes(extension)) {
+    if (!ALLOWED_UPLOAD_EXTENSIONS.has(extension)) {
+      setResponseStatus(event, 415);
       return { success: false, message: "نوع الملف غير مدعوم" };
     }
 
     const buffer = Buffer.from(body.file, "base64");
-    if (buffer.length > 50 * 1024 * 1024) {
+    if (buffer.length > MAX_UPLOAD_SIZE) {
+      setResponseStatus(event, 413);
       return { success: false, message: "حجم الملف يتجاوز 50 ميجابايت" };
     }
 
     const savedPath = await saveUploadBuffer({
       kind: "story",
-      userId,
+      userId: auth.userId,
       extension,
       buffer,
     });
 
     if (!savedPath) {
+      setResponseStatus(event, 500);
       return { success: false, message: "فشل حفظ الملف" };
     }
 
     return { success: true, url: savedPath };
   } catch (err) {
     console.error("[Upload] Error:", err);
+    setResponseStatus(event, 500);
     return { success: false, message: "حدث خطأ أثناء رفع الملف" };
   }
 });

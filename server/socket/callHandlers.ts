@@ -4,6 +4,8 @@
  */
 import type { Server, Socket } from "socket.io";
 import { SOCKET_CHANNELS } from "./SocketChannels";
+import { getPrivateCallPermission } from "../../src/lib/chatFeaturePermissions";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
 
 interface ActiveCallSession {
   callId: string;
@@ -14,6 +16,7 @@ interface ActiveCallSession {
   receiverName?: string;
   receiverAvatar?: string;
   status: "ringing" | "connected";
+  mode: "voice" | "video";
   startedAt?: number;
 }
 
@@ -57,7 +60,7 @@ function emitToTargetUser(io: Server, toUserId: string, event: string, data: any
   let directCount = 0;
   for (const [sId, s] of io.sockets.sockets) {
     if (excludeSocketId && sId === excludeSocketId) continue;
-    const socketUserId = String(s.data?.user?.id || s.handshake.auth?.userId || "");
+    const socketUserId = String(s.data?.user?.id || "");
     if (socketUserId && socketUserId === targetIdStr) {
       s.emit(event, data);
       directCount++;
@@ -67,11 +70,12 @@ function emitToTargetUser(io: Server, toUserId: string, event: string, data: any
 }
 
 export function registerCallHandlers(io: Server, socket: Socket) {
-  const getUserId = () => String(socket.data?.user?.id || socket.handshake.auth?.userId || "");
+  const getUserId = () => String(socket.data?.user?.id || "");
 
   // انضمام فوري لغرف المستخدم الخاصة بالإشارات
   socket.on("join_user", (data: { userId: string }) => {
-    const uId = String(data?.userId || getUserId());
+    const uId = getUserId();
+    if (!uId || (data?.userId && String(data.userId) !== uId)) return;
     if (uId) {
       socket.join(`user:${uId}`);
       socket.join(SOCKET_CHANNELS.social(uId));
@@ -80,7 +84,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
   });
 
   // 1. بدء مكالمة (call:offer)
-  socket.on("call:offer", (payload: {
+  socket.on("call:offer", async (payload: {
     toUserId: string;
     sdp: any;
     mode?: "voice" | "video";
@@ -88,7 +92,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
   }, callback?: (res: any) => void) => {
     try {
       const fromUserId = getUserId();
-      const { toUserId, sdp, callerInfo, mode = "voice" } = payload;
+      const { toUserId, sdp, mode = "voice" } = payload;
       console.log(`[SERVER_CALL] call:offer from=${fromUserId} to=${toUserId} mode=${mode}`);
 
       if (!fromUserId || !toUserId) {
@@ -98,6 +102,13 @@ export function registerCallHandlers(io: Server, socket: Socket) {
 
       if (fromUserId === String(toUserId)) {
         return callback?.({ success: false, error: "لا يمكنك الاتصال بنفسك" });
+      }
+      const requiredPermission = getPrivateCallPermission(mode);
+      if (!requiredPermission) {
+        return callback?.({ success: false, error: "نوع المكالمة غير صالح" });
+      }
+      if (!(await hasChatFeatureAccess(socket.data.user, [requiredPermission]))) {
+        return callback?.({ success: false, error: "لا تملك صلاحية بدء هذا النوع من المكالمات" });
       }
 
       // إذا كان للمتصل مكالمة رنين سابقة معلقة، نظفها تلقائياً
@@ -128,8 +139,8 @@ export function registerCallHandlers(io: Server, socket: Socket) {
       }
 
       const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const callerName = callerInfo?.name || socket.data?.user?.username || "مستخدم";
-      const callerAvatar = callerInfo?.avatar || socket.data?.user?.avatar || "/pic.png";
+      const callerName = socket.data?.user?.username || "مستخدم";
+      const callerAvatar = socket.data?.user?.avatar || "/pic.png";
 
       const session: ActiveCallSession = {
         callId,
@@ -138,6 +149,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
         callerAvatar,
         receiverId: String(toUserId),
         status: "ringing",
+        mode,
         startedAt: Date.now(),
       };
 
@@ -154,7 +166,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
           id: fromUserId,
           name: callerName,
           avatar: callerAvatar,
-          rank: callerInfo?.rank || "عضو",
+          rank: socket.data?.user?.role || "عضو",
           verified: true,
         },
         sdp,
@@ -171,7 +183,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
   });
 
   // 2. قبول المكالمة (call:answer)
-  socket.on("call:answer", (payload: {
+  socket.on("call:answer", async (payload: {
     callId: string;
     toUserId: string;
     sdp: any;
@@ -184,6 +196,13 @@ export function registerCallHandlers(io: Server, socket: Socket) {
 
       if (!session) {
         return callback?.({ success: false, error: "المكالمة لم تعد متاحة" });
+      }
+      if (session.receiverId !== fromUserId || session.callerId !== String(toUserId)) {
+        return callback?.({ success: false, error: "لا تملك صلاحية قبول هذه المكالمة" });
+      }
+      const requiredPermission = getPrivateCallPermission(session.mode);
+      if (!requiredPermission || !(await hasChatFeatureAccess(socket.data.user, [requiredPermission]))) {
+        return callback?.({ success: false, error: "لا تملك صلاحية قبول هذا النوع من المكالمات" });
       }
 
       session.status = "connected";
@@ -215,6 +234,10 @@ export function registerCallHandlers(io: Server, socket: Socket) {
       const { callId, toUserId, candidate } = payload;
 
       if (!candidate || !toUserId) return;
+      const session = activeCalls.get(callId);
+      if (!session || ![session.callerId, session.receiverId].includes(fromUserId)) return;
+      const otherUserId = session.callerId === fromUserId ? session.receiverId : session.callerId;
+      if (String(toUserId) !== otherUserId) return;
 
       const candidateData = {
         callId,
@@ -229,14 +252,24 @@ export function registerCallHandlers(io: Server, socket: Socket) {
   });
 
   // تبديل حالة الكاميرا للمكالمة النشطة
-  socket.on("call:camera_toggle", (payload: {
+  socket.on("call:camera_toggle", async (payload: {
     callId: string;
     toUserId: string;
     enabled: boolean;
   }) => {
     try {
       const fromUserId = getUserId();
-      emitToTargetUser(io, String(payload.toUserId), "call:camera_toggled", {
+      const session = activeCalls.get(payload.callId);
+      if (
+        !session ||
+        session.mode !== "video" ||
+        ![session.callerId, session.receiverId].includes(fromUserId)
+      ) return;
+      const otherUserId = session.callerId === fromUserId ? session.receiverId : session.callerId;
+      if (String(payload.toUserId) !== otherUserId) return;
+      const allowed = await hasChatFeatureAccess(socket.data.user, ["private_video_call.use"]);
+      if (!allowed) return;
+      emitToTargetUser(io, otherUserId, "call:camera_toggled", {
         callId: payload.callId,
         fromUserId,
         enabled: payload.enabled,
@@ -256,12 +289,14 @@ export function registerCallHandlers(io: Server, socket: Socket) {
       const fromUserId = getUserId();
       const { callId, toUserId, reason } = payload;
       console.log(`[SERVER_CALL] call:reject from=${fromUserId} to=${toUserId} callId=${callId}`);
+      const session = activeCalls.get(callId);
+      if (!session || ![session.callerId, session.receiverId].includes(fromUserId)) return;
+      const otherUserId = session.callerId === fromUserId ? session.receiverId : session.callerId;
+      if (String(toUserId) !== otherUserId) return;
 
-      if (callId) {
-        activeCalls.delete(callId);
-      }
+      activeCalls.delete(callId);
       userCurrentCall.delete(fromUserId);
-      userCurrentCall.delete(String(toUserId));
+      userCurrentCall.delete(otherUserId);
 
       const rejectData = {
         callId,
@@ -269,7 +304,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
         reason: reason || "تم رفض المكالمة",
       };
 
-      emitToTargetUser(io, String(toUserId), "call:rejected", rejectData, socket.id);
+      emitToTargetUser(io, otherUserId, "call:rejected", rejectData, socket.id);
     } catch (err) {
       console.error("[SERVER_CALL] call:reject Error:", err);
     }
@@ -285,12 +320,14 @@ export function registerCallHandlers(io: Server, socket: Socket) {
       const fromUserId = getUserId();
       const { callId, toUserId, durationSeconds } = payload;
       console.log(`[SERVER_CALL] call:end from=${fromUserId} to=${toUserId} callId=${callId}`);
+      const session = activeCalls.get(callId);
+      if (!session || ![session.callerId, session.receiverId].includes(fromUserId)) return;
+      const otherUserId = session.callerId === fromUserId ? session.receiverId : session.callerId;
+      if (String(toUserId) !== otherUserId) return;
 
-      if (callId) {
-        activeCalls.delete(callId);
-      }
+      activeCalls.delete(callId);
       userCurrentCall.delete(fromUserId);
-      userCurrentCall.delete(String(toUserId));
+      userCurrentCall.delete(otherUserId);
 
       const endData = {
         callId,
@@ -298,7 +335,7 @@ export function registerCallHandlers(io: Server, socket: Socket) {
         durationSeconds: durationSeconds || 0,
       };
 
-      emitToTargetUser(io, String(toUserId), "call:ended", endData, socket.id);
+      emitToTargetUser(io, otherUserId, "call:ended", endData, socket.id);
     } catch (err) {
       console.error("[SERVER_CALL] call:end Error:", err);
     }

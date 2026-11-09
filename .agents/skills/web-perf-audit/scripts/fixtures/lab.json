@@ -1,0 +1,1407 @@
+{
+  "source": "psi",
+  "generated": "2026-08-21T09:00:00.000Z",
+  "target": "https://example.com",
+  "runs": [
+    {
+      "url": "https://example.com/",
+      "strategy": "mobile",
+      "status": "ok",
+      "error": null,
+      "lighthouse": {
+        "version": "12.2.1",
+        "fetchTime": "2026-08-21T09:00:00.000Z",
+        "finalUrl": "https://example.com/",
+        "performanceScore": 41,
+        "metrics": {
+          "lcp": 3900,
+          "fcp": 2200,
+          "cls": 0.2,
+          "tbt": 700,
+          "si": 4200,
+          "tti": 6100,
+          "ttfb": 900
+        },
+        "audits": {
+          "render-blocking-resources": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 480,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/css/app.css",
+                "totalBytes": 92000,
+                "wastedMs": 300
+              },
+              {
+                "url": "https://cdn.example.com/widget.js",
+                "totalBytes": 44000,
+                "wastedMs": 180
+              }
+            ]
+          },
+          "unused-javascript": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 310000,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/gallery.js",
+                "totalBytes": 420000,
+                "wastedBytes": 280000
+              },
+              {
+                "url": "https://example.com/_next/static/chunks/main.js",
+                "totalBytes": 180000,
+                "wastedBytes": 30000
+              }
+            ]
+          },
+          "duplicated-javascript": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 41000,
+            "items": [
+              {
+                "source": "node_modules/date-fns",
+                "wastedBytes": 41000
+              }
+            ]
+          },
+          "legacy-javascript": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 32000,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/polyfills.js",
+                "wastedBytes": 32000
+              }
+            ]
+          },
+          "bootup-time": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": 3500,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/gallery.js",
+                "total": 1800,
+                "scripting": 1500
+              },
+              {
+                "url": "https://cdn.example.com/tag.js",
+                "total": 900,
+                "scripting": 800
+              }
+            ]
+          },
+          "mainthread-work-breakdown": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": 5200,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "groupLabel": "Script Evaluation",
+                "duration": 2600
+              },
+              {
+                "groupLabel": "Style & Layout",
+                "duration": 900
+              },
+              {
+                "groupLabel": "Parse HTML & CSS",
+                "duration": 600
+              }
+            ]
+          },
+          "long-tasks": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/gallery.js",
+                "duration": 420
+              },
+              {
+                "url": "https://cdn.example.com/tag.js",
+                "duration": 260
+              }
+            ]
+          },
+          "third-party-summary": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "entity": "Google Tag Manager",
+                "transferSize": 180000,
+                "mainThreadTime": 640,
+                "blockingTime": 320
+              },
+              {
+                "entity": "Intercom",
+                "transferSize": 260000,
+                "mainThreadTime": 410,
+                "blockingTime": 180
+              }
+            ]
+          },
+          "third-party-facades": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "entity": "YouTube Embedded Player"
+              }
+            ]
+          },
+          "uses-long-cache-ttl": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 340000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "cacheLifetimeMs": 600000,
+                "totalBytes": 240000
+              }
+            ]
+          },
+          "uses-text-compression": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 62000,
+            "items": [
+              {
+                "url": "https://example.com/api/config.json",
+                "totalBytes": 84000,
+                "wastedBytes": 62000
+              }
+            ]
+          },
+          "uses-rel-preconnect": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 220,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://cdn.example.com",
+                "wastedMs": 220
+              }
+            ]
+          },
+          "critical-request-chains": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "3 chains found",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "redirects": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 310,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "http://example.com/",
+                "wastedMs": 310
+              }
+            ]
+          },
+          "font-display": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter.woff2",
+                "wastedMs": 210
+              }
+            ]
+          },
+          "modern-image-formats": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 410000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "totalBytes": 640000,
+                "wastedBytes": 410000
+              }
+            ]
+          },
+          "uses-responsive-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 620000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "totalBytes": 640000,
+                "wastedBytes": 480000
+              },
+              {
+                "url": "https://example.com/img/banner.png",
+                "totalBytes": 220000,
+                "wastedBytes": 140000
+              }
+            ]
+          },
+          "uses-optimized-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 90000,
+            "items": [
+              {
+                "url": "https://example.com/img/banner.png",
+                "totalBytes": 220000,
+                "wastedBytes": 90000
+              }
+            ]
+          },
+          "unsized-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/promo.png\">"
+              }
+            ]
+          },
+          "layout-shift-elements": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<div class=\"promo-banner\">",
+                "score": 0.14
+              }
+            ]
+          },
+          "prioritize-lcp-image": {
+            "score": 0.4,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "Potential savings of 620 ms",
+            "numericValue": null,
+            "overallSavingsMs": 620,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "lcp-lazy-loaded": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/hero.jpg\" loading=\"lazy\">"
+              }
+            ]
+          },
+          "largest-contentful-paint-element": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/hero.jpg\">"
+              }
+            ]
+          },
+          "non-composited-animations": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<div class=\"card\">"
+              }
+            ]
+          },
+          "dom-size": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "2,200 elements",
+            "numericValue": 2200,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "total-byte-weight": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "Total size was 3,418 KiB",
+            "numericValue": 3500000,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "resource-summary": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "resourceType": "total",
+                "transferSize": 3500000,
+                "requestCount": 96
+              },
+              {
+                "resourceType": "script",
+                "transferSize": 690000,
+                "requestCount": 24
+              },
+              {
+                "resourceType": "image",
+                "transferSize": 1400000,
+                "requestCount": 31
+              },
+              {
+                "resourceType": "font",
+                "transferSize": 210000,
+                "requestCount": 5
+              }
+            ]
+          },
+          "network-requests": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/api/products",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 320000,
+                "networkRequestTime": 100,
+                "networkEndTime": 1450
+              },
+              {
+                "url": "https://example.com/api/products",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 320000,
+                "networkRequestTime": 1500,
+                "networkEndTime": 2100
+              },
+              {
+                "url": "https://example.com/api/recommendations",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 18000,
+                "networkRequestTime": 300,
+                "networkEndTime": 1010
+              },
+              {
+                "url": "https://example.com/api/cart/1",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 200,
+                "networkEndTime": 380
+              },
+              {
+                "url": "https://example.com/api/cart/2",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 210,
+                "networkEndTime": 390
+              },
+              {
+                "url": "https://example.com/api/cart/3",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 220,
+                "networkEndTime": 400
+              },
+              {
+                "url": "https://example.com/api/cart/4",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 230,
+                "networkEndTime": 410
+              },
+              {
+                "url": "https://example.com/api/cart/5",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 240,
+                "networkEndTime": 420
+              },
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter.woff2",
+                "resourceType": "Font",
+                "transferSize": 84000
+              },
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter-bold.woff2",
+                "resourceType": "Font",
+                "transferSize": 86000
+              },
+              {
+                "url": "https://example.com/fonts/display.woff2",
+                "resourceType": "Font",
+                "transferSize": 44000
+              }
+            ]
+          }
+        }
+      },
+      "field": {
+        "id": "https://example.com/",
+        "overall": "AVERAGE",
+        "metrics": {
+          "lcp": {
+            "p75": 3800,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.42,
+              "needsImprovement": 0.36,
+              "poor": 0.22
+            },
+            "category": "AVERAGE"
+          },
+          "inp": {
+            "p75": 260,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.55,
+              "needsImprovement": 0.3,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          },
+          "cls": {
+            "p75": 0.18,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.61,
+              "needsImprovement": 0.24,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          },
+          "fcp": {
+            "p75": 2100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.58,
+              "needsImprovement": 0.3,
+              "poor": 0.12
+            },
+            "category": "AVERAGE"
+          },
+          "ttfb": {
+            "p75": 950,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.52,
+              "needsImprovement": 0.33,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          }
+        }
+      },
+      "originField": {
+        "id": "https://example.com/",
+        "overall": "AVERAGE",
+        "metrics": {
+          "lcp": {
+            "p75": 3800,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.42,
+              "needsImprovement": 0.36,
+              "poor": 0.22
+            },
+            "category": "AVERAGE"
+          },
+          "inp": {
+            "p75": 260,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.55,
+              "needsImprovement": 0.3,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          },
+          "cls": {
+            "p75": 0.18,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.61,
+              "needsImprovement": 0.24,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          },
+          "fcp": {
+            "p75": 2100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.58,
+              "needsImprovement": 0.3,
+              "poor": 0.12
+            },
+            "category": "AVERAGE"
+          },
+          "ttfb": {
+            "p75": 950,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.52,
+              "needsImprovement": 0.33,
+              "poor": 0.15
+            },
+            "category": "AVERAGE"
+          }
+        }
+      }
+    },
+    {
+      "url": "https://example.com/",
+      "strategy": "desktop",
+      "status": "ok",
+      "error": null,
+      "lighthouse": {
+        "version": "12.2.1",
+        "fetchTime": "2026-08-21T09:00:00.000Z",
+        "finalUrl": "https://example.com/",
+        "performanceScore": 88,
+        "metrics": {
+          "lcp": 1500,
+          "fcp": 900,
+          "cls": 0.03,
+          "tbt": 120,
+          "si": 1600,
+          "tti": 2200,
+          "ttfb": 520
+        },
+        "audits": {
+          "render-blocking-resources": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 480,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/css/app.css",
+                "totalBytes": 92000,
+                "wastedMs": 300
+              },
+              {
+                "url": "https://cdn.example.com/widget.js",
+                "totalBytes": 44000,
+                "wastedMs": 180
+              }
+            ]
+          },
+          "unused-javascript": {
+            "score": 0.5,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 40000,
+            "items": []
+          },
+          "duplicated-javascript": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 41000,
+            "items": [
+              {
+                "source": "node_modules/date-fns",
+                "wastedBytes": 41000
+              }
+            ]
+          },
+          "legacy-javascript": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 32000,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/polyfills.js",
+                "wastedBytes": 32000
+              }
+            ]
+          },
+          "bootup-time": {
+            "score": 1,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": 900,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "mainthread-work-breakdown": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": 5200,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "groupLabel": "Script Evaluation",
+                "duration": 2600
+              },
+              {
+                "groupLabel": "Style & Layout",
+                "duration": 900
+              },
+              {
+                "groupLabel": "Parse HTML & CSS",
+                "duration": 600
+              }
+            ]
+          },
+          "long-tasks": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/_next/static/chunks/gallery.js",
+                "duration": 420
+              },
+              {
+                "url": "https://cdn.example.com/tag.js",
+                "duration": 260
+              }
+            ]
+          },
+          "third-party-summary": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "entity": "Google Tag Manager",
+                "transferSize": 180000,
+                "mainThreadTime": 640,
+                "blockingTime": 320
+              },
+              {
+                "entity": "Intercom",
+                "transferSize": 260000,
+                "mainThreadTime": 410,
+                "blockingTime": 180
+              }
+            ]
+          },
+          "third-party-facades": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "entity": "YouTube Embedded Player"
+              }
+            ]
+          },
+          "uses-long-cache-ttl": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 340000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "cacheLifetimeMs": 600000,
+                "totalBytes": 240000
+              }
+            ]
+          },
+          "uses-text-compression": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 62000,
+            "items": [
+              {
+                "url": "https://example.com/api/config.json",
+                "totalBytes": 84000,
+                "wastedBytes": 62000
+              }
+            ]
+          },
+          "uses-rel-preconnect": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 220,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://cdn.example.com",
+                "wastedMs": 220
+              }
+            ]
+          },
+          "critical-request-chains": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "3 chains found",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "redirects": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": 310,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "http://example.com/",
+                "wastedMs": 310
+              }
+            ]
+          },
+          "font-display": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter.woff2",
+                "wastedMs": 210
+              }
+            ]
+          },
+          "modern-image-formats": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 410000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "totalBytes": 640000,
+                "wastedBytes": 410000
+              }
+            ]
+          },
+          "uses-responsive-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 620000,
+            "items": [
+              {
+                "url": "https://example.com/img/hero.jpg",
+                "totalBytes": 640000,
+                "wastedBytes": 480000
+              },
+              {
+                "url": "https://example.com/img/banner.png",
+                "totalBytes": 220000,
+                "wastedBytes": 140000
+              }
+            ]
+          },
+          "uses-optimized-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": 90000,
+            "items": [
+              {
+                "url": "https://example.com/img/banner.png",
+                "totalBytes": 220000,
+                "wastedBytes": 90000
+              }
+            ]
+          },
+          "unsized-images": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/promo.png\">"
+              }
+            ]
+          },
+          "layout-shift-elements": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<div class=\"promo-banner\">",
+                "score": 0.14
+              }
+            ]
+          },
+          "prioritize-lcp-image": {
+            "score": 0.4,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "Potential savings of 620 ms",
+            "numericValue": null,
+            "overallSavingsMs": 620,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "lcp-lazy-loaded": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/hero.jpg\" loading=\"lazy\">"
+              }
+            ]
+          },
+          "largest-contentful-paint-element": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<img src=\"/img/hero.jpg\">"
+              }
+            ]
+          },
+          "non-composited-animations": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "node": "<div class=\"card\">"
+              }
+            ]
+          },
+          "dom-size": {
+            "score": 1,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "2,200 elements",
+            "numericValue": 2200,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "total-byte-weight": {
+            "score": 0,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "Total size was 3,418 KiB",
+            "numericValue": 3500000,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": []
+          },
+          "resource-summary": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "resourceType": "total",
+                "transferSize": 3500000,
+                "requestCount": 96
+              },
+              {
+                "resourceType": "script",
+                "transferSize": 690000,
+                "requestCount": 24
+              },
+              {
+                "resourceType": "image",
+                "transferSize": 1400000,
+                "requestCount": 31
+              },
+              {
+                "resourceType": "font",
+                "transferSize": 210000,
+                "requestCount": 5
+              }
+            ]
+          },
+          "network-requests": {
+            "score": null,
+            "scoreDisplayMode": "numeric",
+            "displayValue": "",
+            "numericValue": null,
+            "overallSavingsMs": null,
+            "overallSavingsBytes": null,
+            "items": [
+              {
+                "url": "https://example.com/api/products",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 320000,
+                "networkRequestTime": 100,
+                "networkEndTime": 1450
+              },
+              {
+                "url": "https://example.com/api/products",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 320000,
+                "networkRequestTime": 1500,
+                "networkEndTime": 2100
+              },
+              {
+                "url": "https://example.com/api/recommendations",
+                "resourceType": "Fetch",
+                "statusCode": 200,
+                "transferSize": 18000,
+                "networkRequestTime": 300,
+                "networkEndTime": 1010
+              },
+              {
+                "url": "https://example.com/api/cart/1",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 200,
+                "networkEndTime": 380
+              },
+              {
+                "url": "https://example.com/api/cart/2",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 210,
+                "networkEndTime": 390
+              },
+              {
+                "url": "https://example.com/api/cart/3",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 220,
+                "networkEndTime": 400
+              },
+              {
+                "url": "https://example.com/api/cart/4",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 230,
+                "networkEndTime": 410
+              },
+              {
+                "url": "https://example.com/api/cart/5",
+                "resourceType": "XHR",
+                "statusCode": 200,
+                "transferSize": 800,
+                "networkRequestTime": 240,
+                "networkEndTime": 420
+              },
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter.woff2",
+                "resourceType": "Font",
+                "transferSize": 84000
+              },
+              {
+                "url": "https://fonts.gstatic.com/s/inter/v13/inter-bold.woff2",
+                "resourceType": "Font",
+                "transferSize": 86000
+              },
+              {
+                "url": "https://example.com/fonts/display.woff2",
+                "resourceType": "Font",
+                "transferSize": 44000
+              }
+            ]
+          }
+        }
+      },
+      "field": {
+        "id": "https://example.com/",
+        "overall": "AVERAGE",
+        "metrics": {
+          "lcp": {
+            "p75": 1900,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.88,
+              "needsImprovement": 0.09,
+              "poor": 0.03
+            },
+            "category": "AVERAGE"
+          },
+          "inp": {
+            "p75": 120,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.93,
+              "needsImprovement": 0.05,
+              "poor": 0.02
+            },
+            "category": "AVERAGE"
+          },
+          "cls": {
+            "p75": 0.04,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.95,
+              "needsImprovement": 0.03,
+              "poor": 0.02
+            },
+            "category": "AVERAGE"
+          },
+          "fcp": {
+            "p75": 1100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.9,
+              "needsImprovement": 0.07,
+              "poor": 0.03
+            },
+            "category": "AVERAGE"
+          },
+          "ttfb": {
+            "p75": 600,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.86,
+              "needsImprovement": 0.1,
+              "poor": 0.04
+            },
+            "category": "AVERAGE"
+          }
+        }
+      },
+      "originField": {
+        "id": "https://example.com/",
+        "overall": "AVERAGE",
+        "metrics": {
+          "lcp": {
+            "p75": 1900,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.88,
+              "needsImprovement": 0.09,
+              "poor": 0.03
+            },
+            "category": "AVERAGE"
+          },
+          "inp": {
+            "p75": 120,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.93,
+              "needsImprovement": 0.05,
+              "poor": 0.02
+            },
+            "category": "AVERAGE"
+          },
+          "cls": {
+            "p75": 0.04,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.95,
+              "needsImprovement": 0.03,
+              "poor": 0.02
+            },
+            "category": "AVERAGE"
+          },
+          "fcp": {
+            "p75": 1100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.9,
+              "needsImprovement": 0.07,
+              "poor": 0.03
+            },
+            "category": "AVERAGE"
+          },
+          "ttfb": {
+            "p75": 600,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.86,
+              "needsImprovement": 0.1,
+              "poor": 0.04
+            },
+            "category": "AVERAGE"
+          }
+        }
+      }
+    }
+  ]
+}

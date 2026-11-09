@@ -1,103 +1,65 @@
-import { defineEventHandler, getHeader, readBody } from "h3";
+import { defineEventHandler, setResponseHeader, setResponseStatus } from "h3";
 import { getIO } from "../../../socket";
 import {
-  removeConnectedUser,
-  removeUserPresenceByUserId,
   getTotalOnlineCount,
   pendingDisconnects,
+  removeConnectedUser,
+  removeUserPresenceByUserId,
 } from "../../../socket/presenceManager";
+import { endPrivateMessageSession, registerPrivateMessageSession } from "../../../services/privateMessageService";
+import { getUserAuthContext } from "../../../services/adminAccess";
+import { revokeSession } from "../../../services/tokenRevocation";
 
 export default defineEventHandler(async (event) => {
-  try {
-    const authHeader = getHeader(event, "authorization") || "";
-    const body = await readBody(event).catch(() => ({}));
+  setResponseHeader(event, "Cache-Control", "private, no-store");
+  const auth = getUserAuthContext(event);
+  console.log(`[SOCKET_TRACE_LOGOUT_API] sessionId=${auth.sessionId || ""} userId=${auth.userId || ""} ok=${auth.ok}`);
+  if (!auth.ok || !auth.userId || !auth.sessionId) {
+    setResponseStatus(event, auth.ok ? 401 : auth.statusCode);
+    return { success: false, message: auth.ok ? "جلسة غير صالحة" : auth.message };
+  }
 
-    // استخراج معرّف المستخدم إما من الجسم أو من التوكن
-    let userId = body?.userId ? String(body.userId).trim() : "";
-    if (!userId && authHeader.startsWith("Bearer ")) {
-      try {
-        const token = authHeader.slice(7);
-        const [payloadB64] = token.split(".");
-        if (payloadB64) {
-          const json = Buffer.from(payloadB64, "base64url").toString("utf8");
-          const parsed = JSON.parse(json);
-          userId = String(parsed.sub || parsed.id || "").trim();
-        }
-      } catch {}
+  revokeSession(auth.sessionId, auth.expiresAt);
+
+  registerPrivateMessageSession({
+    sessionId: auth.sessionId,
+    userId: auth.userId,
+    expiresAt: auth.expiresAt,
+  });
+  endPrivateMessageSession(auth.sessionId, "logout");
+
+  const io = getIO();
+  if (io) {
+    const sockets = await io.fetchSockets();
+    const sessionSockets = sockets.filter(
+      (socket) => String(socket.data?.user?.sessionId || "") === auth.sessionId,
+    );
+    for (const socket of sessionSockets) {
+      socket.data.loggedOut = true;
+      await removeConnectedUser(socket.id);
+      socket.emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
+      socket.disconnect(true);
     }
 
-    if (userId) {
-      // 1. تنظيف الحضور من Redis والذاكرة المحلية
-      await removeUserPresenceByUserId(userId);
-
-      // 2. إلغاء أي مؤقتات معلقة
-      const pending = pendingDisconnects.get(userId);
+    const otherUserSessions = sockets.some(
+      (socket) =>
+        String(socket.data?.user?.id || "") === auth.userId &&
+        String(socket.data?.user?.sessionId || "") !== auth.sessionId,
+    );
+    if (!otherUserSessions) {
+      await removeUserPresenceByUserId(auth.userId);
+      const pending = pendingDisconnects.get(auth.userId);
       if (pending) {
         if (pending.timeout) clearTimeout(pending.timeout);
         if (pending.presenceTimeout) clearTimeout(pending.presenceTimeout);
-        pendingDisconnects.delete(userId);
+        pendingDisconnects.delete(auth.userId);
       }
 
-      // 3. قطع وإسقاط أي اتصالات سوكيت نشطة لهذا المستخدم
-      const io = getIO();
-      if (io) {
-        try {
-          const sockets = await io.fetchSockets();
-          for (const s of sockets) {
-            if (s.data?.user?.id && String(s.data.user.id) === userId) {
-              s.data.loggedOut = true;
-              await removeConnectedUser(s.id);
-              s.emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
-              s.disconnect(true);
-            }
-          }
-          if (io.sockets?.sockets) {
-            for (const [sid, s] of io.sockets.sockets.entries()) {
-              if (s.data?.user?.id && String(s.data.user.id) === userId) {
-                s.data.loggedOut = true;
-                await removeConnectedUser(sid);
-                s.emit("force_logout", { message: "تم إنهاء الجلسة لتسجيل الخروج" });
-                s.disconnect(true);
-              }
-            }
-          }
-        } catch (sockErr) {
-          console.warn("[logout.post] failed to disconnect sockets:", sockErr);
-        }
-
-        // 4. بث التحديث للجميع لإزالة العضو من قائمة المتصلين فوراً
-        try {
-          const count = await getTotalOnlineCount();
-          io.emit("online_count", { count });
-          io.emit("user_disconnected", {
-            userId,
-            count,
-          });
-        } catch {}
-      }
-
-      // 5. في بيئة تطوير Vite، إرسال إشعار للميدلوير الداخلي لقطع السوكيت المحلي
-      try {
-        const { Agent } = await import("undici");
-        const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
-        await fetch("https://127.0.0.1:3000/__terminate_user_sessions__", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId }),
-          dispatcher,
-        } as any).catch(() => {});
-      } catch {}
+      const count = await getTotalOnlineCount();
+      io.emit("online_count", { count });
+      io.emit("user_disconnected", { userId: auth.userId, count });
     }
-
-    return {
-      success: true,
-      message: "تم إنهاء جميع الجلسات بنجاح",
-    };
-  } catch (error) {
-    console.error("[logout.post] Error handling logout:", error);
-    return {
-      success: true,
-      message: "تم تسجيل الخروج",
-    };
   }
+
+  return { success: true, message: "تم إنهاء الجلسة بنجاح" };
 });

@@ -3,6 +3,8 @@ import { dbPool } from "../../../db";
 import { getUserAuthContext } from "../../../services/adminAccess";
 import { hasPermission } from "../../../services/permissionEngine";
 import { getUserAuthoritativeRank } from "../../../services/powersService";
+import { isSystemOwnerUsername } from "../../../services/systemOwner";
+import { SITE_OWNER_DISPLAY_NAME, SITE_OWNER_ROLE_NAME } from "../../../services/siteOwner";
 
 export default defineEventHandler(async (event) => {
   const auth = getUserAuthContext(event);
@@ -14,16 +16,7 @@ export default defineEventHandler(async (event) => {
   // جلب رتبة الفاعل الموثقة من قاعدة البيانات أولاً
   const actor = await getUserAuthoritativeRank(auth.userId, auth.username);
   const roleLower = String(auth.role || "").toLowerCase().trim();
-  const usernameLower = String(auth.username || "").toLowerCase().trim();
-
-  const isOwner = Boolean(
-    roleLower === "owner" ||
-    roleLower === "ispower" ||
-    roleLower === "مالك" ||
-    usernameLower === "safarihost" ||
-    usernameLower === "admin" ||
-    (actor && actor.rank >= 99999)
-  );
+  const isOwner = isSystemOwnerUsername(auth.username);
 
   const actorRank = isOwner ? 100000 : (actor?.rank || 9000);
 
@@ -50,14 +43,18 @@ export default defineEventHandler(async (event) => {
   const rolesResult = await dbPool.query(
     `SELECT
        r.id,
-       r.name,
+       CASE WHEN r.is_default THEN r.legacy_name ELSE r.name END AS name,
        r.legacy_name,
        r.rank,
        r.icon_url AS ico,
+       r.is_default,
+       r.is_owner,
+       (r.name = $1) AS is_site_owner,
        r.is_active,
        r.auto_enabled,
        r.auto_promote,
        r.auto_points,
+       r.announcement_daily_limit,
        r.legacy_metadata->>'color' AS color,
        r.legacy_metadata AS raw,
        r.created_at,
@@ -69,7 +66,13 @@ export default defineEventHandler(async (event) => {
      LEFT JOIN user_role_assignments ura ON ura.role_id = r.id
      GROUP BY r.id
      ORDER BY r.rank DESC, r.legacy_name ASC`,
+    [SITE_OWNER_ROLE_NAME],
   );
+
+  for (const role of rolesResult.rows) {
+    if (role.is_owner) role.name = "Owner";
+    if (role.is_site_owner) role.name = SITE_OWNER_DISPLAY_NAME;
+  }
 
   return {
     success: true,

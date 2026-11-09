@@ -43,6 +43,12 @@
       "skillPath": "skills/context-engineering/SKILL.md",
       "computedHash": "807434a4b178635a5539a1da241815ba7228f00b71f8e3ccd529472ce3bcaf80"
     },
+    "database-performance-tuning": {
+      "source": "fcsouza/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/database-performance-tuning/SKILL.md",
+      "computedHash": "ef40244c34a4d2f4dcf94414b1806f89633f5d8998c58620555823e6b30f3ea4"
+    },
     "debugging-and-error-recovery": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
@@ -103,6 +109,19 @@
       "skillPath": "skills/interview-me/SKILL.md",
       "computedHash": "4229002dd862e6e037c8a01c3e31d9af097465c58b2c3611912edb2af005f303"
     },
+    "nextjs-pr-review": {
+      "source": "ezzatmakar/ai-code-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/nextjs-pr-review/SKILL.md",
+      "computedHash": "b95ae9cf012fa8e2982d3f96be7209cbcb0ee699010f4abfc8a92ed4d765dfa3"
+    },
+    "nodejs-performance": {
+      "source": "microlinkhq/skills",
+      "sourceType": "github",
+      "skillPath": "nodejs-performance/SKILL.md",
+      "computedHash": "cf757f2d86086d8e59d2c537654211a5de5717b638d3d492ed1e7ded90df4fe0"
+    },
     "observability-and-instrumentation": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
@@ -120,6 +139,43 @@
       "sourceType": "github",
       "skillPath": "skills/planning-and-task-breakdown/SKILL.md",
       "computedHash": "0dc14a1402cdabd376f2d81d2225fcb4a18ee63d58b945ff83affeb024285b8f"
+    },
+    "playwright": {
+      "source": "magnus919/agent-skills",
+      "sourceType": "github",
+      "skillPath": "playwright/SKILL.md",
+      "computedHash": "a81fddf7321a1f8b48366f524101ed08bda1648a402cca8f262a075b79e275c6"
+    },
+    "postgresql-best-practices": {
+      "source": "microsoft/postgres-skills",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/postgresql-best-practices/SKILL.md",
+      "computedHash": "6df6f5a5af141eaf74907cd7ba3401425ad451e6dbf676ca52fda674e54c9eee"
+    },
+    "pre-push-review": {
+      "source": "ezzatmakar/ai-code-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/pre-push-review/SKILL.md",
+      "computedHash": "fdef3732ddb99a231db78c989c9c0ea8ad51cffc650e95d0b36b4e3f8884d6e5"
+    },
+    "react-patterns": {
+      "source": "oakoss/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-patterns/SKILL.md",
+      "computedHash": "5d8349660092559aa74bbae00d2f1606bad5ade91841c8bf4546928fc884181e"
+    },
+    "react-performance": {
+      "source": "oakoss/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-performance/SKILL.md",
+      "computedHash": "d822b17a5e570b72791b00130dd675ea2eb62565fc303f186d178bbe66e520d3"
+    },
+    "react-vite-best-practices": {
+      "source": "asyrafhussin/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-vite-best-practices/SKILL.md",
+      "computedHash": "bfd0d0cef40fd678863adcc5bc96a27ffb9c5cece99f56894dc22e5f36f37c6b"
     },
     "security-and-hardening": {
       "source": "addyosmani/agent-skills",
@@ -156,6 +212,25 @@
       "sourceType": "github",
       "skillPath": "skills/using-agent-skills/SKILL.md",
       "computedHash": "4221dc84c943696829025a42c7961b257afdb8f1ba20af42463434a0d9c03812"
+    },
+    "web-perf": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-perf/SKILL.md",
+      "computedHash": "6a64193959c0dff8a6fab17025aac2c56405aef8f2638196a5339448873cb2fa"
+    },
+    "web-perf-audit": {
+      "source": "ezzatmakar/ai-code-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/web-perf-audit/SKILL.md",
+      "computedHash": "8853cc4fb49140e4ab49dc10c2e53d8941d75cbc7fb0b37d5c16e9f6f3916b31"
+    },
+    "web-performance": {
+      "source": "quegenx/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-ui/web-performance/SKILL.md",
+      "computedHash": "61bd44a44c908d108882620100ee3d4322aa1e3fdd8b7d78a78fe3b70e54f6f7"
     }
   }
 }

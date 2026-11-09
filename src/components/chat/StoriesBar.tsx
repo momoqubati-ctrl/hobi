@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { useStoriesStore, getStoryUsers } from "@/lib/stories-store";
+import { PermissionGate } from "@/components/ui/PermissionGate";
 
 interface StoriesBarProps {
   onOpenCreator: () => void;
@@ -69,38 +70,44 @@ const StoriesBar = ({ onOpenCreator }: StoriesBarProps) => {
                     </div>
                   </div>
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenCreator();
-                  }}
-                  className="absolute bottom-5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white shadow-md hover:scale-110 active:scale-95 transition-transform"
-                  title="إضافة قصة جديدة"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
+                <PermissionGate requiredPermissions={["story_publish.use"]}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenCreator();
+                    }}
+                    className="absolute bottom-5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white shadow-md hover:scale-110 active:scale-95 transition-transform"
+                    title="إضافة قصة جديدة"
+                    aria-label="إضافة قصة جديدة"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </PermissionGate>
                 <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
                   قصتي
                 </span>
               </>
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={onOpenCreator}
-                  className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-slate-300 dark:border-slate-600 transition-transform active:scale-95"
-                >
-                  <div className="flex h-full w-full items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
-                    <Plus className="h-6 w-6 text-primary" />
-                  </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] text-white shadow-sm">
-                    <Plus className="h-3 w-3" />
+                <PermissionGate requiredPermissions={["story_publish.use"]}>
+                  <button
+                    type="button"
+                    onClick={onOpenCreator}
+                    className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-slate-300 dark:border-slate-600 transition-transform active:scale-95"
+                    aria-label="إضافة قصة جديدة"
+                  >
+                    <div className="flex h-full w-full items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+                      <Plus className="h-6 w-6 text-primary" />
+                    </div>
+                    <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] text-white shadow-sm">
+                      <Plus className="h-3 w-3" />
+                    </span>
+                  </button>
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                    إضافة
                   </span>
-                </button>
-                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                  إضافة
-                </span>
+                </PermissionGate>
               </>
             )}
           </div>

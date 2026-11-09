@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
@@ -29,8 +29,17 @@ const GlobalVideoPlayer = ({ activeTab, onExpandToWall }: GlobalVideoPlayerProps
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
+    // debounce: نتجنب إعادة الرسم عند كل حدث resize
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    const debouncedCheck = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(check, 100);
+    };
+    window.addEventListener("resize", debouncedCheck);
+    return () => {
+      window.removeEventListener("resize", debouncedCheck);
+      clearTimeout(resizeTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -156,7 +165,7 @@ const GlobalVideoPlayer = ({ activeTab, onExpandToWall }: GlobalVideoPlayerProps
         top: position.y,
         width: playerWidth,
         height: playerHeight,
-        transition: isDraggingRef.current ? "none" : "all 0.3s ease",
+        transition: isDraggingRef.current ? "none" : "width 0.2s ease, height 0.2s ease",
       }}
       onMouseDown={onMouseDown}
       onTouchStart={onTouchStart}

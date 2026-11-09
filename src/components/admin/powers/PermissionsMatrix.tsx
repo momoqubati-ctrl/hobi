@@ -13,7 +13,17 @@ import {
 } from 'lucide-react';
 import { getAdminHeaders } from '../utils';
 import { showSuccess, showError } from '@/utils/toast';
-import { BASIC_GROUPS, VISUAL_RESOURCES, ACTION_LABELS, getActionsForResource } from './permissionDefs';
+import {
+  BASIC_GROUPS,
+  VISUAL_RESOURCES,
+  ACTION_LABELS,
+  getActionsForResource,
+  isPermissionActionImplemented,
+  togglePermissionValue,
+} from './permissionDefs';
+import { isValidAnnouncementDailyLimit } from '@/lib/chatFeaturePermissions';
+import { useRealtimeStore } from "@/lib/realtime-store";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
 
 // ────────────────────────── Types ──────────────────────────
 interface RoleRow {
@@ -22,10 +32,14 @@ interface RoleRow {
   rank: number;
   color?: string;
   ico?: string;
+  is_default?: boolean;
+  is_owner?: boolean;
+  is_site_owner?: boolean;
   is_active: boolean;
   auto_enabled?: number;
   auto_promote?: number;
   auto_points?: number;
+  announcement_daily_limit?: number;
   member_count: number;
   created_at: string;
   updated_at?: string;
@@ -52,6 +66,9 @@ type Matrix = Record<string, Record<string, boolean>>;
 // view state: 'list' = role table, 'edit' = permissions matrix for one role
 type ViewMode = 'list' | 'create' | 'edit';
 
+const isProtectedRole = (role?: Pick<RoleRow, 'is_owner' | 'is_site_owner'> | null) =>
+  Boolean(role?.is_owner || role?.is_site_owner);
+
 // ────────────────────────── Helpers ──────────────────────────
 const ACTION_COLORS: Record<string, string> = {
   read: "text-blue-600 border-blue-400 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500",
@@ -74,6 +91,8 @@ function formatDate(iso?: string) {
 //  MAIN COMPONENT
 // ════════════════════════════════════════════════════════════
 const PermissionsMatrix = () => {
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canManageRoles = hasPermissionAccess(permissions, "admin_roles.edit");
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [matrix, setMatrix] = useState<Matrix>({});
   const [loading, setLoading] = useState(true);
@@ -94,6 +113,7 @@ const PermissionsMatrix = () => {
   const [editIcon, setEditIcon] = useState<string>("");
   const [editIconPicker, setEditIconPicker] = useState(false);
   const [savingIcon, setSavingIcon] = useState(false);
+  const [dailyLimitDraft, setDailyLimitDraft] = useState("0");
 
   // members modal
   const [membersModal, setMembersModal] = useState<{ open: boolean; role: RoleRow | null; members: MemberRow[]; loading: boolean }>({
@@ -105,7 +125,12 @@ const PermissionsMatrix = () => {
 
   useEffect(() => { fetchData(); }, []);
   useEffect(() => { if (viewMode === 'create' || viewMode === 'edit') fetchIcons(); }, [viewMode]);
-  useEffect(() => { if (viewMode === 'edit' && activeRole) { setEditIcon(activeRole.ico || ""); } }, [viewMode, activeRole]);
+  useEffect(() => {
+    if (viewMode === 'edit' && activeRole) {
+      setEditIcon(activeRole.ico || "");
+      setDailyLimitDraft(String(activeRole.announcement_daily_limit ?? 0));
+    }
+  }, [viewMode, activeRole]);
 
   // ── Fetch ────────────────────────────────────────────────
   // تطبيع قيم الصلاحيات من jsonb إلى boolean
@@ -169,6 +194,8 @@ const PermissionsMatrix = () => {
 
   // ── Actions ──────────────────────────────────────────────
   const toggleRoleActive = async (role: RoleRow) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (isProtectedRole(role)) return;
     setTogglingId(role.id);
     try {
       const res = await fetch('/api/admin/roles', {
@@ -186,6 +213,7 @@ const PermissionsMatrix = () => {
   };
 
   const createRole = async () => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
     if (!newRole.name.trim()) { showError("اسم الرتبة مطلوب"); return; }
     try {
       const res = await fetch('/api/admin/roles', {
@@ -203,6 +231,8 @@ const PermissionsMatrix = () => {
   };
 
   const deleteRole = async (roleId: string, name: string) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (roles.some(role => role.id === roleId && isProtectedRole(role))) return;
     if (!confirm(`هل أنت متأكد من حذف الرتبة "${name}"؟`)) return;
     try {
       const res = await fetch(`/api/admin/roles/${roleId}`, { method: 'DELETE', headers: getAdminHeaders() });
@@ -213,7 +243,8 @@ const PermissionsMatrix = () => {
   };
 
   const handleSaveIcon = async () => {
-    if (!activeRole) return;
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (!activeRole || isProtectedRole(activeRole)) return;
     setSavingIcon(true);
     try {
       const res = await fetch('/api/admin/roles', {
@@ -233,41 +264,47 @@ const PermissionsMatrix = () => {
 
   // ── Permissions helpers ───────────────────────────────────
   const handleToggle = (roleId: string, permKey: string) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (activeRole?.id === roleId && isProtectedRole(activeRole)) return;
+    const separator = permKey.lastIndexOf(".");
+    if (separator < 0) return;
+
     setMatrix(prev => {
-      const next = { ...prev, [roleId]: { ...prev[roleId], [permKey]: !prev[roleId]?.[permKey] } };
-      if (next[roleId][permKey] && permKey.endsWith(".all")) {
-        const base = permKey.slice(0, -4);
-        next[roleId][`${base}.read`] = true;
-        next[roleId][`${base}.edit`] = true;
-        next[roleId][`${base}.delete`] = true;
-      }
-      if (!next[roleId][permKey] && !permKey.endsWith(".all")) {
-        const dot = permKey.lastIndexOf(".");
-        if (dot !== -1) {
-          const base = permKey.slice(0, dot);
-          if (next[roleId][`${base}.all`]) next[roleId][`${base}.all`] = false;
-        }
-      }
-      return next;
+      return {
+        ...prev,
+        [roleId]: togglePermissionValue(
+          prev[roleId] || {},
+          permKey.slice(0, separator),
+          permKey.slice(separator + 1),
+        ),
+      };
     });
   };
 
   const handleToggleAllActions = (roleId: string, resKey: string, enable: boolean) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (activeRole?.id === roleId && isProtectedRole(activeRole)) return;
     setMatrix(prev => {
       const next = { ...prev, [roleId]: { ...(prev[roleId] || {}) } };
-      const actions = getActionsForResource(resKey);
+      const actions = getActionsForResource(resKey).filter(action => isPermissionActionImplemented(resKey, action));
       actions.forEach(action => { next[roleId][`${resKey}.${action}`] = enable; });
       if (enable && actions.includes("all")) {
-        next[roleId][`${resKey}.read`] = true;
-        next[roleId][`${resKey}.edit`] = true;
-        next[roleId][`${resKey}.delete`] = true;
+        ["read", "edit", "delete"].forEach(action => {
+          if (isPermissionActionImplemented(resKey, action)) next[roleId][`${resKey}.${action}`] = true;
+        });
       }
       return next;
     });
   };
 
   const handleSavePermissions = async () => {
-    if (!activeRole) return;
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "admin_roles.edit")) return;
+    if (!activeRole || isProtectedRole(activeRole)) return;
+    const dailyLimit = Number(dailyLimitDraft);
+    if (!dailyLimitDraft.trim() || !isValidAnnouncementDailyLimit(dailyLimit)) {
+      showError("يجب أن يكون الحد اليومي عددًا صحيحًا بين 0 و1000");
+      return;
+    }
     setSaving(true);
     try {
       // حفظ الأيقونة إذا تغيرت
@@ -289,7 +326,10 @@ const PermissionsMatrix = () => {
       const roleMatrix = { [activeRole.id]: savedPerms };
       const res = await fetch('/api/admin/permissions/bulk', {
         method: 'POST', headers: getAdminHeaders(),
-        body: JSON.stringify({ matrix: roleMatrix })
+        body: JSON.stringify({
+          matrix: roleMatrix,
+          announcementDailyLimits: { [activeRole.id]: dailyLimit },
+        })
       });
       const data = await res.json();
       if (data.success) {
@@ -297,10 +337,22 @@ const PermissionsMatrix = () => {
         // تحديث حالة الرتب المحلية فوراً
         setRoles(prev => prev.map(r =>
           r.id === activeRole.id
-            ? { ...r, permissions: savedPerms, ico: editIcon || undefined }
+            ? {
+                ...r,
+                permissions: savedPerms,
+                announcement_daily_limit: dailyLimit,
+                ico: editIcon || undefined,
+              }
             : r
         ));
-        setActiveRole(prev => prev ? { ...prev, permissions: savedPerms, ico: editIcon || undefined } : prev);
+        setActiveRole(prev => prev
+          ? {
+              ...prev,
+              permissions: savedPerms,
+              announcement_daily_limit: dailyLimit,
+              ico: editIcon || undefined,
+            }
+          : prev);
       } else showError(data.message);
     } catch { showError("حدث خطأ أثناء الحفظ"); }
     finally { setSaving(false); }
@@ -314,6 +366,14 @@ const PermissionsMatrix = () => {
   const filteredVisual = VISUAL_RESOURCES.filter(r => !search || r.label.includes(search) || r.key.includes(search));
 
   // ── Loading ───────────────────────────────────────────────
+  if (!canManageRoles && viewMode !== "list") {
+    return (
+      <div role="status" className="rounded-3xl border border-dashed border-border bg-white py-12 text-center text-sm text-muted-foreground dark:bg-slate-900">
+        لا تملك صلاحية تعديل الرتب والصلاحيات.
+      </div>
+    );
+  }
+
   if (loading) return (
     <div className="py-20 text-center">
       <Loader2 className="animate-spin mx-auto w-8 h-8 text-primary" />
@@ -409,10 +469,10 @@ const PermissionsMatrix = () => {
             <Button variant="outline" onClick={() => { setViewMode('list'); setActiveRole(null); setSearch(""); setEditIcon(""); setEditIconPicker(false); }} className="rounded-2xl h-10 gap-2">
               <X size={16} /> إلغاء
             </Button>
-            <Button onClick={handleSavePermissions} disabled={saving} className="rounded-2xl h-10 gap-2 font-black shadow-lg shadow-primary/20">
+            {canManageRoles && <Button onClick={handleSavePermissions} disabled={saving} className="rounded-2xl h-10 gap-2 font-black shadow-lg shadow-primary/20">
               {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
               حفظ الصلاحيات
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -426,6 +486,29 @@ const PermissionsMatrix = () => {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+
+        <Card className="max-w-sm border border-border shadow-sm">
+          <CardContent className="space-y-2 p-4">
+            <label htmlFor="announcement-daily-limit" className="text-sm font-bold text-foreground">
+              الحد اليومي للإعلانات
+            </label>
+            <Input
+              id="announcement-daily-limit"
+              type="number"
+              min={0}
+              max={1000}
+              step={1}
+              value={dailyLimitDraft}
+              disabled={isProtectedRole(activeRole)}
+              onChange={(event) => setDailyLimitDraft(event.target.value)}
+              aria-describedby="announcement-daily-limit-help"
+              className="h-10"
+            />
+            <p id="announcement-daily-limit-help" className="text-xs text-muted-foreground">
+              0 يمنع الإرسال. الحصة مشتركة بين الأنواع المسموحة وتُصفّر يوميًا بتوقيت الرياض.
+            </p>
+          </CardContent>
+        </Card>
 
         {/* Permissions Table (single role) */}
         <Card className="border-none shadow-xl rounded-3xl overflow-hidden">
@@ -452,9 +535,12 @@ const PermissionsMatrix = () => {
                         <td className="px-5 py-2.5 font-bold text-slate-700 dark:text-slate-300 text-xs">
                           <div className="flex items-center gap-2 group/row">
                             <span>{res.label}</span>
+                            {!isPermissionActionImplemented(res.key, "use") && (
+                              <Badge variant="outline" className="rounded-md border-amber-300 text-[8px] text-amber-700">لم تطبق بعد</Badge>
+                            )}
                             <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                              <button type="button" onClick={() => handleToggleAllActions(activeRole.id, res.key, true)} className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-colors" title="تفعيل"><Check size={10} /></button>
-                              <button type="button" onClick={() => handleToggleAllActions(activeRole.id, res.key, false)} className="p-1 rounded bg-red-50 hover:bg-red-100 text-red-500 transition-colors" title="تعطيل"><X size={10} /></button>
+                              <button type="button" disabled={!isPermissionActionImplemented(res.key, "use")} onClick={() => handleToggleAllActions(activeRole.id, res.key, true)} className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-colors disabled:cursor-not-allowed disabled:opacity-40" title="تفعيل"><Check size={10} /></button>
+                              <button type="button" disabled={!isPermissionActionImplemented(res.key, "use")} onClick={() => handleToggleAllActions(activeRole.id, res.key, false)} className="p-1 rounded bg-red-50 hover:bg-red-100 text-red-500 transition-colors disabled:cursor-not-allowed disabled:opacity-40" title="تعطيل"><X size={10} /></button>
                             </div>
                           </div>
                         </td>
@@ -464,8 +550,13 @@ const PermissionsMatrix = () => {
                               checked={!!matrix[activeRole.id]?.[`${res.key}.use`]}
                               onCheckedChange={() => handleToggle(activeRole.id, `${res.key}.use`)}
                               className={`rounded-sm border-slate-300 w-5 h-5 ${ACTION_COLORS.use}`}
+                              disabled={!isPermissionActionImplemented(res.key, "use")}
+                              aria-label={`${res.label} - استخدام`}
                             />
                             <span className="text-[10px] font-bold text-emerald-500">استخدام</span>
+                            {!isPermissionActionImplemented(res.key, "use") && (
+                              <span className="text-[8px] font-bold text-amber-700">لم تطبق بعد</span>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -487,9 +578,12 @@ const PermissionsMatrix = () => {
                         <td className="px-5 py-2.5 font-bold text-slate-700 dark:text-slate-300 text-xs">
                           <div className="flex items-center gap-2 group/row">
                             <span>{res.label}</span>
+                            {getActionsForResource(res.key).every(action => !isPermissionActionImplemented(res.key, action)) && (
+                              <Badge variant="outline" className="rounded-md border-amber-300 text-[8px] text-amber-700">لم تطبق بعد</Badge>
+                            )}
                             <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                              <button type="button" onClick={() => handleToggleAllActions(activeRole.id, res.key, true)} className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-colors" title="تفعيل"><Check size={10} /></button>
-                              <button type="button" onClick={() => handleToggleAllActions(activeRole.id, res.key, false)} className="p-1 rounded bg-red-50 hover:bg-red-100 text-red-500 transition-colors" title="تعطيل"><X size={10} /></button>
+                              <button type="button" disabled={getActionsForResource(res.key).every(action => !isPermissionActionImplemented(res.key, action))} onClick={() => handleToggleAllActions(activeRole.id, res.key, true)} className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-colors disabled:cursor-not-allowed disabled:opacity-40" title="تفعيل"><Check size={10} /></button>
+                              <button type="button" disabled={getActionsForResource(res.key).every(action => !isPermissionActionImplemented(res.key, action))} onClick={() => handleToggleAllActions(activeRole.id, res.key, false)} className="p-1 rounded bg-red-50 hover:bg-red-100 text-red-500 transition-colors disabled:cursor-not-allowed disabled:opacity-40" title="تعطيل"><X size={10} /></button>
                             </div>
                           </div>
                         </td>
@@ -501,8 +595,13 @@ const PermissionsMatrix = () => {
                                   checked={!!matrix[activeRole.id]?.[`${res.key}.${action}`]}
                                   onCheckedChange={() => handleToggle(activeRole.id, `${res.key}.${action}`)}
                                   className={`rounded-sm border-slate-300 w-5 h-5 ${ACTION_COLORS[action]}`}
+                                  disabled={!isPermissionActionImplemented(res.key, action)}
+                                  aria-label={`${res.label} - ${ACTION_LABELS[action]}${isPermissionActionImplemented(res.key, action) ? "" : " - لم تطبق بعد"}`}
                                 />
                                 <span className={`text-[8px] font-bold ${action === 'all' ? 'text-violet-500' : 'text-slate-400'}`}>{ACTION_SHORT[action]}</span>
+                                {!isPermissionActionImplemented(res.key, action) && (
+                                  <span className="max-w-12 text-center text-[7px] font-bold leading-tight text-amber-700">لم تطبق بعد</span>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -654,9 +753,9 @@ const PermissionsMatrix = () => {
           <h2 className="text-2xl font-black text-slate-800 dark:text-slate-100">إدارة الرتب والصلاحيات</h2>
           <p className="text-sm text-muted-foreground font-medium mt-0.5">عرض وإدارة جميع رتب النظام وصلاحياتها</p>
         </div>
-        <Button onClick={() => setViewMode('create')} className="rounded-2xl h-11 px-5 gap-2 font-black shadow-lg">
+        {canManageRoles && <Button onClick={() => setViewMode('create')} className="rounded-2xl h-11 px-5 gap-2 font-black shadow-lg">
           <Plus size={18} /> إضافة رتبة جديدة
-        </Button>
+        </Button>}
       </div>
 
       {/* Table Card */}
@@ -700,7 +799,18 @@ const PermissionsMatrix = () => {
                             )}
                           </div>
                           <div>
-                            <p className="font-black text-sm" style={{ color: role.color || undefined }}>{role.name}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-black text-sm" style={{ color: role.color || undefined }}>{role.name}</p>
+                              {role.is_default && (
+                                <Badge variant="secondary" className="rounded-lg text-[9px]">افتراضية للأعضاء</Badge>
+                              )}
+                              {role.is_owner && (
+                                <Badge variant="outline" className="rounded-lg text-[9px] border-amber-400 text-amber-700">مالك الاستضافة - نظامية ثابتة</Badge>
+                              )}
+                              {role.is_site_owner && (
+                                <Badge variant="outline" className="rounded-lg text-[9px] border-blue-400 text-blue-700">مالك الموقع - مجموعة نظامية ثابتة</Badge>
+                              )}
+                            </div>
                             <p className="text-[10px] text-slate-400 font-mono">{role.id.slice(0, 8)}…</p>
                           </div>
                         </div>
@@ -746,15 +856,15 @@ const PermissionsMatrix = () => {
 
                       {/* Status Toggle */}
                       <td className="px-4 py-3 text-center">
-                        <button
+                        {canManageRoles ? <button
                           onClick={() => toggleRoleActive(role)}
-                          disabled={togglingId === role.id}
+                          disabled={togglingId === role.id || role.is_default || isProtectedRole(role)}
                           className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
                             role.is_active
                               ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 hover:bg-emerald-100'
                               : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 hover:bg-slate-200'
                           }`}
-                          title={role.is_active ? "انقر لتعطيل" : "انقر لتفعيل"}
+                          title={isProtectedRole(role) ? "المجموعة النظامية ثابتة ولا يمكن تعديلها" : role.is_default ? "لا يمكن تعطيل رتبة الأعضاء الافتراضية" : role.is_active ? "انقر لتعطيل" : "انقر لتفعيل"}
                         >
                           {togglingId === role.id ? (
                             <Loader2 size={12} className="animate-spin" />
@@ -764,13 +874,22 @@ const PermissionsMatrix = () => {
                             <ToggleLeft size={14} />
                           )}
                           {role.is_active ? "فعّال" : "معطّل"}
-                        </button>
+                        </button> : (
+                          <span className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ${
+                            role.is_active
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
+                              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                          }`}>
+                            {role.is_active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                            {role.is_active ? "فعّال" : "معطّل"}
+                          </span>
+                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          <button
+                          {canManageRoles && !isProtectedRole(role) && <button
                             onClick={() => {
                               setActiveRole(role);
                               // إذا لم تكن البيانات موجودة في المصفوفة نُهيّئها من الرتبة
@@ -785,14 +904,16 @@ const PermissionsMatrix = () => {
                             title="تعديل الصلاحيات"
                           >
                             <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => deleteRole(role.id, role.name)}
-                            className="w-8 h-8 rounded-xl bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-500 flex items-center justify-center transition-all"
-                            title="حذف الرتبة"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          </button>}
+                          {canManageRoles && !role.is_default && !isProtectedRole(role) && (
+                            <button
+                              onClick={() => deleteRole(role.id, role.name)}
+                              className="w-8 h-8 rounded-xl bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-500 flex items-center justify-center transition-all"
+                              title="حذف الرتبة"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

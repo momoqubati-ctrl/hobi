@@ -1,10 +1,14 @@
-import { defineEventHandler, getQuery } from "h3";
+import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
 import { getAdminContext } from "../../../services/adminAccess";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   const admin = getAdminContext(event);
-  if (!admin.ok) return { success: false, message: admin.message };
+  if (!admin.ok) {
+    setResponseStatus(event, admin.statusCode);
+    return { success: false, message: admin.message, error: admin.message };
+  }
 
   const query = getQuery(event);
   const categoryId = query.category_id as string | undefined;
@@ -37,7 +41,6 @@ export default defineEventHandler(async (event) => {
     }
     return { success: true, gifts: result.rows };
   } catch (error: any) {
-    console.error("[Admin Gifts] Fetch error:", error);
-    return { success: false, message: `فشل جلب الهدايا: ${error.message}` };
+    return handleApiError(event, error);
   }
 });

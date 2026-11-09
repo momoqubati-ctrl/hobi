@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+﻿import { defineConfig, loadEnv } from "vite";
 import dyadComponentTagger from "@dyad-sh/react-vite-component-tagger";
 import react from "@vitejs/plugin-react";
 import path from "path";
@@ -17,11 +17,11 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: "::",
-      port: 3000,
+      port: Number(process.env.PORT) || 3000,
       strictPort: true,
       allowedHosts: ["ch.alhawia.store"],
       watch: {
-        ignored: ["**/.output/**", "**/minio-data/**"],
+        ignored: ["**/.output/**", "**/minio-data/**", "**/scratch/**"],
       },
       proxy: {
         "/minio": {
@@ -41,5 +41,22 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
+    build: {
+      // تقسيم الـ bundle لتقليل Initial Load
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router-dom")) return "react-vendor";
+            if (id.includes("node_modules/@tanstack/react-query")) return "query-vendor";
+            if (id.includes("node_modules/lucide-react")) return "ui-vendor";
+          },
+        },
+      },
+      // تحذير عند تجاوز 800KB لأي chunk
+      chunkSizeWarningLimit: 800,
+      // esbuild أسرع بكثير من terser في الـ minification
+      minify: "esbuild",
+    },
   };
 });
+// Reload config: PM media update

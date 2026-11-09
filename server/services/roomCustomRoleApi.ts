@@ -10,8 +10,10 @@ import {
   createRoomCustomRoleSchema,
   roomCustomRoleService,
   RoomCustomRoleServiceError,
+  roomMemberRoleAssignmentSchema,
   updateRoomCustomRoleSchema,
   type CreateRoomCustomRoleInput,
+  type RoomMemberRoleAssignmentInput,
   type UpdateRoomCustomRoleInput,
 } from "./roomCustomRoleService";
 
@@ -75,6 +77,15 @@ const getRoleId = (event: H3Event): string | null => {
   return roleId;
 };
 
+const getMemberId = (event: H3Event): string | null => {
+  const memberId = getRouterParam(event, "memberId")?.trim();
+  if (!memberId || memberId.length > 255) {
+    setResponseStatus(event, 422);
+    return null;
+  }
+  return memberId;
+};
+
 const handleServiceError = (event: H3Event, error: unknown, action: string) => {
   if (error instanceof RoomCustomRoleServiceError) {
     setResponseStatus(event, error.statusCode);
@@ -83,6 +94,7 @@ const handleServiceError = (event: H3Event, error: unknown, action: string) => {
       ROOM_NOT_FOUND: "الغرفة غير موجودة",
       NOT_ALLOWED: "لا تملك صلاحية إدارة مجموعات هذه الغرفة",
       ROLE_NOT_FOUND: "مجموعة الصلاحيات غير موجودة",
+      MEMBER_NOT_FOUND: "عضو الغرفة غير موجود",
       NAME_CONFLICT: "يوجد مجموعة أخرى بالاسم نفسه",
     } satisfies Record<RoomCustomRoleServiceError["code"], string>;
     return { success: false, code: error.code, message: messages[error.code] };
@@ -165,7 +177,36 @@ export function createRoomCustomRoleHandlers(
     }
   });
 
-  return { list, create, update, remove };
+  const assignMemberRole = defineEventHandler(async (event) => {
+    const context = getRequestContext(event, authenticate);
+    if ("error" in context) return context.error;
+
+    const memberId = getMemberId(event);
+    if (!memberId) {
+      return { success: false, code: "INVALID_REQUEST", message: "معرف العضو غير صالح" };
+    }
+    const input = await readValidatedBody<RoomMemberRoleAssignmentInput>(
+      event,
+      roomMemberRoleAssignmentSchema,
+    );
+    if (!input) {
+      return { success: false, code: "INVALID_REQUEST", message: "بيانات إسناد المجموعة غير صالحة" };
+    }
+
+    try {
+      const assignment = await service.assignMemberRole(
+        context.roomRef,
+        context.userId,
+        memberId,
+        input.customRoleId,
+      );
+      return { success: true, assignment };
+    } catch (error) {
+      return handleServiceError(event, error, "assign member role");
+    }
+  });
+
+  return { list, create, update, remove, assignMemberRole };
 }
 
 export const roomCustomRoleHandlers = createRoomCustomRoleHandlers();

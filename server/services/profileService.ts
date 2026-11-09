@@ -5,6 +5,7 @@ import { redis } from "./redis";
 import { findInMemoryUser } from "./authService";
 import { findSharedUser } from "./sharedUserStore";
 import { normalizeMinioUrl } from "./minioClient";
+import { isSystemOwnerUsername } from "./systemOwner";
 
 type ProfileVisitor = {
   id: string;
@@ -21,7 +22,8 @@ const localFollowEdges = new Set<string>();
 const normalizeRole = (power: unknown, username: unknown) => {
   const value = String(power || "").toLowerCase();
   const user = String(username || "").toLowerCase();
-  if (user === "admin" || user === "safarihost" || ["owner", "ispower", "hide", "chatmaster"].includes(value)) return "owner";
+  if (isSystemOwnerUsername(user)) return "owner";
+  if (["owner", "ispower", "hide", "chatmaster"].includes(value)) return "admin";
   if (["admin", "moderator"].includes(value)) return value;
   return "member";
 };
@@ -35,13 +37,15 @@ const toIsoDate = (value: unknown) => {
 
 const createLegacyProfileResult = (row: any) => {
   const userId = String(row.id || row.uid || row.idreg || "");
-  const displayName = String(row.topic || row.username || "");
+  const displayName = String(row.display_name || row.topic || row.username || "");
 
   return {
     id: userId,
     legacyId: row.idreg ?? null,
     username: String(row.username || ""),
     displayName,
+    mentionName: String(row.mention_name || ""),
+    publicUserId: String(row.public_user_id || ""),
     role: normalizeRole(row.power, row.username),
     status: "active",
     avatarUrl: normalizeMinioUrl(row.pic || "/pic.png"),
@@ -126,6 +130,10 @@ const result = await dbPool.query(
           OR CAST(u.idreg AS varchar) = $1
           OR CONCAT('#', CAST(u.idreg AS varchar)) = $1
           OR lower(u.username) = lower($1)
+          OR lower(u.display_name) = lower($1)
+          OR lower(u.topic) = lower($1)
+          OR lower(u.mention_name) = lower($1)
+          OR CAST(u.public_user_id AS text) = $1
        LIMIT 1`,
       [normalized],
     );
@@ -145,6 +153,10 @@ const getLegacyProfileStats = async (profileId: string) => {
         OR CAST(idreg AS varchar) = $1
         OR CONCAT('#', CAST(idreg AS varchar)) = $1
         OR lower(username) = lower($1)
+        OR lower(display_name) = lower($1)
+        OR lower(topic) = lower($1)
+        OR lower(mention_name) = lower($1)
+        OR CAST(public_user_id AS text) = $1
      LIMIT 1`,
     [normalized],
   );
@@ -277,15 +289,6 @@ export class ProfileService {
   static async addLike(viewerId: string, profileId: string) {
     const { dbPool } = await import("../db");
 
-    await dbPool.query(`
-      CREATE TABLE IF NOT EXISTS "profile_like_cooldowns" (
-        "liker_id" varchar(255) NOT NULL,
-        "profile_id" varchar(255) NOT NULL,
-        "last_liked_at" timestamptz DEFAULT now() NOT NULL,
-        PRIMARY KEY ("liker_id", "profile_id")
-      );
-    `);
-
     const cooldownKey = `profile:like_cooldown:${viewerId}:${profileId}`;
     const redisCooldown = await redis.client?.get(cooldownKey);
     if (redisCooldown) {
@@ -342,14 +345,6 @@ export class ProfileService {
 
     try {
       const { dbPool } = await import("../db");
-      await dbPool.query(`
-        CREATE TABLE IF NOT EXISTS "profile_like_cooldowns" (
-          "liker_id" varchar(255) NOT NULL,
-          "profile_id" varchar(255) NOT NULL,
-          "last_liked_at" timestamptz DEFAULT now() NOT NULL,
-          PRIMARY KEY ("liker_id", "profile_id")
-        );
-      `);
       const result = await dbPool.query(
         `SELECT last_liked_at FROM profile_like_cooldowns WHERE liker_id = $1 AND profile_id = $2 LIMIT 1`,
         [String(viewerId), String(profileId)]
@@ -375,15 +370,6 @@ export class ProfileService {
 
     const key = getFollowKey(viewerId, profileId);
     const { dbPool } = await import("../db");
-
-    await dbPool.query(`
-      CREATE TABLE IF NOT EXISTS "user_follows" (
-        "follower_id" varchar(255) NOT NULL,
-        "following_id" varchar(255) NOT NULL,
-        "created_at" timestamptz DEFAULT now() NOT NULL,
-        PRIMARY KEY ("follower_id", "following_id")
-      );
-    `);
 
     const existing = await dbPool.query(
       `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,

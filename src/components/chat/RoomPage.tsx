@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { RoomProfileModal } from "./RoomProfileModal";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +21,9 @@ import { useVoiceRecorder, formatDuration } from "@/lib/useVoiceRecorder";
 import { NotificationsBell } from "./NotificationsPanel";
 import { VoiceStage } from "./VoiceStage";
 import { RoomSettingsModal } from "./RoomSettingsModal";
+import { PermissionGate } from "@/components/ui/PermissionGate";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
+import { DEFAULT_CHAT_FEATURE_PERMISSION_KEYS } from "@/lib/chatFeaturePermissions";
 const showMuteAlert = (message: string) => {
   let detail: any = {
     alertId: String(Date.now()),
@@ -222,6 +225,12 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
   replyToMsg: ChatMessage | null;
   onCancelReply: () => void;
 }) => {
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canSendRoomChat = hasPermissionAccess(permissions, "room_chat.use");
+  const canSendRoomMedia = hasPermissionAccess(permissions, "room_media.use");
+  const canSendRoomYoutube = hasPermissionAccess(permissions, "room_youtube.use");
+  const canSendRoomAudio = hasPermissionAccess(permissions, "room_audio_message.use");
+  const canUseChatEffects = hasPermissionAccess(permissions, "chat_effects.use");
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -295,7 +304,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       const res = await fetch("/api/wall/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ file: base64, filename: file.name, contentType: file.type }),
+        body: JSON.stringify({ file: base64, filename: file.name, contentType: file.type, purpose: "room_message" }),
       });
       const data = await res.json();
       if (data.success) return { url: data.url, type: data.type === "image" ? "image" : "video" };
@@ -370,7 +379,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       const res = await fetch("/api/wall/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: blob.type }),
+        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: blob.type, purpose: "room_message" }),
       });
       const data = await res.json();
       if (data.success) return data.url;
@@ -381,6 +390,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
   };
 
   const handleSendVoice = async () => {
+    if (!canSendRoomAudio) return;
     if (!recorder.audioBlob) return;
     setIsSending(true);
     try {
@@ -399,6 +409,9 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canSendRoomChat) return;
+    if (pendingFiles.length > 0 && !canSendRoomMedia) return;
+    if (selectedVideo && !canSendRoomYoutube) return;
     let text = message.trim();
     if (selectedVideo) {
       const videoUrl = `https://www.youtube.com/watch?v=${selectedVideo.id}`;
@@ -432,7 +445,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
           processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
         }
       }
-      if (matchedFaceUrls.length > 0) {
+      if (matchedFaceUrls.length > 0 && canUseChatEffects) {
         setIsSending(true);
         setMessage("");
         setSelectedVideo(null);
@@ -473,10 +486,12 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
     }
   };
 
+  if (!canSendRoomChat) return null;
+
   return (
     <div ref={inputAreaRef} className="z-10 border-t border-border bg-card shadow-lg [direction:ltr] relative" dir="ltr">
       {/* شريط معاينة التسجيل الصوتي */}
-      {recorder.isRecording && (
+      {canSendRoomAudio && recorder.isRecording && (
         <div className="px-3 pt-2 border-b border-border">
           <div className="flex items-center gap-3 px-3 py-2 bg-red-500/5 rounded-xl border-l-4 border-red-500 animate-pulse">
             <div className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
@@ -495,7 +510,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       )}
 
       {/* شريط معاينة التسجيل الجاهز */}
-      {recorder.audioBlob && !recorder.isRecording && (
+      {canSendRoomAudio && recorder.audioBlob && !recorder.isRecording && (
         <div className="px-3 pt-2 border-b border-border">
           <div className="flex items-center gap-3 px-3 py-2 bg-green-500/5 rounded-xl border-l-4 border-green-500">
             <AudioLines size={14} className="text-green-600 shrink-0" />
@@ -537,7 +552,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       )}
 
       {/* معاينة الفيديو المختار من يوتيوب */}
-      {selectedVideo && (
+      {canSendRoomYoutube && selectedVideo && (
         <div className="px-3 pt-2 border-b border-border bg-slate-50 dark:bg-slate-900/50">
           <div className="flex items-center gap-3 px-3 py-1.5 bg-muted/50 rounded-xl border-l-4 border-red-500">
             <div className="relative shrink-0 w-12 h-8 rounded-lg overflow-hidden bg-slate-200">
@@ -564,7 +579,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       )}
 
       {/* لوحة البحث في يوتيوب */}
-      {showYouTubeSearch && (
+      {canSendRoomYoutube && showYouTubeSearch && (
         <div className="p-3 border-b border-border bg-slate-50 dark:bg-slate-900/40 animate-in slide-in-from-bottom duration-200">
           <YouTubeSearchInline
             onSelectVideo={(video) => setSelectedVideo(video)}
@@ -574,7 +589,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       )}
 
       {/* معاينة الملفات المختارة */}
-      {pendingFiles.length > 0 && (
+      {canSendRoomMedia && pendingFiles.length > 0 && (
         <div className="px-3 pt-2 border-b border-border">
           <div className="flex gap-2 overflow-x-auto pb-2">
             {pendingFiles.map((pf, idx) => (
@@ -616,7 +631,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       />
 
       {/* لوحة الملصقات */}
-      {showStickers && (
+      {canUseChatEffects && showStickers && (
         <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
           {/* أقسام الملصقات */}
           <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
@@ -653,7 +668,7 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
       )}
 
       {/* لوحة الفيسات المتحركة */}
-      {showFaces && (
+      {canUseChatEffects && showFaces && (
         <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
           <div className="p-2 text-[10px] text-muted-foreground font-bold">
             اكتب الاختصار في حقل الكتابة (مثال: ف1)
@@ -702,30 +717,30 @@ const ChatInputArea = React.memo(({ roomId, onSendMessage, onSendMedia, onSendSt
             </PopoverTrigger>
             <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
               <div className="flex gap-1 flex-wrap justify-center">
-                <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرسال صورة أو فيديو">
+                {canSendRoomMedia && <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرسال صورة أو فيديو">
                   <ImagePlus size={22} className="text-green-500" />
                   <span className="text-[9px] font-bold">صورة</span>
-                </button>
-                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowYouTubeSearch(true); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="بحث YouTube">
+                </button>}
+                {canSendRoomYoutube && <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowYouTubeSearch(true); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="بحث YouTube">
                   <Youtube size={22} className="text-red-500" />
                   <span className="text-[9px] font-bold">يوتيوب</span>
-                </button>
-                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
+                </button>}
+                {canUseChatEffects && <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
                   <span className="text-[20px] leading-none">🖼️</span>
                   <span className="text-[9px] font-bold">ملصقات</span>
-                </button>
-                <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
+                </button>}
+                {canUseChatEffects && <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
                   <Smile size={22} className="text-orange-500" />
                   <span className="text-[9px] font-bold">فيسات</span>
-                </button>
+                </button>}
                 <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowEmoji(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showEmoji ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="إيموجي">
                   <SmilePlus size={22} className="text-yellow-500" />
                   <span className="text-[9px] font-bold">إيموجي</span>
                 </button>
-                <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
+                {canSendRoomAudio && <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
                   {recorder.isRecording ? <MicOff size={22} /> : <AudioLines size={22} className="text-red-500" />}
                   <span className="text-[9px] font-bold">{recorder.isRecording ? "إيقاف" : "صوت"}</span>
-                </button>
+                </button>}
                 <button type="button" onClick={() => { setMenuOpen(false); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="هدايا">
                   <Gift size={22} className="text-pink-500" />
                   <span className="text-[9px] font-bold">هدايا</span>
@@ -791,14 +806,12 @@ const RoomPage = ({
   const currentUser = getStoredUser();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRoomProfileOpen, setIsRoomProfileOpen] = useState(false);
-  const userPermissions = useRealtimeStore((state) => state.userPermissions) || [];
+  const userPermissions = useRealtimeStore((state) => state.userPermissions);
   const [permissions, setPermissions] = useState<string[]>(userPermissions);
   const [userRole, setUserRole] = useState<string>(() => currentUser?.role || "");
 
   useEffect(() => {
-    if (userPermissions && userPermissions.length > 0) {
-      setPermissions(userPermissions);
-    }
+    setPermissions(userPermissions);
   }, [userPermissions]);
 
   useEffect(() => {
@@ -811,8 +824,11 @@ const RoomPage = ({
       .then((data) => {
         if (data.success) {
           if (Array.isArray(data.permissions)) {
-            setPermissions(data.permissions);
-            useRealtimeStore.getState().setUserPermissions?.(data.permissions);
+            const effectivePermissions = String(data.role).toLowerCase() === "guest" && data.permissions.length === 0
+              ? [...DEFAULT_CHAT_FEATURE_PERMISSION_KEYS]
+              : data.permissions;
+            setPermissions(effectivePermissions);
+            useRealtimeStore.getState().setUserPermissions(effectivePermissions);
           }
           if (data.role) {
             setUserRole(data.role);
@@ -919,6 +935,7 @@ const RoomPage = ({
 
   // إرسال تفاعل
   const handleReact = useCallback((messageId: string, reaction: ReactionType) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "room_reactions.use")) return;
     const socket = getSocket();
     if (!socket || !socket.connected) return;
     socket.emit("room:react", { roomId, messageId, reaction });
@@ -1114,7 +1131,7 @@ const RoomPage = ({
           if (nameMatcher(msg.user)) {
             return {
               ...msg,
-              user: data.username || msg.user,
+              user: data.displayName || data.username || msg.user,
               avatar: data.avatar || msg.avatar,
               nameColor: data.nameColor !== undefined ? data.nameColor : msg.nameColor,
               statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : msg.statusFontColor,
@@ -1547,15 +1564,17 @@ const RoomPage = ({
           <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)} className={`h-9 w-9 rounded-xl ${isMuted ? "bg-red-50 text-red-500" : "text-muted-foreground"}`}>
             {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowMics(!showMics)}
-            title={showMics ? "إخفاء المنصة الصوتية" : "إظهار المنصة الصوتية"}
-            className={`h-9 w-9 rounded-xl transition-colors ${showMics ? "bg-emerald-500/10 text-emerald-500 font-bold" : "text-muted-foreground"}`}
-          >
-            <Mic2 size={18} />
-          </Button>
+          <PermissionGate requiredPermissions={["room_voice.use"]}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowMics(!showMics)}
+              title={showMics ? "إخفاء المنصة الصوتية" : "إظهار المنصة الصوتية"}
+              className={`h-9 w-9 rounded-xl transition-colors ${showMics ? "bg-emerald-500/10 text-emerald-500 font-bold" : "text-muted-foreground"}`}
+            >
+              <Mic2 size={18} />
+            </Button>
+          </PermissionGate>
 
           {canManageRoom && (
             <Button
@@ -1575,7 +1594,7 @@ const RoomPage = ({
         </div>
       </header>
 
-      {showMics && (
+      {showMics && hasPermissionAccess(permissions, "room_voice.use") && (
         <div className="absolute top-[56px] inset-x-0 z-10 shadow-md">
           <VoiceStage
             key={roomId}
@@ -1645,7 +1664,7 @@ const RoomPage = ({
             <div className="relative shrink-0">
               <Avatar
                 className="w-11 h-11 rounded-xl shadow-sm cursor-pointer transition hover:scale-105"
-                onClick={() => onOpenProfile?.(msg.user)}
+                onClick={() => onOpenProfile?.(msg.userId || msg.user)}
               >
                 <AvatarImage src={msg.avatar} />
                 <AvatarFallback>{msg.user[0]}</AvatarFallback>
@@ -1668,7 +1687,7 @@ const RoomPage = ({
                 })()}
                 <h4 
                   className={`text-xs font-black cursor-pointer hover:underline ${msg.color}`}
-                  onClick={() => onOpenProfile?.(msg.user)}
+                  onClick={() => onOpenProfile?.(msg.userId || msg.user)}
                   style={(() => {
                     const u = onlineUsers?.find(o => o && (String(o.id || "") === String(msg.userId || "") || o.username === msg.user));
                     const member = members?.find(m => m && (String(m.id || "") === String(msg.userId || "") || m.username === msg.user));
@@ -1678,7 +1697,7 @@ const RoomPage = ({
                 >
                   {msg.user}
                 </h4>
-                <img src={getCountryFlagSrc(msg.countryCode)} alt={msg.countryCode} className="h-3 w-4 rounded-sm object-cover" />
+                <img loading="lazy" decoding="async" src={getCountryFlagSrc(msg.countryCode)} alt={msg.countryCode} className="h-3 w-4 rounded-sm object-cover" />
                 {msg.giftIconUrl && <img src={msg.giftIconUrl} alt="gift" className="h-4 w-4 rounded object-cover" />}
                 {msg.isOwner && <Badge className="h-3.5 rounded-sm border-none bg-blue-600 px-1 text-[8px] font-black text-white">مالك الموقع</Badge>}
                 <span className="ms-auto text-[8px] font-bold text-muted-foreground">
@@ -1828,23 +1847,26 @@ const RoomPage = ({
                 {/* أزرار التفاعل والرد */}
                 {!isSystem && !msg.pending && !msg.failed && (
                   <div className="relative flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity" data-msg-actions>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setActiveReactionMsgId(activeReactionMsgId === msg.id ? null : msg.id); }}
-                      className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition active:scale-95"
-                      title="تفاعل"
-                    >
-                      <SmilePlus size={13} className="text-muted-foreground" />
-                    </button>
-                    <button
+                    <PermissionGate requiredPermissions={["room_reactions.use"]}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setActiveReactionMsgId(activeReactionMsgId === msg.id ? null : msg.id); }}
+                        className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition active:scale-95"
+                        title="تفاعل"
+                        aria-label="تفاعل مع الرسالة"
+                      >
+                        <SmilePlus size={13} className="text-muted-foreground" />
+                      </button>
+                    </PermissionGate>
+                    {hasPermissionAccess(permissions, "room_chat.use") && <button
                       onClick={(e) => { e.stopPropagation(); setReplyToMsg(msg); }}
                       className="w-7 h-7 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 border border-border shadow-sm hover:bg-muted transition active:scale-95"
                       title="رد"
                     >
                       <Reply size={13} className="text-muted-foreground" />
-                    </button>
+                    </button>}
 
                     {/* قائمة اختيار التفاعل */}
-                    {activeReactionMsgId === msg.id && (
+                    {hasPermissionAccess(permissions, "room_reactions.use") && activeReactionMsgId === msg.id && (
                       <div ref={reactionPickerRef} className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50">
                         <div className="flex items-center gap-0.5 px-2 py-1.5 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-border animate-in fade-in zoom-in-95 duration-100">
                           {REACTIONS_CONFIG.map(({ type, emoji, label }) => (

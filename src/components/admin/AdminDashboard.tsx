@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon } from 'lucide-react';
+import { Settings as SettingsIcon, ShieldAlert } from 'lucide-react';
 import { LEGACY_CP_SECTIONS, getSectionTranslation, getFieldLanguage } from './constants';
+import { canViewAdminSection } from './powers/permissionDefs';
 
 // Import Sections
 import OverviewSection from './sections/OverviewSection';
@@ -23,6 +24,9 @@ import IconsSection from './sections/IconsSection';
 import GiftsSection from './sections/GiftsSection';
 import AnimatedFacesSection from './sections/AnimatedFacesSection';
 import LegacyCpSection from './sections/LegacyCpSection';
+import VoiceProviderSection from './sections/VoiceProviderSection';
+import GiftCommissionSection from './sections/GiftCommissionSection';
+import WalletAgentsSection from './sections/WalletAgentsSection';
 
 // New Modular Sections
 import ModerationSection from './moderation/ModerationSection';
@@ -32,17 +36,23 @@ import AccessLogsSection from './access-logs/AccessLogsSection';
 
 interface AdminDashboardProps {
   section: string;
+  permissions: string[];
 }
 
-const AdminDashboard = ({ section }: AdminDashboardProps) => {
+const AdminDashboard = ({ section, permissions }: AdminDashboardProps) => {
   const [langKey, setLangKey] = useState(0);
   const rawSection = LEGACY_CP_SECTIONS[section];
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const handleLangChange = () => {
       setLangKey((k) => k + 1);
-    }, 1000);
-    return () => clearInterval(interval);
+    };
+    window.addEventListener("admin_lang_changed", handleLangChange);
+    window.addEventListener("storage", handleLangChange);
+    return () => {
+      window.removeEventListener("admin_lang_changed", handleLangChange);
+      window.removeEventListener("storage", handleLangChange);
+    };
   }, []);
 
   const legacySection = rawSection ? (() => {
@@ -81,19 +91,25 @@ const AdminDashboard = ({ section }: AdminDashboardProps) => {
       case "stickers":
         return <StickersSection />;
       case "swiperbanners":
-        return <SwiperBannersSection />;
+        return <SwiperBannersSection permissions={permissions} />;
       case "profileframes":
-        return <ProfileFramesSection />;
+        return <ProfileFramesSection permissions={permissions} />;
       case "membercardtheme":
-        return <MemberCardThemesSection />;
+        return <MemberCardThemesSection permissions={permissions} />;
       case "roomBadges":
         return <RoomBadgesSection />;
       case "icons":
-        return <IconsSection />;
+        return <IconsSection permissions={permissions} />;
       case "gifts":
         return <GiftsSection />;
+      case "giftcommission":
+        return <GiftCommissionSection permissions={permissions} />;
+      case "agentwallets":
+        return <WalletAgentsSection permissions={permissions} />;
       case "animatedfaces":
         return <AnimatedFacesSection />;
+      case "micprovidercp":
+        return <VoiceProviderSection permissions={permissions} />;
       case "hostin":
         return <AuditLogsSection />;
       default:
@@ -113,7 +129,13 @@ const AdminDashboard = ({ section }: AdminDashboardProps) => {
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 rtl bg-slate-50/50 dark:bg-slate-950/50">
       <div className="max-w-7xl mx-auto space-y-6">
-        {renderSection()}
+        {canViewAdminSection(permissions, section) ? renderSection() : (
+          <div className="rounded-3xl border border-dashed border-border bg-white py-20 text-center text-muted-foreground dark:bg-slate-900">
+            <ShieldAlert className="mx-auto mb-4 opacity-30" size={40} />
+            <h2 className="mb-2 text-xl font-bold">لا تملك صلاحية عرض هذا القسم</h2>
+            <p className="text-sm">اطلب من مالك الموقع تفعيل صلاحية قراءة هذا القسم.</p>
+          </div>
+        )}
       </div>
     </div>
   );

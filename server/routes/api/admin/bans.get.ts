@@ -1,6 +1,7 @@
 import { defineEventHandler, getQuery } from "h3";
 import { dbPool } from "../../../db";
 import { guardAdminAction } from "../../../services/adminPermissions";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -37,6 +38,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, bans: result.rows };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

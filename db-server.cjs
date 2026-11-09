@@ -106,6 +106,8 @@ tr.selected td{background:rgba(56,189,248,.1)}
 let tables=[],currentTable='',columns=[],rows=[],page=0,limit=50,totalRows=0,primaryKey='id',sortCol='',sortAsc=true;
 const api=async(u,o)=>{const r=await fetch(u,o);const d=await r.json();if(!r.ok)throw new Error(d.message||'خطأ');return d;};
 const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);};
+function escHtml(s){if(s===null||s===undefined)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
 async function init(){
   try{
     const d=await api('/api/tables');
@@ -115,14 +117,14 @@ async function init(){
     renderTableList();
   }catch(e){
     document.getElementById('connStatus').className='conn-status conn-err';
-    document.getElementById('tableList').innerHTML='<div style="padding:12px;color:var(--red);font-size:12px">'+e.message+'</div>';
+    document.getElementById('tableList').innerHTML='<div style="padding:12px;color:var(--red);font-size:12px">'+escHtml(e.message)+'</div>';
   }
 }
 function renderTableList(filter=''){
   const list=document.getElementById('tableList');
   const f=filter.toLowerCase();
   list.innerHTML=tables.filter(t=>!f||t.name.toLowerCase().includes(f)).map(t=>
-    '<button class="table-btn'+(currentTable===t.name?' active':'')+'" onclick="selectTable(\\''+t.name+'\\')"><span>'+t.name+'</span><span class="count">'+t.rowCount+'</span></button>'
+    '<button class="table-btn'+(currentTable===t.name?' active':'')+'" onclick="selectTable(\\''+escHtml(t.name)+'\\')"><span>'+escHtml(t.name)+'</span><span class="count">'+Number(t.rowCount||0)+'</span></button>'
   ).join('');
 }
 function filterTables(){renderTableList(document.getElementById('searchTables').value);}
@@ -138,27 +140,28 @@ async function loadData(){
   try{
     const d=await api('/api/table?name='+encodeURIComponent(currentTable)+'&limit='+limit+'&offset='+(page*limit)+(sortCol?'&sort='+encodeURIComponent(sortCol)+'&dir='+(sortAsc?'ASC':'DESC'):''));
     columns=d.columns||[];rows=d.rows||[];totalRows=d.totalRows||0;primaryKey=d.primaryKey||'id';
-    document.getElementById('tableInfo').innerHTML='<b>'+currentTable+'</b> &mdash; '+totalRows+' سجل | الصفحة '+(page+1)+'/'+Math.ceil(totalRows/limit);
+    document.getElementById('tableInfo').innerHTML='<b>'+escHtml(currentTable)+'</b> &mdash; '+totalRows+' سجل | الصفحة '+(page+1)+'/'+Math.ceil(totalRows/limit);
     document.getElementById('pagination').style.display=totalRows>limit?'flex':'none';
     document.getElementById('pageInfo').textContent=(page*limit+1)+'-'+Math.min((page+1)*limit,totalRows)+' من '+totalRows;
     document.getElementById('btnPrev').disabled=page<=0;
     document.getElementById('btnNext').disabled=(page+1)*limit>=totalRows;
     renderTable();
-  }catch(e){document.getElementById('tableContent').innerHTML='<div class="empty" style="color:var(--red)">'+e.message+'</div>';}
+  }catch(e){document.getElementById('tableContent').innerHTML='<div class="empty" style="color:var(--red)">'+escHtml(e.message)+'</div>';}
 }
 function renderTable(){
   if(!columns.length){document.getElementById('tableContent').innerHTML='<div class="empty">لا توجد بيانات</div>';return;}
-  let h='<table><thead><tr><th onclick="sortBy('__rownum__')">#</th>';
+  let h='<table><thead><tr><th onclick="sortBy(\\'__rownum__\\')">#</th>';
   columns.forEach(c=>{
     const arrow=sortCol===c.name?(sortAsc?' &#9650;':' &#9660;'):'';
-    h+='<th onclick="sortBy(\\''+c.name+'\\')">'+c.name+' <span style="font-weight:normal;opacity:.4;font-size:10px">'+c.type+'</span>'+arrow+'</th>';
+    h+='<th onclick="sortBy(\\''+escHtml(c.name)+'\\')">'+escHtml(c.name)+' <span style="font-weight:normal;opacity:.4;font-size:10px">'+escHtml(c.type)+'</span>'+arrow+'</th>';
   });
   h+='</tr></thead><tbody>';
   rows.forEach((r,i)=>{
     h+='<tr onclick="showRow('+i+')" style="cursor:pointer"><td style="color:var(--muted)">'+(page*limit+i+1)+'</td>';
     columns.forEach(c=>{
       const v=r[c.name];
-      const s=v===null?'<span style="color:#475569">NULL</span>':String(v).length>60?String(v).slice(0,60)+'...':escHtml(String(v));
+      const raw=v===null?'':String(v);
+      const s=v===null?'<span style="color:#475569">NULL</span>':escHtml(raw.length>60?raw.slice(0,60)+'...':raw);
       h+='<td>'+s+'</td>';
     });
     h+='</tr>';
@@ -166,7 +169,6 @@ function renderTable(){
   h+='</tbody></table>';
   document.getElementById('tableContent').innerHTML=h;
 }
-function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function sortBy(col){
   if(col==='__rownum__')return;
   if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=true;}
@@ -178,8 +180,9 @@ function showRow(i){
   const r=rows[i];if(!r)return;
   let h='<table>';
   Object.entries(r).forEach(([k,v])=>{
-    const val=v===null?'<span style="color:#475569">NULL</span>':String(v).length>500?'<div style="word-break:break-all;white-space:pre-wrap;max-height:300px;overflow:auto">'+escHtml(String(v))+'</div>':escHtml(String(v));
-    h+='<tr><td>'+k+'</td><td>'+val+'</td></tr>';
+    const raw=v===null?'':String(v);
+    const val=v===null?'<span style="color:#475569">NULL</span>':raw.length>500?'<div style="word-break:break-all;white-space:pre-wrap;max-height:300px;overflow:auto">'+escHtml(raw)+'</div>':escHtml(raw);
+    h+='<tr><td>'+escHtml(k)+'</td><td>'+val+'</td></tr>';
   });
   h+='</table><div style="margin-top:12px;display:flex;gap:8px"><button onclick="deleteRow('+i+')" style="padding:6px 16px;border:1px solid var(--red);border-radius:8px;background:transparent;color:var(--red);cursor:pointer;font-size:12px">حذف</button><button onclick="closeModal()" style="padding:6px 16px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--muted);cursor:pointer;font-size:12px">إغلاق</button></div>';
   showModal('تفاصيل السجل #'+(page*limit+i+1),h);
@@ -196,28 +199,28 @@ async function showSchema(){
     const d=await api('/api/schema?name='+encodeURIComponent(currentTable));
     let h='<table><tr><th>العمود</th><th>النوع</th><th>قابل للـ NULL</th><th>القيمة الافتراضية</th></tr>';
     (d.columns||[]).forEach(c=>{
-      h+='<tr><td style="font-weight:bold">'+c.name+'</td><td style="font-family:monospace">'+c.type+'</td><td>'+(c.nullable?'نعم':'لا')+'</td><td style="color:var(--muted)">'+(c.defaultValue||'—')+'</td></tr>';
+      h+='<tr><td style="font-weight:bold">'+escHtml(c.name)+'</td><td style="font-family:monospace">'+escHtml(c.type)+'</td><td>'+(c.nullable?'نعم':'لا')+'</td><td style="color:var(--muted)">'+escHtml(c.defaultValue||'—')+'</td></tr>';
     });
     h+='</table>';
-    showModal('Schema: '+currentTable,h);
+    showModal('Schema: '+escHtml(currentTable),h);
   }catch(e){alert(e.message);}
 }
 async function showSQL(){
   try{
     const d=await api('/api/ddl?name='+encodeURIComponent(currentTable));
-    showModal('DDL: '+currentTable,'<div class="sql-box">'+escHtml(d.ddl||'')+'</div>');
+    showModal('DDL: '+escHtml(currentTable),'<div class="sql-box">'+escHtml(d.ddl||'')+'</div>');
   }catch(e){alert(e.message);}
 }
 function exportCSV(){
   if(!columns.length||!rows.length)return;
-  let csv=columns.map(c=>'"'+c.name+'"').join(',')+'\\n';
-  rows.forEach(r=>{csv+=columns.map(c=>{const v=r[c.name];return v===null?'':('"'+String(v).replace(/"/g,'""')+'"');}).join(',')+'\\n';});
+  let csv=columns.map(c=>'"'+String(c.name).replace(/"/g,'""')+'"').join(',')+'\n';
+  rows.forEach(r=>{csv+=columns.map(c=>{const v=r[c.name];return v===null?'':('"'+String(v).replace(/"/g,'""')+'"');}).join(',')+'\n';});
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=currentTable+'.csv';a.click();
   toast('تم التصدير');
 }
 function showModal(title,body){
-  document.getElementById('modalRoot').innerHTML='<div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal"><h2>'+title+'</h2>'+body+'</div></div>';
+  document.getElementById('modalRoot').innerHTML='<div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal"><h2>'+escHtml(title)+'</h2>'+body+'</div></div>';
 }
 function closeModal(){document.getElementById('modalRoot').innerHTML='';}
 function refreshAll(){init();if(currentTable)loadData();}
@@ -229,7 +232,7 @@ init();
 const query = (sql, params) => pool.query(sql, params);
 
 const sendJSON = (res, data, status = 200) => {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "http://localhost:5050" });
   res.end(JSON.stringify(data));
 };
 
@@ -247,7 +250,7 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname;
 
   if (req.method === "OPTIONS") {
-    res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" });
+    res.writeHead(200, { "Access-Control-Allow-Origin": "http://localhost:5050", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" });
     return res.end();
   }
 
@@ -318,9 +321,9 @@ const server = http.createServer(async (req, res) => {
       const result = await query(`SELECT pg_get_tabledef('public', $1) AS ddl`, [table]).catch(() => null);
       if (result?.rows[0]?.ddl) return sendJSON(res, { success: true, ddl: result.rows[0].ddl });
       const cols = await query(`SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`, [table]);
-      let ddl = `CREATE TABLE "${table}" (\\n`;
-      ddl += cols.rows.map((c) => `  "${c.column_name}" ${c.data_type}${c.is_nullable === "NO" ? " NOT NULL" : ""}${c.column_default ? " DEFAULT " + c.column_default : ""}`).join(",\\n");
-      ddl += "\\n);";
+      let ddl = `CREATE TABLE "${table}" (\n`;
+      ddl += cols.rows.map((c) => `  "${c.column_name}" ${c.data_type}${c.is_nullable === "NO" ? " NOT NULL" : ""}${c.column_default ? " DEFAULT " + c.column_default : ""}`).join(",\n");
+      ddl += "\n);";
       return sendJSON(res, { success: true, ddl });
     }
 
@@ -340,11 +343,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n  \x1b[36m╔════════════════════════════════════════╗\x1b[0m`);
   console.log(`  \x1b[36m║\x1b[0m  \x1b[1m\x1b[37mPostgreSQL Browser\x1b[0m                   \x1b[36m║\x1b[0m`);
   console.log(`  \x1b[36m╠════════════════════════════════════════╣\x1b[0m`);
-  console.log(`  \x1b[36m║\x1b[0m  \x1b[32m➜\x1b[0m  Local:   \x1b[4mhttp://localhost:${PORT}\x1b[0m   \x1b[36m║\x1b[0m`);
+  console.log(`  \x1b[36m║\x1b[0m  \x1b[32m➜\x1b[0m  Local:   \x1b[4mhttp://127.0.0.1:${PORT}\x1b[0m   \x1b[36m║\x1b[0m`);
   console.log(`  \x1b[36m║\x1b[0m  \x1b[33m●\x1b[0m  Database: \x1b[37m${DATABASE_URL.split("@")[1] || DATABASE_URL}\x1b[0m  \x1b[36m║\x1b[0m`);
   console.log(`  \x1b[36m╚════════════════════════════════════════╝\x1b[0m\n`);
 });

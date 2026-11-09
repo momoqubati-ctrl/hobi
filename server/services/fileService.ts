@@ -5,16 +5,20 @@ import { saveUploadBuffer, normalizeUploadExtension } from "./uploadStorage";
 import { isMinioEnabled, uploadToMinio, deleteFromMinio } from "./minioClient";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-const ALLOWED_TYPES = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi", "pdf", "doc", "docx", "xls", "xlsx", "zip", "rar", "txt", "csv", "json", "xml"]);
+const ALLOWED_TYPES = new Set([
+  "jpg", "jpeg", "png", "webp", "gif",
+  "mp4", "webm", "mov", "avi",
+  "pdf", "doc", "docx", "xls", "xlsx", "zip", "rar", "txt", "csv", "json",
+]);
 
 const MIME_MAP: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
-  gif: "image/gif", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm",
+  gif: "image/gif", mp4: "video/mp4", webm: "video/webm",
   mov: "video/quicktime", avi: "video/x-msvideo", pdf: "application/pdf",
   doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   zip: "application/zip", rar: "application/vnd.rar", txt: "text/plain",
-  csv: "text/csv", json: "application/json", xml: "application/xml",
+  csv: "text/csv", json: "application/json",
 };
 
 const getUploadDir = () => {
@@ -196,11 +200,25 @@ export const uploadFile = async (userId: string, base64Data: string, filename: s
   const matches = filename.match(/\.(\w+)$/);
   if (!matches) throw new Error("امتداد الملف غير معروف");
   const extension = matches[1].toLowerCase();
+  if (extension === "svg" || extension === "xml" || extension === "html" || extension === "htm") {
+    throw new Error("نوع الملف غير مسموح به لأسباب أمنية");
+  }
+
   const ext = normalizeUploadExtension(extension);
   if (!ext && !ALLOWED_TYPES.has(extension)) throw new Error("نوع الملف غير مدعوم");
 
   const finalExt = ext || extension;
+  if (!ALLOWED_TYPES.has(finalExt)) throw new Error("نوع الملف غير مدعوم");
+
   const buffer = Buffer.from(base64Data, "base64");
+  if (buffer.length > MAX_FILE_SIZE) {
+    throw new Error("حجم الملف يتجاوز الحد المسموح به (50 ميغابايت)");
+  }
+
+  const quota = await getStorageQuota(userId);
+  if (quota.used + buffer.length > quota.total) {
+    throw new Error("تجاوزت المساحة التخزينية المسموح بها (500 ميغابايت)");
+  }
 
   const storagePath = await saveFileToStorage(userId, finalExt, buffer);
   if (!storagePath) throw new Error("فشل حفظ الملف على القرص");

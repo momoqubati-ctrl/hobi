@@ -1,6 +1,9 @@
 import { defineEventHandler, readBody, getQuery, setResponseStatus } from "h3";
 import {
   assertSafeTableName,
+  isAdminDatabaseAccessError,
+  isAdminTableWritable,
+  isWalletWriteFenceError,
   insertTableRow,
   tableExists,
 } from "../../../services/legacyAdminService";
@@ -21,6 +24,11 @@ export default defineEventHandler(async (event) => {
     return { success: false, message: "اسم الجدول مطلوب" };
   }
 
+  if (!isAdminTableWritable(tableName)) {
+    setResponseStatus(event, 409);
+    return { success: false, message: "لا يمكن تعديل هذا الجدول من محرر قاعدة البيانات" };
+  }
+
   try {
     if (!(await tableExists(tableName))) {
       setResponseStatus(event, 404);
@@ -35,9 +43,17 @@ export default defineEventHandler(async (event) => {
 
     const newRow = await insertTableRow(tableName, body);
     return { success: true, row: newRow };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Admin database insert error:", err);
+    if (isAdminDatabaseAccessError(err)) {
+      setResponseStatus(event, 409);
+      return { success: false, message: "لا يمكن تعديل هذا الحقل من محرر قاعدة البيانات" };
+    }
+    if (isWalletWriteFenceError(err)) {
+      setResponseStatus(event, 409);
+      return { success: false, message: "لا يمكن تعديل أرصدة العملات مباشرة" };
+    }
     setResponseStatus(event, 500);
-    return { success: false, message: err.message || "تعذر إضافة البيانات" };
+    return { success: false, message: "تعذر إضافة البيانات" };
   }
 });

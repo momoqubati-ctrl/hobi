@@ -10,6 +10,7 @@ import {
   createRoomCustomRoleSchema,
   createRoomCustomRoleService,
   RoomCustomRoleServiceError,
+  roomMemberRoleAssignmentSchema,
   updateRoomCustomRoleSchema,
   type RoomCustomRoleDatabase,
 } from "../server/services/roomCustomRoleService";
@@ -73,6 +74,20 @@ test("custom role updates support partial permission changes but reject empty pa
   assert.equal(updateRoomCustomRoleSchema.safeParse({
     permissions: { canSetRole: true },
   }).success, false);
+});
+
+test("room member role assignment accepts a custom role or null to clear it", () => {
+  const memberId = "member-1";
+  const roleId = "baeb135c-970b-4ee2-9e7e-cfe1510c2e9b";
+
+  assert.deepEqual(roomMemberRoleAssignmentSchema.parse({ customRoleId: roleId }), {
+    customRoleId: roleId,
+  });
+  assert.deepEqual(roomMemberRoleAssignmentSchema.parse({ customRoleId: null }), {
+    customRoleId: null,
+  });
+  assert.equal(roomMemberRoleAssignmentSchema.safeParse({ customRoleId: memberId }).success, false);
+  assert.equal(roomMemberRoleAssignmentSchema.safeParse({ customRoleId: null, userId: "owner-1" }).success, false);
 });
 
 test("custom role listing refuses non-owners before reading role data", async () => {
@@ -199,6 +214,70 @@ test("room custom role CRUD always scopes changes to the owner room", async () =
   assert.match(remove.text, /WHERE room_id = \$1 AND id = \$2/);
 });
 
+test("room owners can assign only a role belonging to their room to an existing member", async () => {
+  const statements: Array<{ text: string; values?: unknown[] }> = [];
+  const database = {
+    query: async (text: string, values?: unknown[]) => {
+      statements.push({ text, values });
+      if (text.includes("FROM rooms")) {
+        return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
+      }
+      if (text.includes("FROM room_custom_roles")) {
+        return { rows: [{ id: "role-1" }] };
+      }
+      if (text.includes("UPDATE room_members")) {
+        return { rows: [{ user_id: "member-1" }] };
+      }
+      return { rows: [] };
+    },
+  } as unknown as RoomCustomRoleDatabase;
+  const service = createRoomCustomRoleService(database);
+
+  const assigned = await service.assignMemberRole("room-slug", "owner-1", "member-1", "role-1");
+
+  assert.deepEqual(assigned, { userId: "member-1", customRoleId: "role-1" });
+  const roleCheck = statements.find(({ text }) => text.includes("FROM room_custom_roles"));
+  const assignment = statements.find(({ text }) => text.includes("UPDATE room_members"));
+  assert.deepEqual(roleCheck?.values, ["room-id", "role-1"]);
+  assert.deepEqual(assignment?.values, ["role-1", "room-id", "member-1"]);
+});
+
+test("room role assignment rejects a role from another room and missing members", async () => {
+  let updateAttempted = false;
+  const database = {
+    query: async (text: string) => {
+      if (text.includes("FROM rooms")) return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
+      if (text.includes("FROM room_custom_roles")) return { rows: [] };
+      if (text.includes("UPDATE room_members")) {
+        updateAttempted = true;
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  } as unknown as RoomCustomRoleDatabase;
+  const service = createRoomCustomRoleService(database);
+
+  await assert.rejects(
+    service.assignMemberRole("room-slug", "owner-1", "member-1", "role-from-other-room"),
+    (error: unknown) => error instanceof RoomCustomRoleServiceError && error.code === "ROLE_NOT_FOUND",
+  );
+  assert.equal(updateAttempted, false);
+
+  const memberDatabase = {
+    query: async (text: string) => {
+      if (text.includes("FROM rooms")) return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
+      if (text.includes("FROM room_custom_roles")) return { rows: [{ id: "role-1" }] };
+      if (text.includes("UPDATE room_members")) return { rows: [] };
+      return { rows: [] };
+    },
+  } as unknown as RoomCustomRoleDatabase;
+  const memberService = createRoomCustomRoleService(memberDatabase);
+  await assert.rejects(
+    memberService.assignMemberRole("room-slug", "owner-1", "unknown-member", "role-1"),
+    (error: unknown) => error instanceof RoomCustomRoleServiceError && error.code === "MEMBER_NOT_FOUND",
+  );
+});
+
 test("room role API rejects guests before reaching the service", async () => {
   let calls = 0;
   const service = {
@@ -284,4 +363,28 @@ test("room role API passes the authenticated account and normalized input to cre
   assert.equal(received?.[0], "room-a");
   assert.equal(received?.[1], "owner-1");
   assert.equal((received?.[2] as { name: string }).name, "إدارة");
+});
+
+test("room role API derives the actor from auth and validates assignment input", async () => {
+  let received: unknown[] | undefined;
+  const handlers = createRoomCustomRoleHandlers(
+    {
+      assignMemberRole: async (...args: unknown[]) => {
+        received = args;
+        return { userId: "member-1", customRoleId: null };
+      },
+    } as never,
+    () => ({ ok: true, userId: "owner-1", username: "owner", role: "member" }) as never,
+  );
+  const event = mockEvent("/api/rooms/room-a/members/member-1/role", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ customRoleId: null }),
+  });
+  event.context.params = { roomId: "room-a", memberId: "member-1" };
+
+  await handlers.assignMemberRole(event);
+
+  assert.equal(getResponseStatus(event), 200);
+  assert.deepEqual(received, ["room-a", "owner-1", "member-1", null]);
 });

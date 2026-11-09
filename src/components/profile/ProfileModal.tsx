@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog";
 import { getSocket } from "@/lib/socket";
 import { ProfileHeader } from "./ProfileHeader";
@@ -135,7 +135,9 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
           return {
             ...prev,
             username: data.username || prev.username,
-            displayName: data.username || prev.displayName,
+            displayName: data.displayName || data.username || prev.displayName,
+            mentionName: data.mentionName !== undefined ? data.mentionName : prev.mentionName,
+            publicUserId: data.publicUserId || prev.publicUserId,
             avatarUrl: data.avatar || data.avatarUrl || prev.avatarUrl,
             coverUrl: data.profileCover || data.cover || prev.coverUrl,
             profile: prev.profile
@@ -287,7 +289,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
                 profileId={profileData.id || profileId}
                 profileName={profileData.displayName || profileData.username || "عضو"}
                 profileAvatar={profile?.avatarUrl || profileData.avatarUrl || "/pic.png"}
-                handle={profileData.username}
+                handle={profileData.mentionName || ""}
                 isSelf={relationship.isSelf}
                 isAdmin={effectiveIsAdmin}
                 canManageRoles={canManageRoles}

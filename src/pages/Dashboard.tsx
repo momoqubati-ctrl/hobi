@@ -7,8 +7,11 @@ import StoriesViewer from "@/components/story/StoriesViewer";
 import { initStoriesListeners } from "@/lib/stories-store";
 import { logoutSocket, getSocket } from "@/lib/socket";
 import { terminateUserSession } from "@/lib/authSession";
+import { setLastRoom, clearLastRoom } from "@/lib/reconnectionManager";
+import { browserAliveKeeper } from "@/lib/browserAliveKeeper";
+import ReconnectionBar from "@/components/realtime/ReconnectionBar";
 import {
-  Users, MessageSquare, Home, LayoutGrid, Settings, Bell, Bot, Gift, Mail, FolderOpen,
+  Users, MessageSquare, Home, LayoutGrid, Settings, Bell, Bot, Gift, Mail, FolderOpen, WalletCards,
   Image as LucideImage, X, ShieldCheck, Menu, Search, Activity, Zap, LogOut, MessageCircle, Youtube, Lock, Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +25,7 @@ import GiftStore from "@/components/chat/GiftStore";
 import InternalMail from "@/components/chat/InternalMail";
 import FileManager from "@/components/chat/FileManager";
 import NotificationsPanel, { NotificationsBell } from "@/components/chat/NotificationsPanel";
+import AnnouncementBanner from "@/components/chat/AnnouncementBanner";
 import PresenceEngine from "@/components/realtime/PresenceEngine";
 import ActivityFeed from "@/components/realtime/ActivityFeed";
 import RoomPage from "@/components/chat/RoomPage";
@@ -29,24 +33,21 @@ import DashboardRooms from "@/components/chat/DashboardRooms";
 import DashboardMembers from "@/components/chat/DashboardMembers";
 import AdminCP from "@/components/admin/AdminCP";
 import AdminDashboard from "@/components/admin/AdminDashboard";
+import {
+  ADMIN_SECTION_PERMISSION_BY_ID,
+  canAccessControlPanel,
+  canViewAdminSection,
+} from "@/components/admin/powers/permissionDefs";
+import { DEFAULT_CHAT_FEATURE_PERMISSION_KEYS } from "@/lib/chatFeaturePermissions";
 import GlobalVideoPlayer from "@/components/GlobalVideoPlayer";
 import YouTubeSearch from "@/components/chat/YouTubeSearch";
+import SiteOwnerWalletPanel from "@/components/site-owner/SiteOwnerWalletPanel";
 
 import { ProfileModal } from "@/components/profile/ProfileModal";
 
 const hasControlPanelAccess = (data: any) => {
   const permissions = Array.isArray(data?.permissions) ? data.permissions : [];
-  const hasCpPermission = permissions.some((permission: unknown) => {
-    if (typeof permission !== "string") return false;
-    return permission === "cp" || permission === "cp.all" || permission.startsWith("cp.");
-  });
-  const role = String(data?.role || "").toLowerCase().trim();
-  const power = String(data?.power || "").toLowerCase().trim();
-  return (
-    hasCpPermission ||
-    ["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(role) ||
-    ["owner", "admin", "ispower", "مالك", "ادمن", "أدمن"].includes(power)
-  );
+  return canAccessControlPanel(permissions);
 };
 
 const Dashboard = () => {
@@ -97,6 +98,9 @@ const Dashboard = () => {
         // Update store instantly for local consistency
         useRealtimeStore.getState().updateRoomMemberCount(finalRoomId, finalMemberCount);
 
+        // ── حفظ الغرفة الحالية لإعادة الاتصال التلقائي ──────────────────
+        setLastRoom(finalRoomId, password);
+
         setActiveRoom({
           ...resolvedRoom,
           id: finalRoomId,
@@ -145,6 +149,7 @@ const Dashboard = () => {
   }, [performJoinRoom]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminSection, setAdminSection] = useState("overview");
+  const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [openChatUserId, setOpenChatUserId] = useState<string | null>(null);
   const [viewProfileId, setViewProfileId] = useState<string | null>(null);
   const [pmResetTrigger, setPmResetTrigger] = useState(0);
@@ -161,15 +166,18 @@ const Dashboard = () => {
     }
   };
 
-  const handleOpenChat = (userId: string) => {
+  const handleOpenProfile = useCallback((uid: string) => { setViewProfileId(uid); }, []);
+
+  const handleOpenChat = useCallback((userId: string) => {
     isOpeningChatRef.current = true;
     setOpenChatUserId(userId);
     handleTabChange("pm");
     setSidebarOpen(true);
     requestAnimationFrame(() => { isOpeningChatRef.current = false; });
-  };
+  }, []);
 
   const handleLogout = async () => {
+    browserAliveKeeper.stop(); // إيقاف منع التجميد عند تسجيل الخروج
     resetSession();
     await terminateUserSession(true);
     navigate("/", { replace: true });
@@ -177,9 +185,66 @@ const Dashboard = () => {
 
   // User Permissions
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSiteOwner, setIsSiteOwner] = useState(false);
 
   useEffect(() => {
     return initStoriesListeners();
+  }, []);
+
+  // ─── الاستماع لأحداث إعادة الاتصال ──────────────────────────────────────
+  useEffect(() => {
+    // أ) تم إعادة الانضمام للغرفة بنجاح → تحديث عدد الأعضاء
+    const onRoomRejoined = (e: Event) => {
+      const { roomId, memberCount } = (e as CustomEvent).detail;
+      useRealtimeStore.getState().updateRoomMemberCount(roomId, memberCount);
+      setActiveRoom((prev: any) => {
+        if (prev && String(prev.id) === String(roomId)) {
+          return { ...prev, members: memberCount };
+        }
+        return prev;
+      });
+    };
+
+    // ب) تزامن قائمة وعدد الأعضاء بعد التحقق من السيرفر
+    const onRoomSynced = (e: Event) => {
+      const { roomId, memberCount } = (e as CustomEvent).detail;
+      useRealtimeStore.getState().updateRoomMemberCount(roomId, memberCount);
+      setActiveRoom((prev: any) => {
+        if (prev && String(prev.id) === String(roomId)) {
+          return { ...prev, members: memberCount };
+        }
+        return prev;
+      });
+    };
+
+    // ج) فشل إعادة الانضمام → أخرج المستخدم من الغرفة وأبلغه
+    const onRoomRejoinFailed = (e: Event) => {
+      const { reason } = (e as CustomEvent).detail;
+      clearLastRoom();
+      setActiveRoom(null);
+      setActiveRoomPassword("");
+      window.dispatchEvent(new CustomEvent("show-client-alert", {
+        detail: {
+          alertId: String(Date.now()),
+          fromUsername: "النظام",
+          fromAvatar: "/pic.png",
+          message: reason === "unknown"
+            ? "لم يتمكن النظام من إعادة الانضمام للغرفة بعد انقطاع الاتصال."
+            : `تعذّرت إعادة الانضمام: ${reason}`,
+          timestamp: Date.now(),
+        },
+      }));
+    };
+
+    window.addEventListener("reconnection:room_rejoined",     onRoomRejoined);
+    window.addEventListener("reconnection:room_synced",       onRoomSynced);
+    window.addEventListener("reconnection:room_rejoin_failed", onRoomRejoinFailed);
+
+    return () => {
+      window.removeEventListener("reconnection:room_rejoined",     onRoomRejoined);
+      window.removeEventListener("reconnection:room_synced",       onRoomSynced);
+      window.removeEventListener("reconnection:room_rejoin_failed", onRoomRejoinFailed);
+    };
   }, []);
 
   // ─── جلب عدد الرسائل غير المقروءة + الاستماع اللحظي ──────────────────────
@@ -241,6 +306,7 @@ const Dashboard = () => {
       // السيرفر لا يُرسل هذا الحدث إلا للسوكيت المطرود بالفعل
       // لذا نُطبِّق الطرد مباشرة بدون شرط إضافي
       setActiveRoomPassword("");
+      clearLastRoom();
       window.dispatchEvent(new CustomEvent("show-client-alert", {
         detail: {
           alertId: String(Date.now()),
@@ -288,7 +354,10 @@ const Dashboard = () => {
     const fetchPermissions = async () => {
       try {
         const token = localStorage.getItem("authToken") || localStorage.getItem("auth_token");
-        if (!token) return;
+        if (!token) {
+          setIsSiteOwner(false);
+          return;
+        }
         const res = await fetch("/api/auth/me", {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -297,13 +366,31 @@ const Dashboard = () => {
         if (res.ok) {
           const data = await res.json();
           if (data.success) {
+            setIsSiteOwner(data.role === "__site_owner__");
+            const permissions = String(data.role).toLowerCase() === "guest" &&
+              Array.isArray(data.permissions) && data.permissions.length === 0
+              ? [...DEFAULT_CHAT_FEATURE_PERMISSION_KEYS]
+              : Array.isArray(data.permissions)
+                ? data.permissions
+                : [];
             setIsAdmin(hasControlPanelAccess(data));
             if (Array.isArray(data.permissions)) {
-              useRealtimeStore.getState().setUserPermissions(data.permissions);
+              setAdminPermissions(data.permissions);
+              setAdminSection(current => {
+                if (canViewAdminSection(data.permissions, current)) return current;
+                return Object.keys(ADMIN_SECTION_PERMISSION_BY_ID)
+                  .find(section => canViewAdminSection(data.permissions, section)) || current;
+              });
             }
+            useRealtimeStore.getState().setUserPermissions(permissions);
+          } else {
+            setIsSiteOwner(false);
           }
+        } else {
+          setIsSiteOwner(false);
         }
       } catch (err) {
+        setIsSiteOwner(false);
         console.error("Error fetching permissions:", err);
       }
     };
@@ -323,6 +410,14 @@ const Dashboard = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAdmin && activeTab === "cpanel") setActiveTab("members");
+  }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    if (!isSiteOwner && activeTab === "site-owner-wallet") setActiveTab("members");
+  }, [activeTab, isSiteOwner]);
+
   const TABS = [
     { id: "members", icon: Users, label: "المتواجدون" },
     { id: "activity", icon: Activity, label: "النشاطات" },
@@ -340,6 +435,7 @@ const Dashboard = () => {
   const activeTabs = [
     ...TABS,
     ...(isAdmin ? [{ id: "cpanel", icon: ShieldCheck, label: "لوحة التحكم" }] : []),
+    ...(isSiteOwner ? [{ id: "site-owner-wallet", icon: WalletCards, label: "محفظة الموقع" }] : []),
   ];
 
   const handleExpandToWall = useCallback(() => {
@@ -354,7 +450,9 @@ const Dashboard = () => {
       case "files": return <FileManager />;
       case "gifts": return <GiftStore />;
       case "settings": return <SettingsPanel />;
-      case "cpanel": return <AdminCP activeSection={adminSection} onChangeSection={(sec) => { setAdminSection(sec); setSidebarOpen(false); }} />;
+      case "site-owner-wallet":
+        return <p className="p-4 text-sm text-muted-foreground">الرصيد معروض في مساحة التطبيق الرئيسية.</p>;
+      case "cpanel": return <AdminCP permissions={adminPermissions} activeSection={adminSection} onChangeSection={(sec) => { setAdminSection(sec); setSidebarOpen(false); }} />;
       default: return null;
     }
   };
@@ -364,6 +462,8 @@ const Dashboard = () => {
       <PresenceEngine />
       <StoriesViewer />
       <GlobalVideoPlayer activeTab={activeTab} onExpandToWall={handleExpandToWall} />
+      <AnnouncementBanner />
+      <ReconnectionBar />
       
       {/* Backdrop for mobile */}
       <div
@@ -402,11 +502,12 @@ const Dashboard = () => {
             className="absolute inset-0 flex flex-col"
             style={{
               visibility: activeTab === "members" ? "visible" : "hidden",
+              contentVisibility: activeTab === "members" ? "visible" : "hidden",
               zIndex: activeTab === "members" ? 1 : -1,
               pointerEvents: activeTab === "members" ? "auto" : "none",
             }}
           >
-            <MemberList onOpenChat={handleOpenChat} onOpenProfile={(uid) => setViewProfileId(uid)} />
+            <MemberList onOpenChat={handleOpenChat} onOpenProfile={handleOpenProfile} />
           </div>
 
           {/* rooms - always mounted, hidden when not active */}
@@ -414,6 +515,7 @@ const Dashboard = () => {
             className="absolute inset-0 flex flex-col"
             style={{
               visibility: activeTab === "rooms" ? "visible" : "hidden",
+              contentVisibility: activeTab === "rooms" ? "visible" : "hidden",
               zIndex: activeTab === "rooms" ? 1 : -1,
               pointerEvents: activeTab === "rooms" ? "auto" : "none",
             }}
@@ -432,11 +534,12 @@ const Dashboard = () => {
             className="absolute inset-0 flex flex-col"
             style={{
               visibility: activeTab === "wall" ? "visible" : "hidden",
+              contentVisibility: activeTab === "wall" ? "visible" : "hidden",
               zIndex: activeTab === "wall" ? 1 : -1,
               pointerEvents: activeTab === "wall" ? "auto" : "none",
             }}
           >
-            <WallFeed onOpenProfile={(uid) => setViewProfileId(uid)} />
+            <WallFeed isActive={activeTab === "wall"} onOpenProfile={handleOpenProfile} />
           </div>
 
           {/* pm (Private Chats) - always mounted, hidden when not active */}
@@ -444,6 +547,7 @@ const Dashboard = () => {
             className="absolute inset-0 flex flex-col"
             style={{
               visibility: activeTab === "pm" ? "visible" : "hidden",
+              contentVisibility: activeTab === "pm" ? "visible" : "hidden",
               zIndex: activeTab === "pm" ? 1 : -1,
               pointerEvents: activeTab === "pm" ? "auto" : "none",
             }}
@@ -452,7 +556,7 @@ const Dashboard = () => {
               key={`pm-${pmResetTrigger}`} 
               openWithUserId={openChatUserId} 
               onChatOpened={() => setOpenChatUserId(null)} 
-              onOpenProfile={(uid) => setViewProfileId(uid)} 
+              onOpenProfile={handleOpenProfile} 
             />
           </div>
 
@@ -595,18 +699,20 @@ const Dashboard = () => {
 
         {/* Main Content Area */}
         <div className="relative flex flex-1 flex-col overflow-hidden">
-          {activeTab === "cpanel" ? (
-            <AdminDashboard section={adminSection} />
+          {activeTab === "cpanel" && isAdmin ? (
+            <AdminDashboard section={adminSection} permissions={adminPermissions} />
+          ) : activeTab === "site-owner-wallet" && isSiteOwner ? (
+            <SiteOwnerWalletPanel />
           ) : activeRoom ? (
             <RoomPage 
               key={activeRoom.id}
               room={activeRoom} 
               roomPassword={activeRoomPassword}
-              onBack={() => setActiveRoom(null)} 
+              onBack={() => { clearLastRoom(); setActiveRoom(null); }} 
               onSelectRoom={performJoinRoom} 
               isEmbedded 
               autoJoin={false}
-              onOpenProfile={(uid) => setViewProfileId(uid)} 
+              onOpenProfile={handleOpenProfile} 
               onOpenSidebar={() => setSidebarOpen(true)}
               onOpenNotifications={() => handleTabChange("notifications")}
               onLogout={handleLogout}
@@ -660,7 +766,10 @@ const Dashboard = () => {
         </div>
 
         {/* Desktop small button grid - Hidden on mobile, moved here from sidebar */}
-        <div className={`hidden lg:grid ${isAdmin ? 'grid-cols-12' : 'grid-cols-11'} gap-1 border-t border-slate-100 dark:border-slate-800 p-2 bg-slate-50/50 dark:bg-slate-900/50`}>
+        <div
+          className="hidden lg:grid gap-1 border-t border-slate-100 dark:border-slate-800 p-2 bg-slate-50/50 dark:bg-slate-900/50"
+          style={{ gridTemplateColumns: `repeat(${activeTabs.length}, minmax(0, 1fr))` }}
+        >
           {activeTabs.map((tab) => {
             const isActive = activeTab === tab.id;
             const Icon = tab.icon;
@@ -672,6 +781,7 @@ const Dashboard = () => {
               <button
                 key={tab.id}
                 onClick={() => handleTabChange(tab.id)}
+                aria-label={tab.label}
                 className={`relative flex flex-col items-center justify-center rounded-xl p-2.5 transition-all ${
                   isActive
                     ? isYoutube
@@ -715,8 +825,9 @@ const Dashboard = () => {
                 key={tab.id}
                 onClick={() => {
                   handleTabChange(tab.id);
-                  setSidebarOpen(true);
+                  setSidebarOpen(tab.id !== "site-owner-wallet");
                 }}
+                aria-label={tab.label}
                 className={`relative flex flex-col items-center gap-1 transition-all flex-shrink-0 w-16 ${
                   isActive
                     ? isYoutube ? "text-red-600 scale-110" : "text-primary scale-110"

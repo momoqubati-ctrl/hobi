@@ -12,6 +12,9 @@ type OnlineMember = {
   id: string;
   socketId?: string;
   username: string;
+  displayName?: string;
+  mentionName?: string;
+  publicUserId?: string;
   role: string;
   avatar: string;
   countryCode?: string;
@@ -75,7 +78,7 @@ const DashboardMembers = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
-        member.username?.toLowerCase().includes(q) ||
+        member.displayName?.toLowerCase().includes(q) || member.username?.toLowerCase().includes(q) || member.mentionName?.toLowerCase().includes(q) ||
         member.id?.toString().includes(q)
       );
     }
@@ -252,7 +255,8 @@ const DashboardMembers = ({
             return (
               <div
                 key={member.id}
-                className="group relative w-[280px] shrink-0 overflow-hidden rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 hover:border-primary/30"
+                onClick={() => onOpenProfile?.(member.id)}
+                className="group relative w-[280px] shrink-0 overflow-hidden rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 cursor-pointer"
               >
                 <div className="relative h-[100px] overflow-hidden">
                   <img
@@ -277,11 +281,11 @@ const DashboardMembers = ({
                 </div>
 
                 <div className="relative px-4 pb-4">
-                  <div className="relative -mt-10 mb-3 flex justify-center">
+                  <div className="relative -mt-10 mb-3 flex justify-center" onClick={(e) => { e.stopPropagation(); onOpenProfile?.(member.id); }}>
                     <div className="relative">
                       <img
                         src={stats?.avatar || member.avatar || "/pic.png"}
-                        alt={member.username}
+                        alt={member.displayName || member.username}
                         className="h-[72px] w-[72px] rounded-[22px] object-cover shadow-xl ring-4 ring-white dark:ring-slate-900"
                       />
                       {stats?.avatarFrameUrl && (
@@ -295,13 +299,13 @@ const DashboardMembers = ({
                     </div>
                   </div>
 
-                  <div className="text-center mb-3">
+                  <div className="text-center mb-3" onClick={(e) => { e.stopPropagation(); onOpenProfile?.(member.id); }}>
                     <div className="flex items-center justify-center gap-1 mb-0.5">
                       <h4
                         className="text-sm font-black text-slate-800 dark:text-white [direction:rtl]"
                         style={stats?.nameColor ? { color: stats.nameColor } : member.nameColor ? { color: member.nameColor } : undefined}
                       >
-                        {member.username}
+                        {member.displayName || member.username}
                       </h4>
                       {stats?.roleIconUrl && (
                         <img src={stats.roleIconUrl} alt="" className="h-4 w-4" />

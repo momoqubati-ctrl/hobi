@@ -18,6 +18,8 @@ import { applyShortcuts } from "../services/shortcutService";
 import { dbPool } from "../db";
 import { getSocketIp } from "../services/requestCountry";
 import { publishGlobalEvent } from "./SocketBroker";
+import { getMessagePermissionRequirements } from "../../src/lib/chatFeaturePermissions";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
 
 export function registerWallHandlers(io: Server, socket: Socket): void {
   const user = socket.data.user;
@@ -38,6 +40,16 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
     try {
       // دعم mediaUrl القديم و mediaUrls الجديد
       const mediaUrls = data.mediaUrls || (data.mediaUrl ? [data.mediaUrl] : []);
+      const requiredPermissions = getMessagePermissionRequirements({
+        channel: "wall",
+        text,
+        hasMedia: mediaUrls.length > 0,
+        hasEffects: Boolean(data.animatedFaces?.length),
+      });
+      if (!(await hasChatFeatureAccess(user, requiredPermissions))) {
+        callback?.({ success: false, error: "لا تملك صلاحية استخدام إحدى ميزات منشور الحائط" });
+        return;
+      }
 
       // الفلترة أولاً قبل البث
       const ip = getSocketIp(socket);
@@ -114,6 +126,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
     }
 
     try {
+      if (!(await hasChatFeatureAccess(user, ["wall_reactions.use"]))) {
+        callback?.({ success: false, error: "لا تملك صلاحية التفاعل مع الحائط" });
+        return;
+      }
+
       // إذا كان المعرف UUID، ابحث عن المعرف الحقيقي
       if (postId.includes("-")) {
         const realId = tempPostIds.get(postId);
@@ -186,6 +203,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
     }
 
     try {
+      if (!(await hasChatFeatureAccess(user, ["wall_comments.use"]))) {
+        callback?.({ success: false, error: "لا تملك صلاحية التعليق على الحائط" });
+        return;
+      }
+
       // إذا كان المعرف UUID، ابحث عن المعرف الحقيقي
       if (postId.includes("-")) {
         const realId = tempPostIds.get(postId);
@@ -338,6 +360,11 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
     }
 
     try {
+      if (!(await hasChatFeatureAccess(user, ["wall_reactions.use"]))) {
+        callback?.({ success: false, error: "لا تملك صلاحية التفاعل مع الحائط" });
+        return;
+      }
+
       const parsedCommentId = parseInt(commentId, 10);
 
       // استعلام واحد: هل أعجب سابقاً + العداد (PARALLEL)

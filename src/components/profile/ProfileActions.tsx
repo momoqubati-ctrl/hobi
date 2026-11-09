@@ -30,6 +30,9 @@ import {
   ProfileAdminMenuItems,
   ProfileAdminDialogs,
 } from "./ProfileAdminPanel";
+import GiftSendAction from "@/components/chat/GiftSendAction";
+import { useRealtimeStore } from "@/lib/realtime-store";
+import { canRunProfileAdminAction } from "@/lib/profileAdminPermissions";
 
 interface ProfileActionsProps {
   profileId: string;
@@ -93,6 +96,9 @@ export function ProfileActions({
     isMuted,
     onProfilePatch,
   });
+
+  const userPermissions = useRealtimeStore((state) => state.userPermissions);
+  const canSendAlert = Boolean(isAdmin) && canRunProfileAdminAction(userPermissions, "alert");
 
   useEffect(() => {
     setFollowing(initialFollowing);
@@ -216,6 +222,14 @@ export function ProfileActions({
           </div>
         )}
 
+        {!isSelf && (
+          <GiftSendAction
+            recipient={{ id: profileId, name: profileName, role: targetRole }}
+            iconOnly
+            className="h-11 w-11 rounded-2xl"
+          />
+        )}
+
         {/* زر القائمة والمزيد (...) متجاوب مع الثيم الفاتح والداكن */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -272,7 +286,7 @@ export function ProfileActions({
               <span>نسخ رابط الملف الشخصي</span>
             </DropdownMenuItem>
 
-            {!isSelf && (
+            {canSendAlert && !isSelf && (
               <DropdownMenuItem
                 onClick={() => setAlertOpen(true)}
                 className="flex items-center gap-2.5 py-2 px-3 rounded-xl cursor-pointer text-foreground hover:text-amber-600 focus:text-amber-600 hover:bg-muted focus:bg-muted dark:text-slate-200 dark:hover:text-amber-400 dark:focus:text-amber-400 dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80 transition-colors"

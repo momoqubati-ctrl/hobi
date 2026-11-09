@@ -18,9 +18,40 @@ import { configureSocketGateway, registerSocketConnection } from "./SocketGatewa
 import { initializeSocketBroker } from "./SocketBroker";
 import { normalizeMinioUrl, normalizeOptionalMinioUrl } from "../services/minioClient";
 import { setFilterAlertCallback } from "../services/filterService";
+import { getSocketAuthClaims } from "./socketAuthentication";
 
 let io: SocketIOServer | null = null;
 
+export const getSocketCorsOrigin = () => {
+  const configured = (process.env.ALLOWED_ORIGINS || process.env.APP_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (configured.length > 0) {
+    return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      // السماح بالطلبات التي لا تحمل origin (مثل تطبيقات الجوال و curl)
+      if (!origin) return callback(null, true);
+      if (configured.includes(origin)) return callback(null, true);
+      // السماح بـ localhost في بيئات التطوير والاختبار
+      if (process.env.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS origin not allowed"), false);
+    };
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    // في الإنتاج عند عدم تحديد أصول، يُمنع الاتصال من أي أصل خارجي عشوائي
+    return (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin) return callback(null, true);
+      return callback(new Error("CORS origin not allowed"), false);
+    };
+  }
+
+  // في بيئة التطوير المحلية
+  return true;
+};
 
 /**
  * ينشئ ويهيئ خادم Socket.io
@@ -36,8 +67,9 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     pingTimeout: 180000,
     maxHttpBufferSize: 1e6,
     cors: {
-      origin: "*",
+      origin: getSocketCorsOrigin(),
       methods: ["GET", "POST"],
+      credentials: true,
     },
     perMessageDeflate: {
       threshold: 2000,
@@ -47,7 +79,9 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   });
 
   configureSocketGateway(io, { shardId: process.env.SOCKET_SHARD_ID ?? "local" });
-  initializeSocketBroker(io);
+  void initializeSocketBroker(io).catch((error) => {
+    console.error("[SocketBroker] Initialization failed:", error);
+  });
 
   setFilterAlertCallback((data) => {
     if (io) {
@@ -60,23 +94,16 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   (process as any).__socket_io_instance__ = io;
 
   io.on("connection", async (socket) => {
-    // Debug: log incoming handshake auth for tracing (avoid logging secrets)
-    try {
-      const authSnapshot = { ...socket.handshake.auth };
-      console.debug("[socket] connection handshake", socket.id, authSnapshot);
-    } catch (e) {}
-
-    // رفض الاتصال إذا لم يكن هناك معرّف مستخدم موثق (لا يسمح بالاتصال قبل الدخول)
-    const rawUserId = socket.handshake.auth?.userId;
-    if (!rawUserId || typeof rawUserId !== "string" || !rawUserId.trim()) {
-      console.debug("[socket] connection rejected: missing authenticated userId in handshake", socket.id);
+    const claims = getSocketAuthClaims(socket.handshake.auth);
+    if (!claims) {
+      console.debug("[socket] connection rejected: missing or invalid signed session", socket.id);
       socket.disconnect(true);
       return;
     }
 
-    const username = socket.handshake.auth?.username || "زائر";
-    const role = socket.handshake.auth?.role || "guest";
-    const userId = rawUserId.trim();
+    const username = claims.username;
+    const role = claims.role;
+    const userId = claims.sub;
     const handshakeProfileMsg = typeof socket.handshake.auth?.statusMsg === "string" && socket.handshake.auth.statusMsg.trim()
       ? socket.handshake.auth.statusMsg.trim()
       : (typeof socket.handshake.auth?.profileMsg === "string" && socket.handshake.auth.profileMsg.trim()
@@ -133,7 +160,12 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     // حفظ بيانات المستخدم على الـ socket
     socket.data.user = {
       id: userId,
+      sessionId: claims.sessionId,
+      sessionExpiresAt: claims.exp,
       username,
+      displayName: username,
+      mentionName: "",
+      publicUserId: "",
       role,
       avatar: normalizeMinioUrl(socket.handshake.auth?.avatar || "/pic.png"),
       countryCode: detectedCountry,
@@ -144,9 +176,9 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       messageColor: socket.handshake.auth?.messageColor || "",
       statusFontColor: socket.handshake.auth?.statusFontColor || "",
       messageBubbleStyle: socket.handshake.auth?.messageBubbleStyle || "default",
-      status: socket.handshake.auth?.status || "online",
+      status: (["online", "busy", "away"] as const).includes(socket.handshake.auth?.status) ? socket.handshake.auth.status : "online",
       connectedAt: new Date().toISOString(),
-      idreg: socket.handshake.auth?.idreg || "",
+      idreg: "",
       siteBadge: socket.handshake.auth?.siteBadge || "",
       profileMsg: handshakeProfileMsg,
       statusMsg: handshakeProfileMsg,
@@ -158,16 +190,20 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
       const { dbPool } = await import("../db");
       const result = await dbPool.query(
         `SELECT 
-           u.idreg, u.uid, u.msg, u.pic, u.pich, u.ucol, u.mcol, u.scol, u.muted,
+           u.idreg, u.uid, u.display_name, u.topic, u.mention_name, u.public_user_id, u.msg, u.pic, u.pich, u.ucol, u.mcol, u.scol, u.muted,
            up.profile_msg, up.avatar_url, up.banner_url, up.avatar_frame_url, up.member_card_bg_url, up.name_color, up.message_color, up.status_font_color,
            up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url, up.muted as profile_muted, up.level, up.exp
          FROM users u
          LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
-         WHERE CAST(u.id AS text) = $1 LIMIT 1`,
-        [userId],
+         WHERE CAST(u.id AS text) = $1 OR CAST(u.uid AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($2) LIMIT 1`,
+        [userId, username],
       );
       const row = result.rows[0];
       if (row) {
+        const dbDisplayName = (row.display_name || row.topic || username || "").toString().trim();
+        socket.data.user.displayName = dbDisplayName;
+        socket.data.user.mentionName = (row.mention_name || "").toString().trim();
+        socket.data.user.publicUserId = (row.public_user_id || "").toString().trim();
         const dbProfileMsg = (row.profile_msg || row.msg || "").toString().trim();
         const dbIdreg = (row.idreg || "").toString().trim();
         const dbUid = (row.uid || "").toString().trim();

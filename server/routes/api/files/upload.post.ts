@@ -1,17 +1,21 @@
-import { defineEventHandler, readBody, setResponseStatus } from "h3";
+import { readBody, setResponseStatus } from "h3";
 import { uploadFile } from "../../../services/fileService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const body = await readBody(event);
-  const { userId, file, filename, folder } = body;
+  const userId = auth.userId;
+  const file = typeof body?.file === "string" ? body.file : "";
+  const filename = typeof body?.filename === "string" ? body.filename.trim() : "";
+  const folder = typeof body?.folder === "string" ? body.folder : "/";
 
-  if (!userId || !file || !filename) {
+  if (!file || !filename) {
     setResponseStatus(event, 400);
-    return { success: false, message: "userId, file, filename مطلوبون" };
+    return { success: false, message: "الملف واسم الملف مطلوبان" };
   }
 
   try {
-    const result = await uploadFile(userId, file, filename, folder || "/");
+    const result = await uploadFile(userId, file, filename, folder);
     return { success: true, file: result };
   } catch (error: any) {
     setResponseStatus(event, 400);

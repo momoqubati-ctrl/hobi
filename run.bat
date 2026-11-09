@@ -1,7 +1,8 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 echo ================================
-echo  Serene Panda - تشغيل المشروع
+echo  Hobi Platform - تشغيل المشروع
 echo ================================
 echo.
 
@@ -14,7 +15,7 @@ if errorlevel 1 (
     echo [!] PostgreSQL غير شغال. جاري تشغيله...
     start "hobi-postgres" /min "%PG_BIN%\postgres.exe" -D "%PG_DATA%" -p 5432
     if errorlevel 1 (
-        echo [⚠] لم يتم تشغيل PostgreSQL تلقائياً. جارٍ المحاولة عبر net start...
+        echo [!] لم يتم تشغيل PostgreSQL تلقائياً. جارٍ المحاولة عبر net start...
         net start PostgreSQL 2>nul
     )
     timeout /t 3 /nobreak >nul
@@ -38,11 +39,21 @@ if exist "minio.exe" (
     )
 )
 
+:: تحرير المنفذ 3000 إذا كان معلقاً بعملية سابقة لتفادي خطأ Port 3000 is already in use
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING 2^>nul') do (
+    echo [*] إغلاق عملية سابقة على المنفذ 3000 - PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 :: 3. تشغيل خادم التطوير
 echo.
 echo [3/3] جاري تشغيل الخادم...
 echo.
-echo   الموقع: http://localhost:3000
+echo   الموقع: https://localhost:3000
 echo.
-npm run dev
+call npm run dev
+if errorlevel 1 (
+    echo.
+    echo [!] حدث خطأ أثناء تشغيل الخادم أو تم إيقافه.
+)
 pause

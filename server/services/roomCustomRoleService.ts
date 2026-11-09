@@ -46,9 +46,14 @@ export const updateRoomCustomRoleSchema = z.object({
   permissions: roomCustomRolePermissionPatchSchema.optional(),
 }).strict().refine((input) => Object.keys(input).length > 0);
 
+export const roomMemberRoleAssignmentSchema = z.object({
+  customRoleId: z.string().uuid().nullable(),
+}).strict();
+
 export type RoomCustomRolePermissions = z.infer<typeof roomCustomRolePermissionsSchema>;
 export type CreateRoomCustomRoleInput = z.infer<typeof createRoomCustomRoleSchema>;
 export type UpdateRoomCustomRoleInput = z.infer<typeof updateRoomCustomRoleSchema>;
+export type RoomMemberRoleAssignmentInput = z.infer<typeof roomMemberRoleAssignmentSchema>;
 export type RoomCustomRoleDatabase = Pick<Pool, "query">;
 
 export interface RoomCustomRole {
@@ -65,6 +70,7 @@ export type RoomCustomRoleErrorCode =
   | "ROOM_NOT_FOUND"
   | "NOT_ALLOWED"
   | "ROLE_NOT_FOUND"
+  | "MEMBER_NOT_FOUND"
   | "NAME_CONFLICT";
 
 const ROOM_CUSTOM_ROLE_ERROR_STATUS: Record<RoomCustomRoleErrorCode, number> = {
@@ -72,6 +78,7 @@ const ROOM_CUSTOM_ROLE_ERROR_STATUS: Record<RoomCustomRoleErrorCode, number> = {
   ROOM_NOT_FOUND: 404,
   NOT_ALLOWED: 403,
   ROLE_NOT_FOUND: 404,
+  MEMBER_NOT_FOUND: 404,
   NAME_CONFLICT: 409,
 };
 
@@ -247,7 +254,42 @@ export function createRoomCustomRoleService(database: RoomCustomRoleDatabase = d
     if (!result.rows[0]) throw new RoomCustomRoleServiceError("ROLE_NOT_FOUND");
   };
 
-  return { listForRoom, createForRoom, updateForRoom, deleteForRoom };
+  const assignMemberRole = async (
+    roomRef: string,
+    actorUserId: string,
+    memberUserId: string,
+    customRoleId: string | null,
+  ): Promise<{ userId: string; customRoleId: string | null }> => {
+    const roomId = await resolveOwnedRoomId(roomRef, actorUserId);
+    const normalizedMemberId = memberUserId.trim();
+    if (!normalizedMemberId || normalizedMemberId.length > 255) {
+      throw new RoomCustomRoleServiceError("INVALID_REQUEST");
+    }
+
+    if (customRoleId !== null) {
+      const roleResult = await database.query(
+        `SELECT id
+         FROM room_custom_roles
+         WHERE room_id = $1 AND id = $2
+         LIMIT 1`,
+        [roomId, customRoleId],
+      );
+      if (!roleResult.rows[0]) throw new RoomCustomRoleServiceError("ROLE_NOT_FOUND");
+    }
+
+    const result = await database.query(
+      `UPDATE room_members
+       SET custom_role_id = $1
+       WHERE room_id = $2 AND user_id = $3
+       RETURNING user_id`,
+      [customRoleId, roomId, normalizedMemberId],
+    );
+    if (!result.rows[0]) throw new RoomCustomRoleServiceError("MEMBER_NOT_FOUND");
+
+    return { userId: String(result.rows[0].user_id), customRoleId };
+  };
+
+  return { listForRoom, createForRoom, updateForRoom, deleteForRoom, assignMemberRole };
 }
 
 export const roomCustomRoleService = createRoomCustomRoleService();

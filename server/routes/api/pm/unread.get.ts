@@ -1,20 +1,24 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
-import { getUnreadCount } from "../../../services/privateMessageService";
+import { setResponseHeader, setResponseStatus } from "h3";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
+import {
+  isEphemeralPrivateMessagingEnabled,
+  privateMessageStore,
+  registerPrivateMessageSession,
+} from "../../../services/privateMessageService";
 
-export default defineEventHandler(async (event) => {
-  const query = getQuery(event);
-  const userId = query.userId as string;
-
-  if (!userId) {
-    setResponseStatus(event, 400);
-    return { success: false, message: "userId مطلوب" };
+export default createAuthenticatedUserHandler(async (event, auth) => {
+  setResponseHeader(event, "Cache-Control", "private, no-store");
+  if (!isEphemeralPrivateMessagingEnabled()) {
+    setResponseStatus(event, 503);
+    return { success: false, message: "الرسائل الخاصة المؤقتة غير مهيأة على هذا الخادم" };
   }
-
-  try {
-    const count = await getUnreadCount(userId);
-    return { success: true, count };
-  } catch (error) {
-    console.error("getUnreadCount error:", error);
-    return { success: false, message: "تعذر جلب عدد الرسائل غير المقروءة" };
+  if (!auth.sessionId || !registerPrivateMessageSession({
+    sessionId: auth.sessionId,
+    userId: auth.userId,
+    expiresAt: auth.expiresAt,
+  })) {
+    setResponseStatus(event, 401);
+    return { success: false, message: "جلسة غير صالحة" };
   }
+  return { success: true, count: privateMessageStore.getUnreadCount(auth.sessionId) };
 });

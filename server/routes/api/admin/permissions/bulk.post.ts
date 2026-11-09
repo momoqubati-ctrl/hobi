@@ -1,59 +1,82 @@
 import { defineEventHandler, readBody, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
-import { guardAdminAction, logAdminAudit } from "../../../../services/adminPermissions";
+import { guardAdminAction } from "../../../../services/adminPermissions";
 import { invalidatePermissionCache } from "../../../../services/permissionEngine";
+import {
+  AnnouncementRolePolicyError,
+  parseAnnouncementDailyLimits,
+  persistAnnouncementRolePolicy,
+} from "../../../../services/announcementRolePolicy";
+import { ApiError, handleApiError } from "../../../../utils/apiError";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPermissionValue(value: unknown): boolean {
+  return value === true || value === false || value === 1 || value === 0;
+}
 
 export default defineEventHandler(async (event) => {
   try {
     const admin = await guardAdminAction(event, "admin_roles.all");
     const body = await readBody(event);
-    const { matrix } = body;
-
-    if (!matrix || typeof matrix !== 'object') {
-      throw new Error("بيانات المصفوفة غير صالحة");
+    if (!isRecord(body) || !isRecord(body.matrix)) {
+      setResponseStatus(event, 422);
+      return { success: false, message: "بيانات المصفوفة غير صالحة" };
     }
 
-    await dbPool.query("BEGIN");
-
-    for (const [roleId, perms] of Object.entries(matrix)) {
-      // مسح الصلاحيات القديمة للرتبة
-      await dbPool.query("DELETE FROM role_permissions WHERE role_id = $1", [roleId]);
-      
-      // إضافة الصلاحيات الجديدة
-      for (const [key, value] of Object.entries(perms as any)) {
-        if (value === true || value === 1) {
-          await dbPool.query(
-            "INSERT INTO role_permissions (role_id, permission_key, permission_value) VALUES ($1, $2, $3::jsonb)",
-            [roleId, key, JSON.stringify(true)]
-          );
-        }
-      }
-    }
-
-    await logAdminAudit({
-      actorId: admin.userId,
-      action: "permissions.bulk_update",
-      targetType: "system",
-      targetId: "matrix",
-      metadata: { rolesCount: Object.keys(matrix).length }
-    });
-
-    await dbPool.query("COMMIT");
-    
-    // تفريغ كاش كل المستخدمين المتأثرين
+    const matrix = body.matrix;
     const roleIds = Object.keys(matrix);
-    const usersRes = await dbPool.query(
-      "SELECT DISTINCT user_id FROM user_role_assignments WHERE role_id = ANY($1::uuid[])",
-      [roleIds]
-    );
-    for (const row of usersRes.rows) {
-      await invalidatePermissionCache(row.user_id);
+    const permissionMatrix: Record<string, Record<string, unknown>> = {};
+    for (const [roleId, permissions] of Object.entries(matrix)) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roleId)) {
+        setResponseStatus(event, 422);
+        return { success: false, message: "معرف رتبة غير صالح" };
+      }
+      if (
+        !isRecord(permissions) ||
+        Object.entries(permissions).some(([key, value]) => !key.trim() || !isPermissionValue(value))
+      ) {
+        setResponseStatus(event, 422);
+        return { success: false, message: "بيانات صلاحيات الرتبة غير صالحة" };
+      }
+      permissionMatrix[roleId] = permissions;
+    }
+
+    const dailyLimits = parseAnnouncementDailyLimits(body.announcementDailyLimits, roleIds);
+    if (dailyLimits.success === false) {
+      setResponseStatus(event, 422);
+      return { success: false, message: dailyLimits.message };
+    }
+
+    const client = await dbPool.connect();
+    try {
+      const { affectedUsers } = await persistAnnouncementRolePolicy(
+        client,
+        permissionMatrix,
+        dailyLimits.values,
+        admin.userId,
+      );
+      for (const userId of affectedUsers) {
+        await invalidatePermissionCache(userId);
+      }
+    } finally {
+      client.release();
     }
 
     return { success: true, message: "تم تحديث مصفوفة الصلاحيات بنجاح" };
-  } catch (error: any) {
-    await dbPool.query("ROLLBACK");
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return handleApiError(event, error);
+    }
+    if (error instanceof AnnouncementRolePolicyError) {
+      const status = error.code === "ROLE_NOT_FOUND" ? 404 : 403;
+      setResponseStatus(event, status);
+      return { success: false, message: error.message };
+    }
+    console.error("[Permissions] Failed to update role policies:", error);
     setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return { success: false, message: "تعذر تحديث الصلاحيات" };
   }
 });

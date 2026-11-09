@@ -2,6 +2,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -15,6 +16,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type { EncryptedVoiceProviderSecret } from "../services/voiceProviderEncryption";
 import type { RoomCustomRolePermissions } from "../services/roomCustomRoleService";
@@ -127,8 +129,12 @@ export const users = pgTable(
   {
     id: varchar("id", { length: 255 }).primaryKey(),
     legacyId: integer("legacy_id"),
+    uid: varchar("uid", { length: 255 }),
+    idreg: integer("idreg"),
     username: varchar("username", { length: 64 }).notNull(),
     displayName: varchar("display_name", { length: 120 }).notNull(),
+    mentionName: varchar("mention_name", { length: 64 }),
+    publicUserId: varchar("public_user_id", { length: 12 }),
     passwordHash: text("password_hash"),
     role: accountRole("role").default("member").notNull(),
     status: accountStatus("status").default("active").notNull(),
@@ -142,6 +148,9 @@ export const users = pgTable(
   },
   (table) => [
     uniqueIndex("users_username_idx").on(table.username),
+    uniqueIndex("users_mention_name_lower_idx").on(sql`LOWER(${table.mentionName})`),
+    uniqueIndex("users_public_user_id_idx").on(table.publicUserId),
+    index("users_display_name_lower_idx").on(sql`LOWER(${table.displayName})`),
   ]
 );
 
@@ -429,17 +438,108 @@ export const roles = pgTable("roles", {
   rank: integer("rank").default(0).notNull(),
   iconUrl: text("icon_url").default("").notNull(),
   isSystem: boolean("is_system").default(false).notNull(),
+  isDefault: boolean("is_default").default(false).notNull(),
+  isOwner: boolean("is_owner").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   autoEnabled: boolean("auto_enabled").default(false).notNull(),
   autoPromote: boolean("auto_promote").default(false).notNull(),
   autoPoints: integer("auto_points").default(0).notNull(),
+  announcementDailyLimit: integer("announcement_daily_limit").default(0).notNull(),
   legacyMetadata: jsonb("legacy_metadata").default({}).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("roles_name_idx").on(table.name),
   index("roles_rank_idx").on(table.rank),
+  check(
+    "roles_announcement_daily_limit_check",
+    sql`${table.announcementDailyLimit} BETWEEN 0 AND 1000`,
+  ),
 ]);
+
+export const announcements = pgTable(
+  "announcements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    type: varchar("type", { length: 16 }).notNull(),
+    message: varchar("message", { length: 1000 }).notNull(),
+    senderUserId: varchar("sender_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "SET NULL" }),
+    senderName: varchar("sender_name", { length: 120 }).notNull(),
+    senderAvatarUrl: text("sender_avatar_url"),
+    roomId: varchar("room_id", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("announcements_type_check", sql`${table.type} IN ('all', 'ranked', 'room')`),
+    check(
+      "announcements_message_length_check",
+      sql`length(trim(${table.message})) BETWEEN 1 AND 1000`,
+    ),
+    index("announcements_created_idx").on(table.createdAt, table.id),
+  ],
+);
+
+export const announcementRecipients = pgTable(
+  "announcement_recipients",
+  {
+    announcementId: uuid("announcement_id")
+      .references(() => announcements.id, { onDelete: "cascade" })
+      .notNull(),
+    recipientUserId: varchar("recipient_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.announcementId, table.recipientUserId] }),
+    uniqueIndex("announcement_recipients_user_idx").on(table.recipientUserId, table.announcementId),
+    index("announcement_recipients_announcement_idx").on(table.announcementId),
+  ],
+);
+
+export const announcementDailyUsage = pgTable(
+  "announcement_daily_usage",
+  {
+    userId: varchar("user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    usageDate: varchar("usage_date", { length: 10 }).notNull(),
+    sendCount: integer("send_count").default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.usageDate] }),
+    check("announcement_daily_usage_nonnegative_check", sql`${table.sendCount} >= 0`),
+    index("announcement_daily_usage_date_idx").on(table.usageDate),
+  ],
+);
+
+export const announcementIdempotency = pgTable(
+  "announcement_idempotency",
+  {
+    senderUserId: varchar("sender_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+    announcementId: uuid("announcement_id")
+      .references(() => announcements.id, { onDelete: "SET NULL" }),
+    response: jsonb("response").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.senderUserId, table.idempotencyKey] }),
+    uniqueIndex("announcement_idempotency_sender_key_idx")
+      .on(table.senderUserId, table.idempotencyKey),
+    index("announcement_idempotency_expiry_idx").on(table.expiresAt),
+    check(
+      "announcement_idempotency_fingerprint_check",
+      sql`length(${table.requestFingerprint}) = 64`,
+    ),
+  ],
+);
 
 export const rolePermissions = pgTable("role_permissions", {
   roleId: uuid("role_id").references(() => roles.id, { onDelete: "cascade" }).notNull(),
@@ -714,7 +814,15 @@ export const roomKicks = pgTable("room_kicks", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-
+export const roomMutes = pgTable("room_mutes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  roomId: varchar("room_id", { length: 128 }).notNull(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  mutedBy: varchar("muted_by", { length: 255 }),
+  reason: text("reason"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const roomCustomRoles = pgTable(
   "room_custom_roles",
@@ -756,6 +864,7 @@ export const roomCustomRoles = pgTable(
   ],
 );
 
+
 export const roomMembers = pgTable(
   "room_members",
   {
@@ -774,4 +883,481 @@ export const roomMembers = pgTable(
     index("room_members_user_idx").on(table.userId),
     index("room_members_room_idx").on(table.roomId),
   ]
+);
+
+export const walletOperations = pgTable(
+  "wallet_operations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    actorScope: varchar("actor_scope", { length: 16 }).notNull(),
+    actorUserId: varchar("actor_user_id", { length: 255 }).references(() => users.id, { onDelete: "restrict" }),
+    actorAgentId: uuid("actor_agent_id").references(() => walletAgents.id, { onDelete: "restrict" }),
+    operationType: varchar("operation_type", { length: 40 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+    referenceType: varchar("reference_type", { length: 40 }),
+    referenceId: varchar("reference_id", { length: 255 }),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "wallet_operations_actor_scope_check",
+      sql`(
+        (${table.actorScope} = 'member' AND ${table.actorAgentId} IS NULL)
+        OR
+        (${table.actorScope} = 'site_owner' AND ${table.actorUserId} IS NOT NULL AND ${table.actorAgentId} IS NULL)
+        OR
+        (${table.actorScope} = 'agent' AND ${table.actorUserId} IS NULL AND ${table.actorAgentId} IS NOT NULL)
+        OR
+        (${table.actorScope} = 'system' AND ${table.actorUserId} IS NULL AND ${table.actorAgentId} IS NULL)
+      )`,
+    ),
+    check(
+      "wallet_operations_fingerprint_format_check",
+      sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check("wallet_operations_idempotency_key_check", sql`length(trim(${table.idempotencyKey})) > 0`),
+    uniqueIndex("wallet_operations_actor_idempotency_idx")
+      .on(table.actorUserId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'member' AND ${table.actorUserId} IS NOT NULL`),
+    uniqueIndex("wallet_operations_site_owner_idempotency_idx")
+      .on(table.actorUserId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'site_owner' AND ${table.actorUserId} IS NOT NULL`),
+    uniqueIndex("wallet_operations_system_idempotency_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'system'`),
+    uniqueIndex("wallet_operations_agent_idempotency_idx")
+      .on(table.actorAgentId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'agent' AND ${table.actorAgentId} IS NOT NULL`),
+    uniqueIndex("wallet_operations_site_funding_reference_idx")
+      .on(sql`lower(${table.referenceId})`)
+      .where(sql`${table.referenceType} = 'site_wallet_funding' AND ${table.referenceId} IS NOT NULL`),
+    uniqueIndex("wallet_operations_agent_inventory_reference_idx")
+      .on(table.referenceId)
+      .where(sql`${table.referenceType} = 'agent_inventory_order' AND ${table.referenceId} IS NOT NULL`),
+    uniqueIndex("wallet_operations_member_coin_purchase_reference_idx")
+      .on(table.referenceId)
+      .where(sql`${table.referenceType} = 'member_coin_purchase' AND ${table.referenceId} IS NOT NULL`),
+    index("wallet_operations_reference_idx").on(table.referenceType, table.referenceId),
+    index("wallet_operations_created_idx").on(table.createdAt),
+  ],
+);
+
+export const walletSettings = pgTable("wallet_settings", {
+  key: varchar("key", { length: 120 }).primaryKey(),
+  value: jsonb("value").default({}).notNull(),
+  updatedBy: varchar("updated_by", { length: 255 }).references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const walletAgents = pgTable(
+  "wallet_agents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    username: varchar("username", { length: 64 }).notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    phone: varchar("phone", { length: 16 }).default("").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    status: varchar("status", { length: 16 }).default("active").notNull(),
+    forcePasswordChange: boolean("force_password_change").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("wallet_agents_username_idx").on(table.username),
+    check("wallet_agents_username_lowercase_check", sql`${table.username} = lower(${table.username})`),
+    check("wallet_agents_status_check", sql`${table.status} IN ('active', 'disabled')`),
+  ],
+);
+
+export const walletAgentPackages = pgTable(
+  "wallet_agent_packages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    agentId: uuid("agent_id").references(() => walletAgents.id, { onDelete: "restrict" }).notNull(),
+    coinAmount: bigint("coin_amount", { mode: "bigint" }).notNull(),
+    priceMinorUnits: bigint("price_minor_units", { mode: "bigint" }).notNull(),
+    currencyCode: varchar("currency_code", { length: 3 }).notNull(),
+    paymentInstructions: text("payment_instructions").notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("wallet_agent_packages_coin_amount_check", sql`${table.coinAmount} > 0`),
+    check("wallet_agent_packages_price_check", sql`${table.priceMinorUnits} > 0`),
+    check("wallet_agent_packages_currency_check", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    check(
+      "wallet_agent_packages_instructions_length_check",
+      sql`length(trim(${table.paymentInstructions})) BETWEEN 1 AND 4000`,
+    ),
+    uniqueIndex("wallet_agent_packages_agent_amount_idx").on(table.agentId, table.coinAmount),
+    index("wallet_agent_packages_active_idx").on(table.agentId, table.isActive),
+  ],
+);
+
+export const walletAgentInventoryOrders = pgTable(
+  "wallet_agent_inventory_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    agentId: uuid("agent_id").references(() => walletAgents.id, { onDelete: "restrict" }).notNull(),
+    requestedCoins: bigint("requested_coins", { mode: "bigint" }).notNull(),
+    quotedPriceMinorUnits: bigint("quoted_price_minor_units", { mode: "bigint" }),
+    currencyCode: varchar("currency_code", { length: 3 }),
+    paymentInstructionsSnapshot: text("payment_instructions_snapshot"),
+    paymentReference: varchar("payment_reference", { length: 255 }),
+    proofObjectKey: text("proof_object_key"),
+    proofUploadedAt: timestamp("proof_uploaded_at", { withTimezone: true }),
+    receiptExpiresAt: timestamp("receipt_expires_at", { withTimezone: true }),
+    settlementOperationId: uuid("settlement_operation_id")
+      .references(() => walletOperations.id, { onDelete: "restrict" }),
+    quotedByUserId: varchar("quoted_by_user_id", { length: 255 }).references(() => users.id, { onDelete: "set null" }),
+    quotedAt: timestamp("quoted_at", { withTimezone: true }),
+    status: varchar("status", { length: 24 }).default("requested").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+    reviewedByUserId: varchar("reviewed_by_user_id", { length: 255 }).references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    rejectionReason: varchar("rejection_reason", { length: 500 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("wallet_agent_inventory_orders_coins_check", sql`${table.requestedCoins} > 0`),
+    check(
+      "wallet_agent_inventory_orders_price_check",
+      sql`${table.quotedPriceMinorUnits} IS NULL OR ${table.quotedPriceMinorUnits} > 0`,
+    ),
+    check(
+      "wallet_agent_inventory_orders_currency_check",
+      sql`${table.currencyCode} IS NULL OR ${table.currencyCode} ~ '^[A-Z]{3}$'`,
+    ),
+    check(
+      "wallet_agent_inventory_orders_quote_check",
+      sql`${table.status} IN ('requested', 'rejected') OR (
+        ${table.quotedPriceMinorUnits} IS NOT NULL AND ${table.currencyCode} IS NOT NULL
+        AND ${table.paymentInstructionsSnapshot} IS NOT NULL
+        AND length(trim(${table.paymentInstructionsSnapshot})) BETWEEN 1 AND 4000
+      )`,
+    ),
+    check(
+      "wallet_agent_inventory_orders_status_check",
+      sql`${table.status} IN ('requested', 'quoted', 'submitted', 'approved', 'rejected')`,
+    ),
+    check(
+      "wallet_agent_inventory_orders_payment_proof_check",
+      sql`${table.status} NOT IN ('submitted', 'approved') OR (
+        ${table.paymentReference} IS NOT NULL AND ${table.proofObjectKey} IS NOT NULL
+      )`,
+    ),
+    check(
+      "wallet_agent_inventory_orders_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`,
+    ),
+    uniqueIndex("wallet_agent_inventory_orders_agent_idempotency_idx")
+      .on(table.agentId, table.idempotencyKey),
+    uniqueIndex("wallet_agent_inventory_orders_settlement_idx")
+      .on(table.settlementOperationId)
+      .where(sql`${table.settlementOperationId} IS NOT NULL`),
+    uniqueIndex("wallet_agent_inventory_orders_payment_reference_idx")
+      .on(sql`lower(${table.paymentReference})`)
+      .where(sql`${table.paymentReference} IS NOT NULL`),
+    index("wallet_agent_inventory_orders_agent_status_idx").on(table.agentId, table.status, table.createdAt),
+    index("wallet_agent_inventory_orders_receipt_expiry_idx").on(table.receiptExpiresAt),
+  ],
+);
+
+export const memberCoinPurchases = pgTable(
+  "member_coin_purchases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    memberUserId: varchar("member_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "restrict" })
+      .notNull(),
+    agentId: uuid("agent_id").references(() => walletAgents.id, { onDelete: "restrict" }).notNull(),
+    packageId: uuid("package_id").references(() => walletAgentPackages.id, { onDelete: "restrict" }).notNull(),
+    coinAmount: bigint("coin_amount", { mode: "bigint" }).notNull(),
+    priceMinorUnits: bigint("price_minor_units", { mode: "bigint" }).notNull(),
+    currencyCode: varchar("currency_code", { length: 3 }).notNull(),
+    paymentInstructionsSnapshot: text("payment_instructions_snapshot").notNull(),
+    paymentReference: varchar("payment_reference", { length: 255 }),
+    proofObjectKey: text("proof_object_key"),
+    proofUploadedAt: timestamp("proof_uploaded_at", { withTimezone: true }),
+    receiptExpiresAt: timestamp("receipt_expires_at", { withTimezone: true }),
+    status: varchar("status", { length: 24 }).default("awaiting_payment").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+    settlementOperationId: uuid("settlement_operation_id")
+      .references(() => walletOperations.id, { onDelete: "restrict" }),
+    reviewedByAgentId: uuid("reviewed_by_agent_id").references(() => walletAgents.id, { onDelete: "restrict" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    rejectionReason: varchar("rejection_reason", { length: 500 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("member_coin_purchases_coin_amount_check", sql`${table.coinAmount} > 0`),
+    check("member_coin_purchases_price_check", sql`${table.priceMinorUnits} > 0`),
+    check("member_coin_purchases_currency_check", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    check(
+      "member_coin_purchases_status_check",
+      sql`${table.status} IN ('awaiting_payment', 'submitted', 'approved', 'rejected')`,
+    ),
+    check(
+      "member_coin_purchases_payment_proof_check",
+      sql`${table.status} IN ('awaiting_payment', 'rejected') OR (${table.paymentReference} IS NOT NULL AND ${table.proofObjectKey} IS NOT NULL)`,
+    ),
+    check(
+      "member_coin_purchases_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`,
+    ),
+    uniqueIndex("member_coin_purchases_member_idempotency_idx")
+      .on(table.memberUserId, table.idempotencyKey),
+    uniqueIndex("member_coin_purchases_settlement_idx")
+      .on(table.settlementOperationId)
+      .where(sql`${table.settlementOperationId} IS NOT NULL`),
+    uniqueIndex("member_coin_purchases_agent_payment_reference_idx")
+      .on(table.agentId, sql`lower(${table.paymentReference})`)
+      .where(sql`${table.paymentReference} IS NOT NULL`),
+    index("member_coin_purchases_member_status_idx").on(table.memberUserId, table.status, table.createdAt),
+    index("member_coin_purchases_agent_status_idx").on(table.agentId, table.status, table.createdAt),
+    index("member_coin_purchases_receipt_expiry_idx").on(table.receiptExpiresAt),
+  ],
+);
+
+export const walletBalances = pgTable(
+  "wallet_balances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountType: varchar("account_type", { length: 16 }).notNull(),
+    userId: varchar("user_id", { length: 255 }).references(() => users.id, { onDelete: "restrict" }),
+    agentId: uuid("agent_id").references(() => walletAgents.id, { onDelete: "restrict" }),
+    bucket: varchar("bucket", { length: 40 }).notNull(),
+    balanceCoins: bigint("balance_coins", { mode: "bigint" }).default(0n).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "wallet_balances_bucket_check",
+      sql`(
+      (${table.accountType} = 'member' AND ${table.agentId} IS NULL AND ${table.bucket} IN (
+        'legacy_spendable', 'cashable_spendable', 'cashable_reserved',
+        'purchased_spendable', 'gift_earnings_spendable', 'conversion_escrow'
+      ))
+        OR
+      (${table.accountType} = 'site_owner' AND ${table.userId} IS NOT NULL
+        AND ${table.agentId} IS NULL AND ${table.bucket} IN ('site_inventory', 'site_profit'))
+        OR
+      (${table.accountType} = 'agent' AND ${table.userId} IS NULL AND ${table.agentId} IS NOT NULL
+        AND ${table.bucket} IN ('agent_inventory', 'agent_profit'))
+      OR
+      (${table.accountType} = 'system' AND ${table.userId} IS NULL AND ${table.agentId} IS NULL AND ${table.bucket} IN ('platform_fee', 'external_clearing', 'legacy_opening_equity', 'site_inventory'))
+    )`,
+    ),
+    check(
+      "wallet_balances_member_nonnegative_check",
+      sql`${table.accountType} <> 'member' OR ${table.balanceCoins} >= 0`,
+    ),
+    check(
+      "wallet_balances_site_inventory_nonnegative_check",
+      sql`${table.accountType} <> 'system' OR ${table.bucket} <> 'site_inventory' OR ${table.balanceCoins} >= 0`,
+    ),
+    check(
+      "wallet_balances_agent_inventory_nonnegative_check",
+      sql`${table.accountType} <> 'agent' OR ${table.balanceCoins} >= 0`,
+    ),
+    check(
+      "wallet_balances_site_owner_nonnegative_check",
+      sql`${table.accountType} <> 'site_owner' OR ${table.balanceCoins} >= 0`,
+    ),
+    uniqueIndex("wallet_balances_member_bucket_idx")
+      .on(table.userId, table.bucket)
+      .where(sql`${table.accountType} = 'member' AND ${table.userId} IS NOT NULL`),
+    uniqueIndex("wallet_balances_system_bucket_idx")
+      .on(table.bucket)
+      .where(sql`${table.accountType} = 'system'`),
+    uniqueIndex("wallet_balances_agent_inventory_idx")
+      .on(table.agentId, table.bucket)
+      .where(sql`${table.accountType} = 'agent' AND ${table.agentId} IS NOT NULL`),
+    uniqueIndex("wallet_balances_site_owner_bucket_idx")
+      .on(table.userId, table.bucket)
+      .where(sql`${table.accountType} = 'site_owner' AND ${table.userId} IS NOT NULL`),
+    index("wallet_balances_user_idx").on(table.userId),
+  ],
+);
+
+export const walletEntries = pgTable(
+  "wallet_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    operationId: uuid("operation_id").references(() => walletOperations.id, { onDelete: "restrict" }).notNull(),
+    walletBalanceId: uuid("wallet_balance_id").references(() => walletBalances.id, { onDelete: "restrict" }).notNull(),
+    amount: bigint("amount", { mode: "bigint" }).notNull(),
+    reversalOfEntryId: uuid("reversal_of_entry_id").references(
+      (): AnyPgColumn => walletEntries.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("wallet_entries_nonzero_amount_check", sql`${table.amount} <> 0`),
+    uniqueIndex("wallet_entries_operation_account_idx").on(table.operationId, table.walletBalanceId),
+    uniqueIndex("wallet_entries_reversal_once_idx")
+      .on(table.reversalOfEntryId)
+      .where(sql`${table.reversalOfEntryId} IS NOT NULL`),
+    index("wallet_entries_operation_idx").on(table.operationId),
+    index("wallet_entries_balance_idx").on(table.walletBalanceId),
+  ],
+);
+
+export const cashAccounts = pgTable(
+  "cash_accounts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ownerType: varchar("owner_type", { length: 24 }).notNull(),
+    ownerUserId: varchar("owner_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "restrict" }),
+    ownerAgentId: uuid("owner_agent_id").references(() => walletAgents.id, { onDelete: "restrict" }),
+    ownerReference: varchar("owner_reference", { length: 255 }),
+    bucket: varchar("bucket", { length: 40 }).notNull(),
+    currencyCode: varchar("currency_code", { length: 3 }).notNull(),
+    balanceMinorUnits: bigint("balance_minor_units", { mode: "bigint" }).default(0n).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "cash_accounts_owner_check",
+      sql`(
+        (${table.ownerType} = 'member' AND ${table.ownerUserId} IS NOT NULL AND ${table.ownerAgentId} IS NULL AND ${table.ownerReference} IS NULL
+          AND ${table.bucket} IN ('recipient_earnings', 'withdrawable_balance', 'payout_reserved'))
+        OR
+        (${table.ownerType} = 'site_owner' AND ${table.ownerUserId} IS NOT NULL AND ${table.ownerAgentId} IS NULL AND ${table.ownerReference} IS NULL
+          AND ${table.bucket} IN ('site_profit', 'payout_reserved'))
+        OR
+        (${table.ownerType} = 'hosting_owner' AND ${table.ownerUserId} IS NULL AND ${table.ownerAgentId} IS NULL
+          AND ${table.ownerReference} IS NOT NULL AND ${table.ownerReference} = lower(${table.ownerReference})
+          AND ${table.bucket} IN ('hosting_profit', 'payout_reserved'))
+        OR
+        (${table.ownerType} = 'agent' AND ${table.ownerUserId} IS NULL AND ${table.ownerAgentId} IS NOT NULL AND ${table.ownerReference} IS NULL
+          AND ${table.bucket} IN ('sales_reward', 'payout_reserved'))
+        OR
+        (${table.ownerType} = 'system' AND ${table.ownerUserId} IS NULL AND ${table.ownerAgentId} IS NULL AND ${table.ownerReference} IS NULL
+          AND ${table.bucket} IN ('settlement_clearing', 'opening_equity', 'platform_cash_asset'))
+      )`,
+    ),
+    check("cash_accounts_currency_check", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    check(
+      "cash_accounts_nonnegative_check",
+      sql`${table.ownerType} = 'system' AND ${table.bucket} IN ('settlement_clearing', 'opening_equity')
+        OR ${table.balanceMinorUnits} >= 0`,
+    ),
+    uniqueIndex("cash_accounts_id_currency_idx").on(table.id, table.currencyCode),
+    uniqueIndex("cash_accounts_member_bucket_currency_idx")
+      .on(table.ownerUserId, table.bucket, table.currencyCode)
+      .where(sql`${table.ownerType} = 'member'`),
+    uniqueIndex("cash_accounts_site_owner_bucket_currency_idx")
+      .on(table.ownerUserId, table.bucket, table.currencyCode)
+      .where(sql`${table.ownerType} = 'site_owner'`),
+    uniqueIndex("cash_accounts_hosting_owner_bucket_currency_idx")
+      .on(table.ownerReference, table.bucket, table.currencyCode)
+      .where(sql`${table.ownerType} = 'hosting_owner'`),
+    uniqueIndex("cash_accounts_agent_bucket_currency_idx")
+      .on(table.ownerAgentId, table.bucket, table.currencyCode)
+      .where(sql`${table.ownerType} = 'agent'`),
+    uniqueIndex("cash_accounts_system_bucket_currency_idx")
+      .on(table.bucket, table.currencyCode)
+      .where(sql`${table.ownerType} = 'system'`),
+  ],
+);
+
+export const cashOperations = pgTable(
+  "cash_operations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    actorScope: varchar("actor_scope", { length: 16 }).notNull(),
+    actorUserId: varchar("actor_user_id", { length: 255 })
+      .references(() => users.id, { onDelete: "restrict" }),
+    actorAgentId: uuid("actor_agent_id").references(() => walletAgents.id, { onDelete: "restrict" }),
+    operationType: varchar("operation_type", { length: 40 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+    currencyCode: varchar("currency_code", { length: 3 }).notNull(),
+    referenceType: varchar("reference_type", { length: 40 }),
+    referenceId: varchar("reference_id", { length: 255 }),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "cash_operations_actor_scope_check",
+      sql`(
+        (${table.actorScope} IN ('member', 'site_owner') AND ${table.actorUserId} IS NOT NULL AND ${table.actorAgentId} IS NULL)
+        OR
+        (${table.actorScope} = 'agent' AND ${table.actorUserId} IS NULL AND ${table.actorAgentId} IS NOT NULL)
+        OR
+        (${table.actorScope} = 'system' AND ${table.actorUserId} IS NULL AND ${table.actorAgentId} IS NULL)
+      )`,
+    ),
+    check("cash_operations_currency_check", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    check(
+      "cash_operations_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check("cash_operations_idempotency_key_check", sql`length(trim(${table.idempotencyKey})) > 0`),
+    uniqueIndex("cash_operations_id_currency_idx").on(table.id, table.currencyCode),
+    uniqueIndex("cash_operations_member_idempotency_idx")
+      .on(table.actorUserId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'member' AND ${table.actorUserId} IS NOT NULL`),
+    uniqueIndex("cash_operations_site_owner_idempotency_idx")
+      .on(table.actorUserId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'site_owner' AND ${table.actorUserId} IS NOT NULL`),
+    uniqueIndex("cash_operations_agent_idempotency_idx")
+      .on(table.actorAgentId, table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'agent' AND ${table.actorAgentId} IS NOT NULL`),
+    uniqueIndex("cash_operations_system_idempotency_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.actorScope} = 'system'`),
+    index("cash_operations_reference_idx").on(table.referenceType, table.referenceId),
+    index("cash_operations_created_idx").on(table.createdAt),
+  ],
+);
+
+export const cashEntries = pgTable(
+  "cash_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    operationId: uuid("operation_id").notNull(),
+    cashAccountId: uuid("cash_account_id").notNull(),
+    currencyCode: varchar("currency_code", { length: 3 }).notNull(),
+    amountMinorUnits: bigint("amount_minor_units", { mode: "bigint" }).notNull(),
+    reversalOfEntryId: uuid("reversal_of_entry_id").references(
+      (): AnyPgColumn => cashEntries.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "cash_entries_operation_currency_fk",
+      columns: [table.operationId, table.currencyCode],
+      foreignColumns: [cashOperations.id, cashOperations.currencyCode],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "cash_entries_account_currency_fk",
+      columns: [table.cashAccountId, table.currencyCode],
+      foreignColumns: [cashAccounts.id, cashAccounts.currencyCode],
+    }).onDelete("restrict"),
+    check("cash_entries_nonzero_amount_check", sql`${table.amountMinorUnits} <> 0`),
+    check("cash_entries_currency_check", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    uniqueIndex("cash_entries_operation_account_idx").on(table.operationId, table.cashAccountId),
+    uniqueIndex("cash_entries_reversal_once_idx")
+      .on(table.reversalOfEntryId)
+      .where(sql`${table.reversalOfEntryId} IS NOT NULL`),
+    index("cash_entries_operation_idx").on(table.operationId),
+    index("cash_entries_account_idx").on(table.cashAccountId),
+  ],
 );

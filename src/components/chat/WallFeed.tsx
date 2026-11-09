@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -10,12 +10,14 @@ import WallComments from "./WallComments";
 import { Input } from "@/components/ui/input";
 import { YouTubeSearchInline, YTVideo } from "./YouTubeSearchInline";
 import { YouTubePreviewCard, findYouTubeLinks } from "./YouTubePreviewCard";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
 import { Youtube } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Plus } from "lucide-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { useShallow } from "zustand/shallow";
+import GiftSendAction from "./GiftSendAction";
 const showMuteAlert = (message: string) => {
   let detail: any = {
     alertId: String(Date.now()),
@@ -119,10 +121,13 @@ const MediaRenderer = ({ url, className, style }: { url: string; className?: str
 
 const ConstrainedImage = ({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) => {
   const [isSmall, setIsSmall] = useState(false);
+
   return (
     <img
       src={url}
       alt=""
+      loading="lazy"
+      decoding="async"
       className={className}
       style={{ ...style, ...(isSmall ? { maxWidth: "150px", maxHeight: "150px", width: "auto", height: "auto" } : {}) }}
       onLoad={(e) => {
@@ -358,6 +363,11 @@ interface MediaItem {
 }
 
 const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; onPost: (text: string, mediaUrls?: string[], animatedFaces?: string[]) => Promise<void> }) => {
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canCreateWallPost = hasPermissionAccess(permissions, "wall_posts.use");
+  const canAttachWallMedia = hasPermissionAccess(permissions, "wall_media.use");
+  const canShareYoutube = hasPermissionAccess(permissions, "wall_youtube.use");
+  const canUseChatEffects = hasPermissionAccess(permissions, "chat_effects.use");
   const [text, setText] = useState("");
   const [isPosting, setIsPosting] = useState(false);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
@@ -465,7 +475,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         };
 
         xhr.onerror = () => reject(new Error("خطأ في الاتصال"));
-        xhr.send(JSON.stringify({ file: base64, filename: `wall.${ext}`, contentType: file.type }));
+        xhr.send(JSON.stringify({ file: base64, filename: `wall.${ext}`, contentType: file.type, purpose: "wall_post" }));
       };
       reader.onerror = () => reject(new Error("فشل قراءة الملف"));
       reader.readAsDataURL(file);
@@ -512,7 +522,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
       const res = await fetch("/api/wall/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: recorder.audioBlob!.type }),
+        body: JSON.stringify({ file: base64, filename: `voice.${ext}`, contentType: recorder.audioBlob!.type, purpose: "wall_post" }),
       });
       const data = await res.json();
       if (data.success) return data.url;
@@ -524,6 +534,11 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
   };
 
   const handleSubmit = async () => {
+    const currentPermissions = useRealtimeStore.getState().userPermissions;
+    if (!hasPermissionAccess(currentPermissions, "wall_posts.use")) return;
+    if (mediaItems.length > 0 && !hasPermissionAccess(currentPermissions, "wall_media.use")) return;
+    if (recorder.audioBlob && !hasPermissionAccess(currentPermissions, "wall_media.use")) return;
+    if (selectedVideo && !hasPermissionAccess(currentPermissions, "wall_youtube.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -554,7 +569,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
           processedText = processedText.replace(regex, () => `\u200B[[FACE:${faceIdx + counter++}]]\u200B`);
         }
       }
-      if (matchedUrls.length > 0) {
+      if (matchedUrls.length > 0 && hasPermissionAccess(currentPermissions, "chat_effects.use")) {
         content = processedText;
         faceUrls = matchedUrls;
       }
@@ -635,7 +650,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
       />
 
       {/* لوحة الفيسات المتحركة */}
-      {showFaces && (
+      {canUseChatEffects && showFaces && (
         <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
           <div className="p-2 text-[10px] text-muted-foreground font-bold">
             اكتب الاختصار في حقل الكتابة (مثال: ف1)
@@ -660,7 +675,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
       )}
 
       {/* لوحة الملصقات */}
-      {showStickers && (
+      {canUseChatEffects && showStickers && (
         <div className="border-b border-border bg-card animate-in slide-in-from-bottom duration-200">
           <div className="flex gap-1 px-3 pt-2 pb-1 overflow-x-auto">
             {stickerCategories.map((cat) => (
@@ -711,7 +726,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         </div>
 
         {/* معاينة الفيديو المختار من يوتيوب */}
-        {selectedVideo && (
+        {canShareYoutube && selectedVideo && (
           <div className="mb-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border flex items-center gap-2 relative">
             <div className="relative shrink-0 w-16 h-10 rounded-md overflow-hidden bg-slate-200">
               <img src={selectedVideo.thumbnail} className="w-full h-full object-cover" alt="" />
@@ -733,7 +748,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         )}
 
         {/* لوحة البحث في يوتيوب */}
-        {showYouTubeSearch && (
+        {canShareYoutube && showYouTubeSearch && (
           <div className="mb-2 p-3 rounded-lg border border-border bg-slate-50 dark:bg-slate-900/40 animate-in slide-in-from-bottom duration-250">
             <YouTubeSearchInline
               onSelectVideo={(video) => setSelectedVideo(video)}
@@ -743,7 +758,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         )}
 
         {/* معاينة الوسائط */}
-        {mediaItems.length > 0 && (
+        {canAttachWallMedia && mediaItems.length > 0 && (
           <div className={`grid gap-1.5 mb-2 ${mediaItems.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
             {mediaItems.map((item, index) => (
               <div key={index} className="relative rounded-lg overflow-hidden border">
@@ -764,7 +779,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         )}
 
         {/* تسجيل صوتي */}
-        {recorder.isRecording && (
+        {canAttachWallMedia && recorder.isRecording && (
           <div className="mb-2 flex items-center gap-2 p-2 bg-red-50 rounded-lg border border-red-200">
             <div className="h-3 w-3 rounded-full bg-red-500 animate-pulse" />
             <span className="text-[10px] font-bold text-red-600">{formatDuration(recorder.duration)}</span>
@@ -785,7 +800,7 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
         )}
 
         {/* معاينة التسجيل الصوتي */}
-        {recorder.audioUrl && !recorder.isRecording && (
+        {canAttachWallMedia && recorder.audioUrl && !recorder.isRecording && (
           <div className="mb-2 flex items-center gap-2 p-2 bg-slate-50 rounded-lg border">
             <Mic size={14} className="text-primary" />
             <audio src={recorder.audioUrl} controls className="flex-1 h-8" />
@@ -838,30 +853,30 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
               </PopoverTrigger>
               <PopoverContent side="top" align="start" className="w-auto p-2 mb-2 z-50">
                 <div className="flex gap-1 flex-wrap justify-center">
-                  <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرفاق صورة أو فيديو">
+                  {canAttachWallMedia && <button type="button" onClick={() => { setMenuOpen(false); fileInputRef.current?.click(); }} className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-muted transition active:scale-90" title="إرفاق صورة أو فيديو">
                     <ImageIcon size={22} className="text-green-500" />
                     <span className="text-[9px] font-bold">صورة</span>
-                  </button>
-                  <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
+                  </button>}
+                  {canUseChatEffects && <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowStickers(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showStickers ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="ملصقات">
                     <span className="text-[20px] leading-none">🖼️</span>
                     <span className="text-[9px] font-bold">ملصقات</span>
-                  </button>
-                  <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
+                  </button>}
+                  {canUseChatEffects && <button type="button" onClick={() => { setMenuOpen(false); closeAllPanels(); setShowFaces(true); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showFaces ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="فيسات متحركة">
                     <Smile size={22} className="text-orange-500" />
                     <span className="text-[9px] font-bold">فيسات</span>
-                  </button>
+                  </button>}
                   <button type="button" onClick={() => { setMenuOpen(false); setEmojiOpen((v) => !v); setShowYouTubeSearch(false); setShowFaces(false); setShowStickers(false); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${emojiOpen ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="إيموجي">
                     <SmilePlus size={22} className="text-yellow-500" />
                     <span className="text-[9px] font-bold">إيموجي</span>
                   </button>
-                  <button type="button" onClick={() => { setMenuOpen(false); setShowYouTubeSearch(!showYouTubeSearch); setEmojiOpen(false); setShowFaces(false); setShowStickers(false); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showYouTubeSearch ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="يوتيوب">
+                  {canShareYoutube && <button type="button" onClick={() => { setMenuOpen(false); setShowYouTubeSearch(!showYouTubeSearch); setEmojiOpen(false); setShowFaces(false); setShowStickers(false); }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${showYouTubeSearch ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} title="يوتيوب">
                     <Youtube size={22} className="text-red-500" />
                     <span className="text-[9px] font-bold">يوتيوب</span>
-                  </button>
-                  <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
+                  </button>}
+                  {canAttachWallMedia && <button type="button" onClick={() => { setMenuOpen(false); if (recorder.isRecording) { recorder.stopRecording(); } else { recorder.startRecording(); } }} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition active:scale-90 ${recorder.isRecording ? "bg-red-500 text-white" : "hover:bg-muted"}`} title={recorder.isRecording ? "إيقاف التسجيل" : "تسجيل صوتي"}>
                     {recorder.isRecording ? <MicOff size={22} /> : <Mic size={22} className="text-red-500" />}
                     <span className="text-[9px] font-bold">{recorder.isRecording ? formatDuration(recorder.duration) : "صوت"}</span>
-                  </button>
+                  </button>}
                 </div>
               </PopoverContent>
             </Popover>
@@ -881,7 +896,149 @@ const PostComposer = React.memo(({ currentUser, onPost }: { currentUser: any; on
 
 });
 
-const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) => void }) => {
+interface WallPostCardProps {
+  post: any;
+  authorUser: any;
+  isLiked: boolean;
+  likeCount: number;
+  commentCount: number;
+  isCommentsOpen: boolean;
+  currentUser: any;
+  onToggleLike: (postId: string) => void;
+  onToggleComments: (postId: string) => void;
+  onOpenProfile?: (userIdOrName: string) => void;
+  onPlayYouTube: (embedUrl: string) => void;
+}
+
+const WallPostCard = React.memo(({
+  post,
+  authorUser,
+  isLiked,
+  likeCount,
+  commentCount,
+  isCommentsOpen,
+  currentUser,
+  onToggleLike,
+  onToggleComments,
+  onOpenProfile,
+  onPlayYouTube,
+}: WallPostCardProps) => {
+  const authorId = post.author?.id;
+  const banner = authorUser?.giftedBannerUrl || (post.author as any)?.giftedBannerUrl || "";
+  const giftIcon = authorUser?.giftedGiftIconUrl || (post.author as any)?.giftedGiftIconUrl || "";
+  const promoIcon = authorUser?.roleIconUrl || authorUser?.giftedPromotionIconUrl || (post.author as any)?.roleIconUrl || (post.author as any)?.giftedPromotionIconUrl || "";
+  const resolvedNameColor = authorUser?.nameColor || (post.author as any)?.nameColor || "";
+  const resolvedStatusColor = authorUser?.statusFontColor || (post.author as any)?.statusFontColor || "";
+
+  const youtubeLinks = useMemo(() => {
+    return post.body ? findYouTubeLinks(post.body) : [];
+  }, [post.body]);
+
+  return (
+    <Card className={`border-none shadow-sm rounded-xl overflow-hidden ${post.isOptimistic ? "opacity-70" : ""}`}>
+      <CardHeader className="p-3 flex-row items-center justify-between space-y-0">
+        <div className="flex items-center gap-2">
+          <Avatar
+            className="w-11 h-11 rounded-lg border border-border cursor-pointer transition hover:scale-105"
+            onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
+          >
+            <AvatarImage src={post.author?.avatar || "/pic.png"} />
+            <AvatarFallback>{post.author?.name?.[0]}</AvatarFallback>
+          </Avatar>
+          <div dir="rtl">
+            <div className="flex items-center gap-1">
+              {promoIcon && <img loading="lazy" decoding="async" src={promoIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+              {giftIcon && <img loading="lazy" decoding="async" src={giftIcon} alt="" className="h-4 w-4 rounded object-contain" />}
+              {banner && <img loading="lazy" decoding="async" src={banner} alt="" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" />}
+              <h4
+                className="font-black text-xs text-foreground cursor-pointer hover:underline"
+                onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
+                style={resolvedNameColor && resolvedNameColor !== "#000000" ? { color: resolvedNameColor } : undefined}
+              >
+                {post.author?.name}
+              </h4>
+            </div>
+            <p className="text-[9px] text-muted-foreground font-bold">
+              {new Date(post.createdAt).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          </div>
+        </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+          <MoreHorizontal size={16} />
+        </Button>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div
+          className="px-3 pb-2 text-xs text-foreground leading-relaxed font-medium break-words"
+          dir="rtl"
+          style={resolvedStatusColor && resolvedStatusColor !== "#000000" ? { color: resolvedStatusColor } : undefined}
+        >
+          {renderTextWithFaces(post.body || "", post.animatedFaces)}
+        </div>
+        {youtubeLinks.map((link) => (
+          <div className="px-3 pb-2" key={link}>
+            <YouTubePreviewCard
+              url={link}
+              onPlay={onPlayYouTube}
+            />
+          </div>
+        ))}
+        {(post.mediaUrls && post.mediaUrls.length > 0) || post.mediaUrl ? (
+          <MediaGrid urls={post.mediaUrls || (post.mediaUrl ? [post.mediaUrl] : [])} />
+        ) : null}
+        <div className="p-2 flex items-center justify-between border-t">
+          <div className="flex gap-3">
+            <button
+              className={`flex items-center gap-1 transition-colors ${
+                isLiked ? "text-red-500" : "text-muted-foreground hover:text-red-500"
+              }`}
+              onClick={() => onToggleLike(post.id)}
+              disabled={post.isOptimistic}
+            >
+              <Heart size={16} className={isLiked ? "fill-red-500" : ""} />
+              <span className="text-[10px] font-bold">{likeCount}</span>
+            </button>
+            <button
+              className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
+              onClick={() => onToggleComments(post.id)}
+            >
+              <MessageCircle size={16} />
+              <span className="text-[10px] font-bold">{commentCount}</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            <GiftSendAction
+              recipient={{
+                id: String(post.author?.id || ""),
+                name: String(post.author?.name || "عضو"),
+                role: post.author?.role,
+              }}
+              iconOnly
+              className="h-8 w-8 border-0 shadow-none"
+            />
+            <button
+              type="button"
+              aria-label="مشاركة المنشور"
+              className="text-muted-foreground hover:text-primary transition-colors"
+            >
+              <Share2 size={16} />
+            </button>
+          </div>
+        </div>
+        <WallComments
+          postId={post.id}
+          commentCount={commentCount}
+          currentUser={currentUser}
+          isOpen={isCommentsOpen}
+          onToggle={() => onToggleComments(post.id)}
+          onOpenProfile={onOpenProfile}
+        />
+      </CardContent>
+    </Card>
+  );
+});
+
+const WallFeed = ({ onOpenProfile, isActive = true }: { onOpenProfile?: (userIdOrName: string) => void; isActive?: boolean }) => {
   const {
     wallPosts: posts,
     isLoadingWallPosts: loading,
@@ -892,6 +1049,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     wallLikeCounts,
     wallCommentCounts,
     onlineUsers,
+    permissions,
   } = useRealtimeStore(useShallow((s: any) => ({
     wallPosts: s.wallPosts,
     isLoadingWallPosts: s.isLoadingWallPosts,
@@ -902,6 +1060,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
     wallLikeCounts: s.wallLikeCounts,
     wallCommentCounts: s.wallCommentCounts,
     onlineUsers: s.onlineUsers,
+    permissions: s.userPermissions,
   })));
 
   const [currentUser, setCurrentUser] = useState<any>(() => getStoredUser());
@@ -911,6 +1070,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevPostsLengthRef = useRef(posts.length);
   const [activeYouTubeEmbedUrl, setActiveYouTubeEmbedUrl] = useState<string | null>(null);
+  const handlePlayYouTube = useCallback((embedUrl: string) => { setActiveYouTubeEmbedUrl(embedUrl); }, []);
 
   const fetchPosts = async (force = false) => {
     if (isWallLoaded && !force) return;
@@ -945,6 +1105,7 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
   }, []);
 
   const handleToggleLike = async (postId: string) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "wall_reactions.use")) return;
     if (!currentUser) return;
     try {
       await optimisticToggleLike(postId);
@@ -994,23 +1155,25 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
   return (
     <div className="flex flex-col h-full bg-muted ltr">
       {/* مشغل يوتيوب المدمج */}
-      {activeYouTubeEmbedUrl && (
-        <div className="relative w-full bg-black border-b border-slate-800 shadow-xl shrink-0 animate-in slide-in-from-top duration-300">
-          <div className="relative w-full" style={{ aspectRatio: "16/9", maxHeight: "240px", margin: "0 auto" }}>
+      {activeYouTubeEmbedUrl && isActive && (
+        <div className="relative w-full bg-black border-b border-slate-800 shadow-xl shrink-0 animate-in slide-in-from-top duration-300" style={{ willChange: "transform", transform: "translateZ(0)" }}>
+          <div className="relative w-full" style={{ aspectRatio: "16/9", maxHeight: "240px", margin: "0 auto", willChange: "transform", contain: "strict" }}>
             <iframe
-              src={`${activeYouTubeEmbedUrl}?autoplay=1&rel=0`}
+              src={`${activeYouTubeEmbedUrl}?autoplay=1&rel=0&enablejsapi=0`}
               className="w-full h-full"
               allow="autoplay; fullscreen; encrypted-media"
               allowFullScreen
               title="YouTube Player"
+              loading="lazy"
+              sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
             />
-            <button
+            {hasPermissionAccess(permissions, "wall_reactions.use") && <button
               onClick={() => setActiveYouTubeEmbedUrl(null)}
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-600 text-white flex items-center justify-center transition shadow-lg z-40"
               title="إغلاق المشغل"
             >
               <X size={16} />
-            </button>
+            </button>}
           </div>
         </div>
       )}
@@ -1034,125 +1197,26 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
         ) : posts.length === 0 ? (
           <div className="text-center p-8 text-muted-foreground text-xs font-bold">لا توجد منشورات حالياً</div>
         ) : (
-          posts.map((post) => {
-            const isLiked = wallLikedPosts.has(String(post.id));
-            const likeCount = wallLikeCounts[String(post.id)] ?? post.likeCount ?? 0;
-            const commentCount = wallCommentCounts[String(post.id)] ?? post.commentCount ?? 0;
-
-            return (
-              <Card key={post.id} className={`border-none shadow-sm rounded-xl overflow-hidden ${post.isOptimistic ? "opacity-70" : ""}`}>
-                <CardHeader className="p-3 flex-row items-center justify-between space-y-0">
-                  <div className="flex items-center gap-2">
-                    <Avatar
-                      className="w-11 h-11 rounded-lg border border-border cursor-pointer transition hover:scale-105"
-                      onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
-                    >
-                      <AvatarImage src={post.author?.avatar || "/pic.png"} />
-                      <AvatarFallback>{post.author?.name?.[0]}</AvatarFallback>
-                    </Avatar>
-                    <div dir="rtl">
-                      <div className="flex items-center gap-1">
-                        {(() => {
-                          const authorId = post.author?.id;
-                          if (!authorId) return null;
-                          const u = onlineUsers.find(o => String(o.id) === String(authorId));
-                          const banner = u?.giftedBannerUrl || (post.author as any)?.giftedBannerUrl || "";
-                          const giftIcon = u?.giftedGiftIconUrl || (post.author as any)?.giftedGiftIconUrl || "";
-                          const promoIcon = u?.roleIconUrl || u?.giftedPromotionIconUrl || (post.author as any)?.roleIconUrl || (post.author as any)?.giftedPromotionIconUrl || "";
-                          return (
-                            <>
-                              {promoIcon && <img src={promoIcon} alt="" className="h-4 w-4 rounded object-contain" />}
-                              {giftIcon && <img src={giftIcon} alt="" className="h-4 w-4 rounded object-contain" />}
-                              {banner && <img src={banner} alt="" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" />}
-                            </>
-                          );
-                        })()}
-                        <h4
-                          className="font-black text-xs text-foreground cursor-pointer hover:underline"
-                          onClick={() => onOpenProfile?.(post.author?.id || post.author?.name)}
-                          style={(() => {
-                            const authorId = post.author?.id;
-                            if (!authorId) return undefined;
-                            const u = onlineUsers.find(o => String(o.id) === String(authorId));
-                            const resolvedColor = u?.nameColor || (post.author as any)?.nameColor || "";
-                            return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
-                          })()}
-                        >
-                          {post.author?.name}
-                        </h4>
-                      </div>
-                      <p className="text-[9px] text-muted-foreground font-bold">
-                        {new Date(post.createdAt).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                    </div>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-                    <MoreHorizontal size={16} />
-                  </Button>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="px-3 pb-2 text-xs text-foreground leading-relaxed font-medium break-words" dir="rtl"
-  style={(() => {
-    const authorId = post.author?.id;
-    if (!authorId) return undefined;
-    const u = onlineUsers.find(o => String(o.id) === String(authorId));
-    const resolvedColor = u?.statusFontColor || (post.author as any)?.statusFontColor || "";
-    return resolvedColor && resolvedColor !== "#000000" ? { color: resolvedColor } : undefined;
-  })()}
->
-  {renderTextWithFaces(post.body || "", post.animatedFaces)}
-</div>
-                  {post.body && findYouTubeLinks(post.body).map((link) => (
-                    <div className="px-3 pb-2" key={link}>
-                      <YouTubePreviewCard
-                        url={link}
-                        onPlay={(embedUrl) => setActiveYouTubeEmbedUrl(embedUrl)}
-                      />
-                    </div>
-                  ))}
-                  {(post.mediaUrls && post.mediaUrls.length > 0) || post.mediaUrl ? (
-                    <MediaGrid urls={post.mediaUrls || (post.mediaUrl ? [post.mediaUrl] : [])} />
-                  ) : null}
-                  <div className="p-2 flex items-center justify-between border-t">
-                    <div className="flex gap-3">
-                      <button
-                        className={`flex items-center gap-1 transition-colors ${
-                          isLiked ? "text-red-500" : "text-muted-foreground hover:text-red-500"
-                        }`}
-                        onClick={() => handleToggleLike(post.id)}
-                        disabled={post.isOptimistic}
-                      >
-                        <Heart size={16} className={isLiked ? "fill-red-500" : ""} />
-                        <span className="text-[10px] font-bold">{likeCount}</span>
-                      </button>
-                      <button
-                        className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                        onClick={() => toggleComments(post.id)}
-                      >
-                        <MessageCircle size={16} />
-                        <span className="text-[10px] font-bold">{commentCount}</span>
-                      </button>
-                    </div>
-                    <button className="text-muted-foreground hover:text-primary transition-colors">
-                      <Share2 size={16} />
-                    </button>
-                  </div>
-                  <WallComments
-                    postId={post.id}
-                    commentCount={commentCount}
-                    currentUser={currentUser}
-                    isOpen={openCommentPosts[post.id] || false}
-                    onToggle={() => toggleComments(post.id)}
-                    onOpenProfile={onOpenProfile}
-                  />
-                </CardContent>
-              </Card>
-            );
-          })
+          posts.map((post) => (
+            <WallPostCard
+              key={post.id}
+              post={post}
+              authorUser={onlineUsers.find(o => String(o.id) === String(post.author?.id))}
+              isLiked={wallLikedPosts.has(String(post.id))}
+              likeCount={wallLikeCounts[String(post.id)] ?? post.likeCount ?? 0}
+              commentCount={wallCommentCounts[String(post.id)] ?? post.commentCount ?? 0}
+              isCommentsOpen={openCommentPosts[post.id] || false}
+              currentUser={currentUser}
+              onToggleLike={handleToggleLike}
+              onToggleComments={toggleComments}
+              onOpenProfile={onOpenProfile}
+              onPlayYouTube={handlePlayYouTube}
+            />
+          ))
         )}
       </div>
 
-      {currentUser && (
+      {currentUser && hasPermissionAccess(permissions, "wall_posts.use") && (
         <div className="p-3 border-t bg-card shadow-lg z-20 shrink-0">
           <PostComposer currentUser={currentUser} onPost={handlePost} />
         </div>
@@ -1161,4 +1225,4 @@ const WallFeed = ({ onOpenProfile }: { onOpenProfile?: (userIdOrName: string) =>
   );
 };
 
-export default WallFeed;
+export default React.memo(WallFeed);

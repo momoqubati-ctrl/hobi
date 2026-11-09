@@ -27,17 +27,19 @@
 
 ## المرحلة 2: واجهات الإدارة
 
-- [ ] **voice-provider-account-api — إدارة حسابات LiveKit**
+- [x] **voice-provider-account-api — إدارة حسابات LiveKit**
   - القبول: قراءة وإضافة وتعديل وحذف آمنة مع الصلاحيات والتدقيق ومنع تسريب الأسرار.
   - التحقق: اختبارات API لكل مستوى صلاحية وحالة خطأ، ثم `npm test`.
   - الملفات: مسارات `server/routes/api/admin/voice-providers*`, `tests/adminVoiceProviders.test.ts`
   - الاعتماديات: `voice-provider-encryption`, `voice-provider-storage`.
+  - **حالة التحقق:** اختبارات المصادقة والصلاحيات والتسريب والتعارضات تمر؛ جميع عمليات البيانات والتدقيق داخل معاملات.
 
-- [ ] **voice-provider-selection-api — حفظ الاختيار المطلوب**
+- [x] **voice-provider-selection-api — حفظ الاختيار المطلوب**
   - القبول: حفظ WebRTC أو حساب LiveKit موجود وسليم، دون الادعاء أن التفعيل الفعلي اكتمل.
   - التحقق: اختبارات نجاح وفشل وتعارض، ثم `npm test`.
   - الملفات: `server/routes/api/admin/voice-provider-selection.put.ts`, `server/services/voiceProviderStore.ts`, `tests/adminVoiceProviders.test.ts`
   - الاعتماديات: `voice-provider-storage`, `voice-provider-account-api`.
+  - **حالة التحقق:** اختبارا التبديل إلى LiveKit وWebRTC، ورفض المعرف/الحساب غير الموجود، وفساد الأسرار أو غياب مفتاح التشفير، وسلامة إعادة الطلب تمر.
 
 ## نقطة تحقق: واجهات API
 
@@ -52,6 +54,7 @@
   - التحقق: `npm run build`، ESLint، ومراجعة في متصفح محلي دون أسرار حقيقية.
   - الملفات: `src/components/admin/AdminDashboard.tsx`, `src/components/admin/sections/VoiceProviderSection.tsx`, اختبار منطق العرض إن أمكن بالأدوات الحالية.
   - الاعتماديات: `voice-provider-account-api`, `voice-provider-selection-api`.
+  - **حالة التنفيذ:** تم ربط الواجهة وإدارة الحسابات والاختيار؛ اجتاز البناء والاختبارات وESLint. فُتح التطبيق في المتصفح، لكن لا تتوفر جلسة مسؤول اختبار للتحقق التفاعلي من الصفحة المحمية.
 
 - [ ] **voice-provider-final-verification — فحص أمني وتوثيق التشغيل**
   - القبول: توثيق مكان المفتاح والتحذير من فقده/تغييره، وعدم وجود أسرار في المستودع أو السجلات.

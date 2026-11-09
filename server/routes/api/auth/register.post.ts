@@ -3,13 +3,14 @@ import { registerMember } from "../../../services/authService";
 import { detectCountryCode } from "../../../services/requestCountry";
 import { logAccess } from "../../../services/accessLogger";
 import { checkBan } from "../../../services/banCheck";
+import { getClientIp } from "../../../middleware/rateLimiter";
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
-    const { username, password } = body;
+    const { username, password } = body || {};
     const countryCode = detectCountryCode(event);
-    const clientIp = getRequestHeader(event, "x-forwarded-for") || getRequestHeader(event, "x-real-ip") || "";
+    const clientIp = getClientIp(event);
     const deviceFingerprint = getRequestHeader(event, "x-device-fingerprint") || "";
     const deviceSignature = getRequestHeader(event, "x-device-signature") || "";
 

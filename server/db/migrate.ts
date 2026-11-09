@@ -1,5 +1,1364 @@
 import { dbPool } from "./index";
 import type { PoolClient } from "pg";
+import {
+  DEFAULT_MEMBER_ROLE_LABEL,
+  DEFAULT_MEMBER_ROLE_NAME,
+  DEFAULT_MEMBER_ROLE_PERMISSIONS,
+} from "../services/defaultMemberRole";
+import { RESOURCE_ACTIONS } from "../services/permissionEngine";
+import {
+  SYSTEM_OWNER_RANK,
+  SYSTEM_OWNER_ROLE_NAME,
+  SYSTEM_OWNER_USERNAME,
+} from "../services/systemOwner";
+import {
+  SITE_OWNER_ROLE_NAME,
+  getSiteOwnerPermissionKeys,
+  type SiteOwnerBootstrapConfig,
+} from "../services/siteOwner";
+import { ensureSiteOwnerBootstrap } from "../services/siteOwnerBootstrap";
+import { DEFAULT_CHAT_FEATURE_PERMISSION_KEYS } from "../../src/lib/chatFeaturePermissions";
+
+export async function ensureAnnouncementRoleLimitSchema(client: PoolClient) {
+  await client.query(`
+    ALTER TABLE "roles"
+    ADD COLUMN IF NOT EXISTS "announcement_daily_limit" integer DEFAULT 0 NOT NULL
+  `);
+  await client.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'roles_announcement_daily_limit_check'
+          AND conrelid = 'roles'::regclass
+      ) THEN
+        ALTER TABLE "roles"
+        ADD CONSTRAINT "roles_announcement_daily_limit_check"
+        CHECK ("announcement_daily_limit" BETWEEN 0 AND 1000);
+      END IF;
+    END
+    $$;
+  `);
+}
+
+export async function ensureAnnouncementDeliverySchema(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "announcements" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "type" varchar(16) NOT NULL,
+      "message" varchar(1000) NOT NULL,
+      "sender_user_id" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+      "sender_name" varchar(120) NOT NULL,
+      "sender_avatar_url" text,
+      "room_id" varchar(128),
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "announcements_type_check"
+        CHECK ("type" IN ('all', 'ranked', 'room')),
+      CONSTRAINT "announcements_message_length_check"
+        CHECK (length(trim("message")) BETWEEN 1 AND 1000)
+    );
+    CREATE INDEX IF NOT EXISTS "announcements_created_idx"
+      ON "announcements" ("created_at", "id");
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "announcement_recipients" (
+      "announcement_id" uuid NOT NULL REFERENCES "announcements"("id") ON DELETE CASCADE,
+      "recipient_user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "delivered_at" timestamptz DEFAULT now() NOT NULL,
+      PRIMARY KEY ("announcement_id", "recipient_user_id")
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "announcement_recipients_user_idx"
+      ON "announcement_recipients" ("recipient_user_id", "announcement_id");
+    CREATE INDEX IF NOT EXISTS "announcement_recipients_announcement_idx"
+      ON "announcement_recipients" ("announcement_id");
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "announcement_daily_usage" (
+      "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "usage_date" varchar(10) NOT NULL,
+      "send_count" integer DEFAULT 0 NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      PRIMARY KEY ("user_id", "usage_date"),
+      CONSTRAINT "announcement_daily_usage_nonnegative_check"
+        CHECK ("send_count" >= 0)
+    );
+    CREATE INDEX IF NOT EXISTS "announcement_daily_usage_date_idx"
+      ON "announcement_daily_usage" ("usage_date");
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "announcement_idempotency" (
+      "sender_user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "idempotency_key" uuid NOT NULL,
+      "request_fingerprint" varchar(64) NOT NULL,
+      "announcement_id" uuid REFERENCES "announcements"("id") ON DELETE SET NULL,
+      "response" jsonb NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "expires_at" timestamptz NOT NULL,
+      PRIMARY KEY ("sender_user_id", "idempotency_key"),
+      CONSTRAINT "announcement_idempotency_fingerprint_check"
+        CHECK (length("request_fingerprint") = 64)
+    );
+    CREATE INDEX IF NOT EXISTS "announcement_idempotency_expiry_idx"
+      ON "announcement_idempotency" ("expires_at");
+  `);
+}
+
+export async function ensureWalletOperationsMetadataColumn(
+  client: Pick<PoolClient, "query">,
+) {
+  await client.query(`
+    ALTER TABLE "wallet_operations"
+    ADD COLUMN IF NOT EXISTS "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
+  `);
+}
+
+export async function ensurePrivateMessageStorageDisabled(
+  client: Pick<PoolClient, "query">,
+) {
+  const table = await client.query(
+    `SELECT to_regclass('public.private_messages')::text AS table_name`,
+  );
+  if (!table.rows[0]?.table_name) {
+    throw new Error("Cannot disable persistent private messaging: private_messages table is missing");
+  }
+
+  await client.query(`
+    CREATE OR REPLACE FUNCTION public.reject_private_message_persistence()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RAISE EXCEPTION 'Persistent private-message storage is disabled'
+        USING ERRCODE = '55000';
+    END;
+    $$
+  `);
+  await client.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'private_messages_ephemeral_only'
+          AND tgrelid = 'public.private_messages'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER private_messages_ephemeral_only
+          BEFORE INSERT OR UPDATE ON public.private_messages
+          FOR EACH ROW
+          EXECUTE FUNCTION public.reject_private_message_persistence();
+      END IF;
+    END;
+    $$
+  `);
+}
+
+export async function removePrivateMessageStorageGuard(
+  client: Pick<PoolClient, "query">,
+) {
+  await client.query(
+    `DROP TRIGGER IF EXISTS private_messages_ephemeral_only ON public.private_messages`,
+  );
+  await client.query(
+    `DROP FUNCTION IF EXISTS public.reject_private_message_persistence()`,
+  );
+}
+
+async function applyDefaultMemberRoleMigration(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "roles" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "legacy_name" varchar(120),
+      "name" varchar(120) NOT NULL,
+      "rank" integer DEFAULT 0 NOT NULL,
+      "icon_url" text DEFAULT '' NOT NULL,
+      "is_system" boolean DEFAULT false NOT NULL,
+      "is_default" boolean DEFAULT false NOT NULL,
+      "is_owner" boolean DEFAULT false NOT NULL,
+      "auto_enabled" boolean DEFAULT false NOT NULL,
+      "auto_promote" boolean DEFAULT false NOT NULL,
+      "auto_points" integer DEFAULT 0 NOT NULL,
+      "announcement_daily_limit" integer DEFAULT 0 NOT NULL,
+      "legacy_metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "roles_announcement_daily_limit_check"
+        CHECK ("announcement_daily_limit" BETWEEN 0 AND 1000)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "roles_name_idx" ON "roles" ("name");
+    CREATE INDEX IF NOT EXISTS "roles_rank_idx" ON "roles" ("rank");
+  `);
+  await client.query(`ALTER TABLE "roles" ADD COLUMN IF NOT EXISTS "is_default" boolean DEFAULT false NOT NULL;`);
+  await client.query(`ALTER TABLE "roles" ADD COLUMN IF NOT EXISTS "is_owner" boolean DEFAULT false NOT NULL;`);
+  await client.query(`ALTER TABLE "roles" ADD COLUMN IF NOT EXISTS "is_active" boolean DEFAULT true NOT NULL;`);
+  await ensureAnnouncementRoleLimitSchema(client);
+  await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS "roles_single_default_idx" ON "roles" ("is_default") WHERE "is_default" = true;`);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "role_permissions" (
+      "role_id" uuid NOT NULL REFERENCES "roles"("id") ON DELETE CASCADE,
+      "permission_key" varchar(120) NOT NULL,
+      "permission_value" jsonb DEFAULT 'true'::jsonb NOT NULL,
+      "source" varchar(40) DEFAULT 'legacy_powers' NOT NULL,
+      PRIMARY KEY ("role_id", "permission_key")
+    );
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "user_role_assignments" (
+      "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "role_id" uuid NOT NULL REFERENCES "roles"("id") ON DELETE CASCADE,
+      "assigned_by" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+      "starts_at" timestamptz DEFAULT now() NOT NULL,
+      "expires_at" timestamptz,
+      "legacy_metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+      PRIMARY KEY ("user_id", "role_id")
+    );
+  `);
+  await client.query(
+    `INSERT INTO "roles" ("legacy_name", "name", "rank", "is_system", "is_default")
+     SELECT $1, $2, 1000, true, true
+     WHERE NOT EXISTS (SELECT 1 FROM "roles" WHERE "is_default" = true)
+     ON CONFLICT ("name") DO UPDATE SET "is_system" = true, "is_default" = true`,
+    [DEFAULT_MEMBER_ROLE_LABEL, DEFAULT_MEMBER_ROLE_NAME],
+  );
+
+  for (const permissionKey of DEFAULT_MEMBER_ROLE_PERMISSIONS) {
+    await client.query(
+      `INSERT INTO "role_permissions" ("role_id", "permission_key", "permission_value", "source")
+       SELECT "id", $1, 'true'::jsonb, 'default_member'
+       FROM "roles"
+       WHERE "is_default" = true
+       ON CONFLICT ("role_id", "permission_key") DO NOTHING`,
+      [permissionKey],
+    );
+  }
+
+  await client.query(
+    `INSERT INTO "user_role_assignments" ("user_id", "role_id", "legacy_metadata")
+     SELECT u."id"::text, r."id", jsonb_build_object('source', 'default_member_backfill')
+     FROM "users" u
+     CROSS JOIN "roles" r
+     WHERE r."is_default" = true
+       AND r."is_active" = true
+       AND u."role" = 'member'
+       AND lower(trim(COALESCE(u."power", ''))) IN ('', 'member', 'عضو')
+       AND NOT EXISTS (
+         SELECT 1 FROM "user_role_assignments" existing
+         WHERE existing."user_id" = u."id"::text
+       )
+     ON CONFLICT ("user_id", "role_id") DO NOTHING`,
+  );
+}
+
+export async function ensureWalletLedgerSchema(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "wallet_agents" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "username" varchar(64) NOT NULL,
+      "name" varchar(120) NOT NULL,
+      "phone" varchar(16) DEFAULT '' NOT NULL,
+      "password_hash" text NOT NULL,
+      "status" varchar(16) DEFAULT 'active' NOT NULL,
+      "force_password_change" boolean DEFAULT true NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_agents_username_lowercase_check" CHECK ("username" = lower("username")),
+      CONSTRAINT "wallet_agents_status_check" CHECK ("status" IN ('active', 'disabled'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_agents_username_idx" ON "wallet_agents" ("username");
+
+    CREATE TABLE IF NOT EXISTS "wallet_settings" (
+      "key" varchar(120) PRIMARY KEY,
+      "value" jsonb DEFAULT '{}'::jsonb NOT NULL,
+      "updated_by" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS "wallet_operations" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "actor_scope" varchar(16) NOT NULL,
+      "actor_user_id" varchar(255) REFERENCES "users"("id") ON DELETE RESTRICT,
+      "operation_type" varchar(40) NOT NULL,
+      "idempotency_key" varchar(128) NOT NULL,
+      "request_fingerprint" varchar(64) NOT NULL,
+      "reference_type" varchar(40),
+      "reference_id" varchar(255),
+      "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_operations_actor_scope_check"
+        CHECK ("actor_scope" IN ('member', 'system') AND ("actor_scope" <> 'system' OR "actor_user_id" IS NULL)),
+      CONSTRAINT "wallet_operations_fingerprint_format_check"
+        CHECK ("request_fingerprint" ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT "wallet_operations_idempotency_key_check"
+        CHECK (length(trim("idempotency_key")) > 0)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_actor_idempotency_idx"
+      ON "wallet_operations" ("actor_user_id", "idempotency_key")
+      WHERE "actor_scope" = 'member' AND "actor_user_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_system_idempotency_idx"
+      ON "wallet_operations" ("idempotency_key")
+      WHERE "actor_scope" = 'system';
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_site_funding_reference_idx"
+      ON "wallet_operations" (lower("reference_id"))
+      WHERE "reference_type" = 'site_wallet_funding' AND "reference_id" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "wallet_operations_reference_idx"
+      ON "wallet_operations" ("reference_type", "reference_id");
+    CREATE INDEX IF NOT EXISTS "wallet_operations_created_idx"
+      ON "wallet_operations" ("created_at");
+
+    CREATE TABLE IF NOT EXISTS "wallet_balances" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "account_type" varchar(16) NOT NULL,
+      "user_id" varchar(255) REFERENCES "users"("id") ON DELETE RESTRICT,
+      "bucket" varchar(40) NOT NULL,
+      "balance_coins" bigint DEFAULT 0 NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_balances_bucket_check"
+        CHECK (
+          ("account_type" = 'member' AND "bucket" IN ('legacy_spendable', 'cashable_spendable', 'cashable_reserved'))
+          OR
+          ("account_type" = 'system' AND "user_id" IS NULL AND "bucket" IN ('platform_fee', 'external_clearing', 'legacy_opening_equity', 'site_inventory'))
+        ),
+      CONSTRAINT "wallet_balances_member_nonnegative_check"
+        CHECK ("account_type" <> 'member' OR "balance_coins" >= 0)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_balances_member_bucket_idx"
+      ON "wallet_balances" ("user_id", "bucket")
+      WHERE "account_type" = 'member' AND "user_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_balances_system_bucket_idx"
+      ON "wallet_balances" ("bucket")
+      WHERE "account_type" = 'system';
+    CREATE INDEX IF NOT EXISTS "wallet_balances_user_idx" ON "wallet_balances" ("user_id");
+
+    CREATE TABLE IF NOT EXISTS "wallet_entries" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "operation_id" uuid NOT NULL REFERENCES "wallet_operations"("id") ON DELETE RESTRICT,
+      "wallet_balance_id" uuid NOT NULL REFERENCES "wallet_balances"("id") ON DELETE RESTRICT,
+      "amount" bigint NOT NULL,
+      "reversal_of_entry_id" uuid REFERENCES "wallet_entries"("id") ON DELETE RESTRICT,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_entries_nonzero_amount_check" CHECK ("amount" <> 0)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_entries_operation_account_idx"
+      ON "wallet_entries" ("operation_id", "wallet_balance_id");
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_entries_reversal_once_idx"
+      ON "wallet_entries" ("reversal_of_entry_id")
+      WHERE "reversal_of_entry_id" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "wallet_entries_operation_idx" ON "wallet_entries" ("operation_id");
+    CREATE INDEX IF NOT EXISTS "wallet_entries_balance_idx" ON "wallet_entries" ("wallet_balance_id");
+  `);
+  await client.query(`
+    DO $$
+    DECLARE
+      wallet_user_att smallint;
+      operation_actor_att smallint;
+      existing_fk record;
+      has_restrictive_fk boolean;
+    BEGIN
+      SELECT attnum INTO wallet_user_att
+      FROM pg_attribute
+      WHERE attrelid = 'public.wallet_balances'::regclass
+        AND attname = 'user_id'
+        AND NOT attisdropped;
+
+      SELECT attnum INTO operation_actor_att
+      FROM pg_attribute
+      WHERE attrelid = 'public.wallet_operations'::regclass
+        AND attname = 'actor_user_id'
+        AND NOT attisdropped;
+
+      SELECT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.wallet_balances'::regclass
+          AND confrelid = 'public.users'::regclass
+          AND contype = 'f'
+          AND conkey = ARRAY[wallet_user_att]::smallint[]
+          AND confdeltype = 'r'
+      ) INTO has_restrictive_fk;
+
+      IF NOT has_restrictive_fk THEN
+        FOR existing_fk IN
+          SELECT conname FROM pg_constraint
+          WHERE conrelid = 'public.wallet_balances'::regclass
+            AND confrelid = 'public.users'::regclass
+            AND contype = 'f'
+            AND conkey = ARRAY[wallet_user_att]::smallint[]
+        LOOP
+          EXECUTE format(
+            'ALTER TABLE public.wallet_balances DROP CONSTRAINT %I',
+            existing_fk.conname
+          );
+        END LOOP;
+
+        ALTER TABLE public.wallet_balances
+          ADD CONSTRAINT "wallet_balances_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES public.users("id") ON DELETE RESTRICT;
+      END IF;
+
+      SELECT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.wallet_operations'::regclass
+          AND confrelid = 'public.users'::regclass
+          AND contype = 'f'
+          AND conkey = ARRAY[operation_actor_att]::smallint[]
+          AND confdeltype = 'r'
+      ) INTO has_restrictive_fk;
+
+      IF NOT has_restrictive_fk THEN
+        FOR existing_fk IN
+          SELECT conname FROM pg_constraint
+          WHERE conrelid = 'public.wallet_operations'::regclass
+            AND confrelid = 'public.users'::regclass
+            AND contype = 'f'
+            AND conkey = ARRAY[operation_actor_att]::smallint[]
+        LOOP
+          EXECUTE format(
+            'ALTER TABLE public.wallet_operations DROP CONSTRAINT %I',
+            existing_fk.conname
+          );
+        END LOOP;
+
+        ALTER TABLE public.wallet_operations
+          ADD CONSTRAINT "wallet_operations_actor_user_id_users_id_fk"
+          FOREIGN KEY ("actor_user_id") REFERENCES public.users("id") ON DELETE RESTRICT;
+      END IF;
+    END;
+    $$;
+  `);
+  await ensureWalletOperationsMetadataColumn(client);
+  await client.query(`
+    DO $$
+    DECLARE
+      bucket_constraint text;
+    BEGIN
+      SELECT pg_get_constraintdef(oid)
+        INTO bucket_constraint
+        FROM pg_constraint
+        WHERE conname = 'wallet_balances_bucket_check'
+          AND conrelid = 'public.wallet_balances'::regclass;
+
+      IF bucket_constraint IS NULL OR position('site_inventory' IN bucket_constraint) = 0 THEN
+        ALTER TABLE "wallet_balances"
+          DROP CONSTRAINT IF EXISTS "wallet_balances_bucket_check";
+        ALTER TABLE "wallet_balances"
+          ADD CONSTRAINT "wallet_balances_bucket_check"
+          CHECK (
+            ("account_type" = 'member' AND "bucket" IN ('legacy_spendable', 'cashable_spendable', 'cashable_reserved'))
+            OR
+            ("account_type" = 'system' AND "user_id" IS NULL AND "bucket" IN ('platform_fee', 'external_clearing', 'legacy_opening_equity', 'site_inventory'))
+          );
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'wallet_balances_site_inventory_nonnegative_check'
+          AND conrelid = 'public.wallet_balances'::regclass
+      ) THEN
+        ALTER TABLE "wallet_balances"
+          ADD CONSTRAINT "wallet_balances_site_inventory_nonnegative_check"
+          CHECK ("account_type" <> 'system' OR "bucket" <> 'site_inventory' OR "balance_coins" >= 0);
+      END IF;
+    END;
+    $$;
+  `);
+  await client.query(`
+    INSERT INTO "wallet_balances" ("account_type", "user_id", "bucket", "balance_coins")
+    VALUES
+      ('system', NULL, 'site_inventory', 0),
+      ('system', NULL, 'external_clearing', 0)
+    ON CONFLICT ("bucket") WHERE "account_type" = 'system' DO NOTHING
+  `);
+  await client.query(`
+    ALTER TABLE "wallet_agents"
+    ADD COLUMN IF NOT EXISTS "phone" varchar(16) DEFAULT '' NOT NULL
+  `);
+
+  await client.query(`
+    CREATE OR REPLACE FUNCTION "prevent_wallet_record_mutation"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF TG_OP = 'UPDATE'
+        AND TG_TABLE_NAME = 'wallet_operations'
+        AND OLD."actor_user_id" IS NOT NULL
+        AND NEW."actor_user_id" IS NULL
+        AND (to_jsonb(NEW) - 'actor_user_id') = (to_jsonb(OLD) - 'actor_user_id') THEN
+        RETURN NEW;
+      END IF;
+
+      RAISE EXCEPTION 'wallet financial records are append-only'
+        USING ERRCODE = '55000';
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION "prevent_legacy_coin_writes_after_wallet_cutover"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF EXISTS (
+          SELECT 1
+          FROM "wallet_operations"
+          WHERE "actor_scope" = 'system'
+            AND "operation_type" = 'legacy_opening'
+            AND "idempotency_key" = 'legacy-opening-v1'
+        ) THEN
+        IF TG_OP = 'UPDATE' AND NEW."coins" IS DISTINCT FROM OLD."coins" THEN
+          RAISE EXCEPTION 'legacy coin balances are read-only after wallet cutover'
+            USING ERRCODE = '55000';
+        ELSIF TG_OP = 'INSERT' AND COALESCE(NEW."coins", 0) <> 0 THEN
+          RAISE EXCEPTION 'legacy coin balances are read-only after wallet cutover'
+            USING ERRCODE = '55000';
+        END IF;
+      END IF;
+
+      RETURN NEW;
+    END;
+    $$;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'wallet_operations_immutable'
+          AND tgrelid = 'public.wallet_operations'::regclass
+      ) THEN
+        CREATE TRIGGER "wallet_operations_immutable"
+          BEFORE UPDATE OR DELETE ON "wallet_operations"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_wallet_record_mutation"();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'wallet_operations_no_truncate'
+          AND tgrelid = 'public.wallet_operations'::regclass
+      ) THEN
+        CREATE TRIGGER "wallet_operations_no_truncate"
+          BEFORE TRUNCATE ON "wallet_operations"
+          FOR EACH STATEMENT EXECUTE FUNCTION "prevent_wallet_record_mutation"();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'wallet_entries_immutable'
+          AND tgrelid = 'public.wallet_entries'::regclass
+      ) THEN
+        CREATE TRIGGER "wallet_entries_immutable"
+          BEFORE UPDATE OR DELETE ON "wallet_entries"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_wallet_record_mutation"();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'wallet_entries_no_truncate'
+          AND tgrelid = 'public.wallet_entries'::regclass
+      ) THEN
+        CREATE TRIGGER "wallet_entries_no_truncate"
+          BEFORE TRUNCATE ON "wallet_entries"
+          FOR EACH STATEMENT EXECUTE FUNCTION "prevent_wallet_record_mutation"();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'user_profiles_legacy_coins_update_fence'
+          AND tgrelid = 'public.user_profiles'::regclass
+      ) THEN
+        CREATE TRIGGER "user_profiles_legacy_coins_update_fence"
+          BEFORE UPDATE OF "coins" ON "user_profiles"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_legacy_coin_writes_after_wallet_cutover"();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'user_profiles_legacy_coins_insert_fence'
+          AND tgrelid = 'public.user_profiles'::regclass
+      ) THEN
+        CREATE TRIGGER "user_profiles_legacy_coins_insert_fence"
+          BEFORE INSERT ON "user_profiles"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_legacy_coin_writes_after_wallet_cutover"();
+      END IF;
+    END;
+    $$;
+  `);
+}
+
+export async function ensureCoinPurchaseSchema(client: PoolClient) {
+  await client.query(`
+    ALTER TABLE "wallet_balances" ADD COLUMN IF NOT EXISTS "agent_id" uuid;
+    ALTER TABLE "wallet_operations" ADD COLUMN IF NOT EXISTS "actor_agent_id" uuid;
+    ALTER TABLE "wallet_balances"
+      DROP CONSTRAINT IF EXISTS "wallet_balances_agent_id_fkey";
+    ALTER TABLE "wallet_balances"
+      ADD CONSTRAINT "wallet_balances_agent_id_fkey"
+      FOREIGN KEY ("agent_id") REFERENCES "wallet_agents"("id") ON DELETE RESTRICT;
+    ALTER TABLE "wallet_operations"
+      DROP CONSTRAINT IF EXISTS "wallet_operations_actor_agent_id_fkey";
+    ALTER TABLE "wallet_operations"
+      ADD CONSTRAINT "wallet_operations_actor_agent_id_fkey"
+      FOREIGN KEY ("actor_agent_id") REFERENCES "wallet_agents"("id") ON DELETE RESTRICT;
+  `);
+
+  await client.query(`
+    ALTER TABLE "wallet_operations"
+      DROP CONSTRAINT IF EXISTS "wallet_operations_actor_scope_check";
+    ALTER TABLE "wallet_operations"
+      ADD CONSTRAINT "wallet_operations_actor_scope_check"
+      CHECK (
+        ("actor_scope" = 'member' AND "actor_agent_id" IS NULL)
+        OR
+        ("actor_scope" = 'agent' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NOT NULL)
+        OR
+        ("actor_scope" = 'system' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NULL)
+      );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_agent_idempotency_idx"
+      ON "wallet_operations" ("actor_agent_id", "idempotency_key")
+      WHERE "actor_scope" = 'agent' AND "actor_agent_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_agent_inventory_reference_idx"
+      ON "wallet_operations" ("reference_id")
+      WHERE "reference_type" = 'agent_inventory_order' AND "reference_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_member_coin_purchase_reference_idx"
+      ON "wallet_operations" ("reference_id")
+      WHERE "reference_type" = 'member_coin_purchase' AND "reference_id" IS NOT NULL;
+  `);
+
+  await client.query(`
+    ALTER TABLE "wallet_balances"
+      DROP CONSTRAINT IF EXISTS "wallet_balances_bucket_check";
+    ALTER TABLE "wallet_balances"
+      ADD CONSTRAINT "wallet_balances_bucket_check"
+      CHECK (
+        ("account_type" = 'member' AND "agent_id" IS NULL
+          AND "bucket" IN ('legacy_spendable', 'cashable_spendable', 'cashable_reserved'))
+        OR
+        ("account_type" = 'agent' AND "user_id" IS NULL AND "agent_id" IS NOT NULL
+          AND "bucket" = 'agent_inventory')
+        OR
+        ("account_type" = 'system' AND "user_id" IS NULL AND "agent_id" IS NULL
+          AND "bucket" IN ('platform_fee', 'external_clearing', 'legacy_opening_equity', 'site_inventory'))
+      );
+    ALTER TABLE "wallet_balances"
+      DROP CONSTRAINT IF EXISTS "wallet_balances_agent_inventory_nonnegative_check";
+    ALTER TABLE "wallet_balances"
+      ADD CONSTRAINT "wallet_balances_agent_inventory_nonnegative_check"
+      CHECK ("account_type" <> 'agent' OR "balance_coins" >= 0);
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_balances_agent_inventory_idx"
+      ON "wallet_balances" ("agent_id", "bucket")
+      WHERE "account_type" = 'agent' AND "agent_id" IS NOT NULL;
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "wallet_agent_packages" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "agent_id" uuid NOT NULL REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "coin_amount" bigint NOT NULL,
+      "price_minor_units" bigint NOT NULL,
+      "currency_code" varchar(3) NOT NULL,
+      "payment_instructions" text NOT NULL,
+      "is_active" boolean DEFAULT true NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_agent_packages_coin_amount_check" CHECK ("coin_amount" > 0),
+      CONSTRAINT "wallet_agent_packages_price_check" CHECK ("price_minor_units" > 0),
+      CONSTRAINT "wallet_agent_packages_currency_check" CHECK ("currency_code" ~ '^[A-Z]{3}$'),
+      CONSTRAINT "wallet_agent_packages_instructions_length_check"
+        CHECK (length(trim("payment_instructions")) BETWEEN 1 AND 4000)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_agent_packages_agent_amount_idx"
+      ON "wallet_agent_packages" ("agent_id", "coin_amount");
+    CREATE INDEX IF NOT EXISTS "wallet_agent_packages_active_idx"
+      ON "wallet_agent_packages" ("agent_id", "is_active");
+
+    CREATE TABLE IF NOT EXISTS "wallet_agent_inventory_orders" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "agent_id" uuid NOT NULL REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "requested_coins" bigint NOT NULL,
+      "quoted_price_minor_units" bigint,
+      "currency_code" varchar(3),
+      "payment_instructions_snapshot" text,
+      "payment_reference" varchar(255),
+      "proof_object_key" text,
+      "proof_uploaded_at" timestamptz,
+      "receipt_expires_at" timestamptz,
+      "settlement_operation_id" uuid REFERENCES "wallet_operations"("id") ON DELETE RESTRICT,
+      "quoted_by_user_id" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+      "quoted_at" timestamptz,
+      "status" varchar(24) DEFAULT 'requested' NOT NULL,
+      "idempotency_key" varchar(128) NOT NULL,
+      "request_fingerprint" varchar(64) NOT NULL,
+      "reviewed_by_user_id" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
+      "reviewed_at" timestamptz,
+      "rejection_reason" varchar(500),
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "wallet_agent_inventory_orders_coins_check" CHECK ("requested_coins" > 0),
+      CONSTRAINT "wallet_agent_inventory_orders_price_check"
+        CHECK ("quoted_price_minor_units" IS NULL OR "quoted_price_minor_units" > 0),
+      CONSTRAINT "wallet_agent_inventory_orders_currency_check"
+        CHECK ("currency_code" IS NULL OR "currency_code" ~ '^[A-Z]{3}$'),
+      CONSTRAINT "wallet_agent_inventory_orders_quote_check"
+        CHECK (
+          "status" IN ('requested', 'rejected')
+          OR (
+            "quoted_price_minor_units" IS NOT NULL
+            AND "currency_code" IS NOT NULL
+            AND "payment_instructions_snapshot" IS NOT NULL
+            AND length(trim("payment_instructions_snapshot")) BETWEEN 1 AND 4000
+          )
+        ),
+      CONSTRAINT "wallet_agent_inventory_orders_status_check"
+        CHECK ("status" IN ('requested', 'quoted', 'submitted', 'approved', 'rejected')),
+      CONSTRAINT "wallet_agent_inventory_orders_payment_proof_check"
+        CHECK (
+          "status" NOT IN ('submitted', 'approved')
+          OR ("payment_reference" IS NOT NULL AND "proof_object_key" IS NOT NULL)
+        ),
+      CONSTRAINT "wallet_agent_inventory_orders_fingerprint_check"
+        CHECK ("request_fingerprint" ~ '^[0-9a-f]{64}$')
+    );
+    ALTER TABLE "wallet_agent_inventory_orders"
+      ADD COLUMN IF NOT EXISTS "proof_uploaded_at" timestamptz;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_agent_inventory_orders_agent_idempotency_idx"
+      ON "wallet_agent_inventory_orders" ("agent_id", "idempotency_key");
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_agent_inventory_orders_payment_reference_idx"
+      ON "wallet_agent_inventory_orders" (lower("payment_reference"))
+      WHERE "payment_reference" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_agent_inventory_orders_settlement_idx"
+      ON "wallet_agent_inventory_orders" ("settlement_operation_id")
+      WHERE "settlement_operation_id" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "wallet_agent_inventory_orders_agent_status_idx"
+      ON "wallet_agent_inventory_orders" ("agent_id", "status", "created_at");
+    CREATE INDEX IF NOT EXISTS "wallet_agent_inventory_orders_receipt_expiry_idx"
+      ON "wallet_agent_inventory_orders" ("receipt_expires_at");
+
+    CREATE TABLE IF NOT EXISTS "member_coin_purchases" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "member_user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
+      "agent_id" uuid NOT NULL REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "package_id" uuid NOT NULL REFERENCES "wallet_agent_packages"("id") ON DELETE RESTRICT,
+      "coin_amount" bigint NOT NULL,
+      "price_minor_units" bigint NOT NULL,
+      "currency_code" varchar(3) NOT NULL,
+      "payment_instructions_snapshot" text NOT NULL,
+      "payment_reference" varchar(255),
+      "proof_object_key" text,
+      "proof_uploaded_at" timestamptz,
+      "receipt_expires_at" timestamptz,
+      "settlement_operation_id" uuid REFERENCES "wallet_operations"("id") ON DELETE RESTRICT,
+      "status" varchar(24) DEFAULT 'awaiting_payment' NOT NULL,
+      "idempotency_key" varchar(128) NOT NULL,
+      "request_fingerprint" varchar(64) NOT NULL,
+      "reviewed_by_agent_id" uuid REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "reviewed_at" timestamptz,
+      "rejection_reason" varchar(500),
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "member_coin_purchases_coin_amount_check" CHECK ("coin_amount" > 0),
+      CONSTRAINT "member_coin_purchases_price_check" CHECK ("price_minor_units" > 0),
+      CONSTRAINT "member_coin_purchases_currency_check" CHECK ("currency_code" ~ '^[A-Z]{3}$'),
+      CONSTRAINT "member_coin_purchases_status_check"
+        CHECK ("status" IN ('awaiting_payment', 'submitted', 'approved', 'rejected')),
+      CONSTRAINT "member_coin_purchases_payment_proof_check"
+        CHECK (
+          "status" IN ('awaiting_payment', 'rejected')
+          OR ("payment_reference" IS NOT NULL AND "proof_object_key" IS NOT NULL)
+        ),
+      CONSTRAINT "member_coin_purchases_fingerprint_check"
+        CHECK ("request_fingerprint" ~ '^[0-9a-f]{64}$')
+    );
+    ALTER TABLE "member_coin_purchases"
+      ADD COLUMN IF NOT EXISTS "proof_uploaded_at" timestamptz;
+    CREATE UNIQUE INDEX IF NOT EXISTS "member_coin_purchases_member_idempotency_idx"
+      ON "member_coin_purchases" ("member_user_id", "idempotency_key");
+    CREATE UNIQUE INDEX IF NOT EXISTS "member_coin_purchases_agent_payment_reference_idx"
+      ON "member_coin_purchases" ("agent_id", lower("payment_reference"))
+      WHERE "payment_reference" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "member_coin_purchases_settlement_idx"
+      ON "member_coin_purchases" ("settlement_operation_id")
+      WHERE "settlement_operation_id" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "member_coin_purchases_member_status_idx"
+      ON "member_coin_purchases" ("member_user_id", "status", "created_at");
+    CREATE INDEX IF NOT EXISTS "member_coin_purchases_agent_status_idx"
+      ON "member_coin_purchases" ("agent_id", "status", "created_at");
+    CREATE INDEX IF NOT EXISTS "member_coin_purchases_receipt_expiry_idx"
+      ON "member_coin_purchases" ("receipt_expires_at");
+  `);
+}
+
+export async function ensureFinancialWalletAccountsSchema(client: PoolClient) {
+  await client.query(`
+    ALTER TABLE "wallet_balances"
+      DROP CONSTRAINT IF EXISTS "wallet_balances_bucket_check";
+    ALTER TABLE "wallet_balances"
+      ADD CONSTRAINT "wallet_balances_bucket_check"
+      CHECK (
+        ("account_type" = 'member' AND "agent_id" IS NULL
+          AND "bucket" IN (
+            'legacy_spendable', 'cashable_spendable', 'cashable_reserved',
+            'purchased_spendable', 'gift_earnings_spendable', 'conversion_escrow'
+          ))
+        OR
+        ("account_type" = 'site_owner' AND "user_id" IS NOT NULL AND "agent_id" IS NULL
+          AND "bucket" IN ('site_inventory', 'site_profit'))
+        OR
+        ("account_type" = 'agent' AND "user_id" IS NULL AND "agent_id" IS NOT NULL
+          AND "bucket" IN ('agent_inventory', 'agent_profit'))
+        OR
+        ("account_type" = 'system' AND "user_id" IS NULL AND "agent_id" IS NULL
+          AND "bucket" IN ('platform_fee', 'external_clearing', 'legacy_opening_equity', 'site_inventory'))
+      );
+    ALTER TABLE "wallet_balances"
+      DROP CONSTRAINT IF EXISTS "wallet_balances_site_owner_nonnegative_check";
+    ALTER TABLE "wallet_balances"
+      ADD CONSTRAINT "wallet_balances_site_owner_nonnegative_check"
+      CHECK ("account_type" <> 'site_owner' OR "balance_coins" >= 0);
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_balances_site_owner_bucket_idx"
+      ON "wallet_balances" ("user_id", "bucket")
+      WHERE "account_type" = 'site_owner' AND "user_id" IS NOT NULL;
+
+    ALTER TABLE "wallet_operations"
+      DROP CONSTRAINT IF EXISTS "wallet_operations_actor_scope_check";
+    ALTER TABLE "wallet_operations"
+      ADD CONSTRAINT "wallet_operations_actor_scope_check"
+      CHECK (
+        ("actor_scope" = 'member' AND "actor_agent_id" IS NULL)
+        OR
+        ("actor_scope" = 'site_owner' AND "actor_user_id" IS NOT NULL AND "actor_agent_id" IS NULL)
+        OR
+        ("actor_scope" = 'agent' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NOT NULL)
+        OR
+        ("actor_scope" = 'system' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NULL)
+      );
+    CREATE UNIQUE INDEX IF NOT EXISTS "wallet_operations_site_owner_idempotency_idx"
+      ON "wallet_operations" ("actor_user_id", "idempotency_key")
+      WHERE "actor_scope" = 'site_owner' AND "actor_user_id" IS NOT NULL;
+  `);
+}
+
+export async function ensureCashLedgerSchema(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "cash_accounts" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "owner_type" varchar(24) NOT NULL,
+      "owner_user_id" varchar(255) REFERENCES "users"("id") ON DELETE RESTRICT,
+      "owner_agent_id" uuid REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "owner_reference" varchar(255),
+      "bucket" varchar(40) NOT NULL,
+      "currency_code" varchar(3) NOT NULL,
+      "balance_minor_units" bigint DEFAULT 0 NOT NULL,
+      "updated_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "cash_accounts_owner_check"
+        CHECK (
+          ("owner_type" = 'member' AND "owner_user_id" IS NOT NULL AND "owner_agent_id" IS NULL
+            AND "owner_reference" IS NULL
+            AND "bucket" IN ('recipient_earnings', 'withdrawable_balance', 'payout_reserved'))
+          OR
+          ("owner_type" = 'site_owner' AND "owner_user_id" IS NOT NULL AND "owner_agent_id" IS NULL
+            AND "owner_reference" IS NULL AND "bucket" IN ('site_profit', 'payout_reserved'))
+          OR
+          ("owner_type" = 'hosting_owner' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NULL
+            AND "owner_reference" IS NOT NULL AND "owner_reference" = lower("owner_reference")
+            AND "bucket" IN ('hosting_profit', 'payout_reserved'))
+          OR
+          ("owner_type" = 'agent' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NOT NULL
+            AND "owner_reference" IS NULL AND "bucket" IN ('sales_reward', 'payout_reserved'))
+          OR
+          ("owner_type" = 'system' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NULL
+            AND "owner_reference" IS NULL
+            AND "bucket" IN ('settlement_clearing', 'opening_equity', 'platform_cash_asset'))
+        ),
+      CONSTRAINT "cash_accounts_currency_check" CHECK ("currency_code" ~ '^[A-Z]{3}$'),
+      CONSTRAINT "cash_accounts_nonnegative_check"
+        CHECK (
+          ("owner_type" = 'system' AND "bucket" IN ('settlement_clearing', 'opening_equity'))
+          OR "balance_minor_units" >= 0
+        )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_id_currency_idx"
+      ON "cash_accounts" ("id", "currency_code");
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_member_bucket_currency_idx"
+      ON "cash_accounts" ("owner_user_id", "bucket", "currency_code")
+      WHERE "owner_type" = 'member';
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_site_owner_bucket_currency_idx"
+      ON "cash_accounts" ("owner_user_id", "bucket", "currency_code")
+      WHERE "owner_type" = 'site_owner';
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_hosting_owner_bucket_currency_idx"
+      ON "cash_accounts" ("owner_reference", "bucket", "currency_code")
+      WHERE "owner_type" = 'hosting_owner';
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_agent_bucket_currency_idx"
+      ON "cash_accounts" ("owner_agent_id", "bucket", "currency_code")
+      WHERE "owner_type" = 'agent';
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_accounts_system_bucket_currency_idx"
+      ON "cash_accounts" ("bucket", "currency_code")
+      WHERE "owner_type" = 'system';
+
+    CREATE TABLE IF NOT EXISTS "cash_operations" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "actor_scope" varchar(16) NOT NULL,
+      "actor_user_id" varchar(255) REFERENCES "users"("id") ON DELETE RESTRICT,
+      "actor_agent_id" uuid REFERENCES "wallet_agents"("id") ON DELETE RESTRICT,
+      "operation_type" varchar(40) NOT NULL,
+      "idempotency_key" varchar(128) NOT NULL,
+      "request_fingerprint" varchar(64) NOT NULL,
+      "currency_code" varchar(3) NOT NULL,
+      "reference_type" varchar(40),
+      "reference_id" varchar(255),
+      "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "cash_operations_actor_scope_check"
+        CHECK (
+          ("actor_scope" IN ('member', 'site_owner') AND "actor_user_id" IS NOT NULL AND "actor_agent_id" IS NULL)
+          OR
+          ("actor_scope" = 'agent' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NOT NULL)
+          OR
+          ("actor_scope" = 'system' AND "actor_user_id" IS NULL AND "actor_agent_id" IS NULL)
+        ),
+      CONSTRAINT "cash_operations_currency_check" CHECK ("currency_code" ~ '^[A-Z]{3}$'),
+      CONSTRAINT "cash_operations_fingerprint_check"
+        CHECK ("request_fingerprint" ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT "cash_operations_idempotency_key_check"
+        CHECK (length(trim("idempotency_key")) > 0)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_operations_id_currency_idx"
+      ON "cash_operations" ("id", "currency_code");
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_operations_member_idempotency_idx"
+      ON "cash_operations" ("actor_user_id", "idempotency_key")
+      WHERE "actor_scope" = 'member' AND "actor_user_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_operations_site_owner_idempotency_idx"
+      ON "cash_operations" ("actor_user_id", "idempotency_key")
+      WHERE "actor_scope" = 'site_owner' AND "actor_user_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_operations_agent_idempotency_idx"
+      ON "cash_operations" ("actor_agent_id", "idempotency_key")
+      WHERE "actor_scope" = 'agent' AND "actor_agent_id" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_operations_system_idempotency_idx"
+      ON "cash_operations" ("idempotency_key")
+      WHERE "actor_scope" = 'system';
+    CREATE INDEX IF NOT EXISTS "cash_operations_reference_idx"
+      ON "cash_operations" ("reference_type", "reference_id");
+    CREATE INDEX IF NOT EXISTS "cash_operations_created_idx"
+      ON "cash_operations" ("created_at");
+
+    CREATE TABLE IF NOT EXISTS "cash_entries" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "operation_id" uuid NOT NULL,
+      "cash_account_id" uuid NOT NULL,
+      "currency_code" varchar(3) NOT NULL,
+      "amount_minor_units" bigint NOT NULL,
+      "reversal_of_entry_id" uuid REFERENCES "cash_entries"("id") ON DELETE RESTRICT,
+      "created_at" timestamptz DEFAULT now() NOT NULL,
+      CONSTRAINT "cash_entries_operation_currency_fk"
+        FOREIGN KEY ("operation_id", "currency_code")
+        REFERENCES "cash_operations"("id", "currency_code") ON DELETE RESTRICT,
+      CONSTRAINT "cash_entries_account_currency_fk"
+        FOREIGN KEY ("cash_account_id", "currency_code")
+        REFERENCES "cash_accounts"("id", "currency_code") ON DELETE RESTRICT,
+      CONSTRAINT "cash_entries_nonzero_amount_check" CHECK ("amount_minor_units" <> 0),
+      CONSTRAINT "cash_entries_currency_check" CHECK ("currency_code" ~ '^[A-Z]{3}$')
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_entries_operation_account_idx"
+      ON "cash_entries" ("operation_id", "cash_account_id");
+    CREATE UNIQUE INDEX IF NOT EXISTS "cash_entries_reversal_once_idx"
+      ON "cash_entries" ("reversal_of_entry_id")
+      WHERE "reversal_of_entry_id" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "cash_entries_operation_idx" ON "cash_entries" ("operation_id");
+    CREATE INDEX IF NOT EXISTS "cash_entries_account_idx" ON "cash_entries" ("cash_account_id");
+  `);
+
+  await client.query(`
+    ALTER TABLE "cash_accounts"
+      DROP CONSTRAINT IF EXISTS "cash_accounts_owner_check";
+    ALTER TABLE "cash_accounts"
+      ADD CONSTRAINT "cash_accounts_owner_check"
+      CHECK (
+        ("owner_type" = 'member' AND "owner_user_id" IS NOT NULL AND "owner_agent_id" IS NULL
+          AND "owner_reference" IS NULL
+          AND "bucket" IN ('recipient_earnings', 'withdrawable_balance', 'payout_reserved'))
+        OR
+        ("owner_type" = 'site_owner' AND "owner_user_id" IS NOT NULL AND "owner_agent_id" IS NULL
+          AND "owner_reference" IS NULL AND "bucket" IN ('site_profit', 'payout_reserved'))
+        OR
+        ("owner_type" = 'hosting_owner' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NULL
+          AND "owner_reference" IS NOT NULL AND "owner_reference" = lower("owner_reference")
+          AND "bucket" IN ('hosting_profit', 'payout_reserved'))
+        OR
+        ("owner_type" = 'agent' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NOT NULL
+          AND "owner_reference" IS NULL AND "bucket" IN ('sales_reward', 'payout_reserved'))
+        OR
+        ("owner_type" = 'system' AND "owner_user_id" IS NULL AND "owner_agent_id" IS NULL
+          AND "owner_reference" IS NULL
+          AND "bucket" IN ('settlement_clearing', 'opening_equity', 'platform_cash_asset'))
+      );
+  `);
+
+  await client.query(`
+    CREATE OR REPLACE FUNCTION "prevent_cash_record_mutation"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RAISE EXCEPTION 'cash financial records are append-only'
+        USING ERRCODE = '55000';
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION "prevent_cash_account_reassignment"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF TG_OP = 'DELETE'
+        OR (to_jsonb(NEW) - 'balance_minor_units' - 'updated_at')
+          IS DISTINCT FROM (to_jsonb(OLD) - 'balance_minor_units' - 'updated_at') THEN
+        RAISE EXCEPTION 'cash account ownership and currency are immutable'
+          USING ERRCODE = '55000';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_operations_immutable'
+        AND tgrelid = 'public.cash_operations'::regclass) THEN
+        CREATE TRIGGER "cash_operations_immutable"
+          BEFORE UPDATE OR DELETE ON "cash_operations"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_cash_record_mutation"();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_operations_no_truncate'
+        AND tgrelid = 'public.cash_operations'::regclass) THEN
+        CREATE TRIGGER "cash_operations_no_truncate"
+          BEFORE TRUNCATE ON "cash_operations"
+          FOR EACH STATEMENT EXECUTE FUNCTION "prevent_cash_record_mutation"();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_entries_immutable'
+        AND tgrelid = 'public.cash_entries'::regclass) THEN
+        CREATE TRIGGER "cash_entries_immutable"
+          BEFORE UPDATE OR DELETE ON "cash_entries"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_cash_record_mutation"();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_entries_no_truncate'
+        AND tgrelid = 'public.cash_entries'::regclass) THEN
+        CREATE TRIGGER "cash_entries_no_truncate"
+          BEFORE TRUNCATE ON "cash_entries"
+          FOR EACH STATEMENT EXECUTE FUNCTION "prevent_cash_record_mutation"();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_accounts_identity_immutable'
+        AND tgrelid = 'public.cash_accounts'::regclass) THEN
+        CREATE TRIGGER "cash_accounts_identity_immutable"
+          BEFORE UPDATE OR DELETE ON "cash_accounts"
+          FOR EACH ROW EXECUTE FUNCTION "prevent_cash_account_reassignment"();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cash_accounts_no_truncate'
+        AND tgrelid = 'public.cash_accounts'::regclass) THEN
+        CREATE TRIGGER "cash_accounts_no_truncate"
+          BEFORE TRUNCATE ON "cash_accounts"
+          FOR EACH STATEMENT EXECUTE FUNCTION "prevent_cash_record_mutation"();
+      END IF;
+    END;
+    $$;
+  `);
+}
+
+export async function ensureDefaultMemberRole() {
+  const client = await dbPool.connect();
+  try {
+    await applyDefaultMemberRoleMigration(client);
+  } finally {
+    client.release();
+  }
+}
+
+export async function ensureAdminGiftTabPermission() {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT set_config('hobi.site_owner_bootstrap', 'on', true)`);
+    await client.query(
+      `INSERT INTO "role_permissions" ("role_id", "permission_key", "permission_value", "source")
+       SELECT DISTINCT "role_id", 'admin_gifts.read', 'true'::jsonb, 'admin_tab_split'
+       FROM "role_permissions"
+       WHERE "permission_key" IN ('admin_giftsgit.read', 'admin_giftsgit.all')
+         AND "permission_value" = 'true'::jsonb
+       ON CONFLICT ("role_id", "permission_key") DO NOTHING`,
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function ensureFinancialFoundationSchema(client: PoolClient) {
+  await ensureFinancialWalletAccountsSchema(client);
+  await ensureCashLedgerSchema(client);
+}
+
+export async function ensureSiteOwnerRoleProtectionSchema(client: PoolClient) {
+  await client.query("BEGIN");
+  try {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('hobi-site-owner-protection-schema'))`);
+    await client.query(`
+    CREATE OR REPLACE FUNCTION "prevent_site_owner_role_mutation"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF current_setting('hobi.site_owner_bootstrap', true) = 'on' THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END IF;
+
+      IF TG_TABLE_NAME = 'roles' THEN
+        IF TG_OP = 'INSERT' THEN
+          IF NEW."name" = '${SITE_OWNER_ROLE_NAME}' THEN
+            RAISE EXCEPTION 'site owner role is protected' USING ERRCODE = '42501';
+          END IF;
+        ELSIF TG_OP = 'UPDATE' THEN
+          IF OLD."name" = '${SITE_OWNER_ROLE_NAME}' OR NEW."name" = '${SITE_OWNER_ROLE_NAME}' THEN
+            RAISE EXCEPTION 'site owner role is protected' USING ERRCODE = '42501';
+          END IF;
+        ELSIF OLD."name" = '${SITE_OWNER_ROLE_NAME}' THEN
+          RAISE EXCEPTION 'site owner role is protected' USING ERRCODE = '42501';
+        END IF;
+      ELSIF TG_TABLE_NAME = 'role_permissions' THEN
+        IF TG_OP = 'INSERT' THEN
+          IF EXISTS (SELECT 1 FROM "roles" WHERE "id" = NEW."role_id" AND "name" = '${SITE_OWNER_ROLE_NAME}') THEN
+            RAISE EXCEPTION 'site owner permissions are protected' USING ERRCODE = '42501';
+          END IF;
+        ELSIF TG_OP = 'DELETE' THEN
+          IF EXISTS (SELECT 1 FROM "roles" WHERE "id" = OLD."role_id" AND "name" = '${SITE_OWNER_ROLE_NAME}') THEN
+            RAISE EXCEPTION 'site owner permissions are protected' USING ERRCODE = '42501';
+          END IF;
+        ELSE
+          IF EXISTS (SELECT 1 FROM "roles" WHERE "id" IN (OLD."role_id", NEW."role_id") AND "name" = '${SITE_OWNER_ROLE_NAME}') THEN
+            RAISE EXCEPTION 'site owner permissions are protected' USING ERRCODE = '42501';
+          END IF;
+        END IF;
+      END IF;
+
+      IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END
+    $$;
+    `);
+    await client.query(`DROP TRIGGER IF EXISTS "site_owner_role_guard" ON "roles"`);
+    await client.query(`
+      CREATE TRIGGER "site_owner_role_guard"
+      BEFORE INSERT OR UPDATE OR DELETE ON "roles"
+      FOR EACH ROW EXECUTE FUNCTION "prevent_site_owner_role_mutation"()
+    `);
+    await client.query(`DROP TRIGGER IF EXISTS "site_owner_permissions_guard" ON "role_permissions"`);
+    await client.query(`
+      CREATE TRIGGER "site_owner_permissions_guard"
+      BEFORE INSERT OR UPDATE OR DELETE ON "role_permissions"
+      FOR EACH ROW EXECUTE FUNCTION "prevent_site_owner_role_mutation"()
+    `);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function ensureSiteOwnerAccount(
+  config: SiteOwnerBootstrapConfig,
+) {
+  const permissionKeys = getSiteOwnerPermissionKeys(RESOURCE_ACTIONS);
+  return ensureSiteOwnerBootstrap(config, permissionKeys);
+}
+
+export async function ensureSystemOwnerRole() {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT set_config('hobi.site_owner_bootstrap', 'on', true)`);
+    await client.query(`ALTER TABLE "roles" ADD COLUMN IF NOT EXISTS "is_owner" boolean DEFAULT false NOT NULL;`);
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('hobi-system-owner-role'));`);
+
+    const existingOwner = await client.query(
+      `SELECT "id"
+       FROM "roles"
+       WHERE "name" <> $2
+          AND (
+            "is_owner" = true
+            OR (
+              "is_default" = false
+              AND (
+                lower(trim("name")) IN ($1, 'owner', 'ispower', 'مالك')
+                OR lower(trim(COALESCE("legacy_name", ''))) IN ('owner', 'ispower', 'مالك')
+              )
+            )
+          )
+       ORDER BY ("name" = $1) DESC, "is_owner" DESC, "rank" DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [SYSTEM_OWNER_ROLE_NAME, SITE_OWNER_ROLE_NAME],
+    );
+
+    let ownerRoleId: string;
+    if (existingOwner.rows[0]) {
+      ownerRoleId = String(existingOwner.rows[0].id);
+      await client.query(
+        `UPDATE "roles"
+         SET "legacy_name" = 'Owner',
+             "name" = $1,
+             "rank" = $2,
+             "is_system" = true,
+             "is_default" = false,
+             "is_owner" = true,
+             "is_active" = true,
+             "auto_enabled" = false,
+             "auto_promote" = false,
+             "auto_points" = 0,
+             "updated_at" = now()
+         WHERE "id" = $3`,
+        [SYSTEM_OWNER_ROLE_NAME, SYSTEM_OWNER_RANK, ownerRoleId],
+      );
+    } else {
+      const createdOwner = await client.query(
+        `INSERT INTO "roles"
+          ("legacy_name", "name", "rank", "is_system", "is_owner", "is_active")
+         VALUES ('Owner', $1, $2, true, true, true)
+         ON CONFLICT ("name") DO UPDATE
+           SET "legacy_name" = 'Owner',
+               "rank" = EXCLUDED."rank",
+               "is_system" = true,
+               "is_owner" = true,
+               "is_active" = true
+         RETURNING "id"`,
+        [SYSTEM_OWNER_ROLE_NAME, SYSTEM_OWNER_RANK],
+      );
+      ownerRoleId = String(createdOwner.rows[0].id);
+    }
+
+    await client.query(
+      `UPDATE "roles"
+       SET "is_owner" = false
+       WHERE "is_owner" = true AND "id" <> $1`,
+      [ownerRoleId],
+    );
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "roles_single_owner_idx"
+       ON "roles" ("is_owner") WHERE "is_owner" = true`,
+    );
+
+    const legacyOwnerRoles = await client.query(
+      `SELECT "id"
+       FROM "roles"
+       WHERE "id" <> $1
+         AND "name" <> $2
+         AND (
+           lower(trim("name")) IN ('owner', 'ispower', 'مالك')
+           OR lower(trim(COALESCE("legacy_name", ''))) IN ('owner', 'ispower', 'مالك')
+         )`,
+      [ownerRoleId, SITE_OWNER_ROLE_NAME],
+    );
+    for (const legacyRole of legacyOwnerRoles.rows) {
+      await client.query(
+        `INSERT INTO "user_role_assignments"
+          ("user_id", "role_id", "starts_at", "expires_at", "legacy_metadata")
+         SELECT ura."user_id", $1, ura."starts_at", NULL,
+                jsonb_build_object('source', 'system_owner_role_migration')
+         FROM "user_role_assignments" ura
+         JOIN "users" u ON u."id"::text = ura."user_id"
+         WHERE ura."role_id" = $2 AND lower(trim(u."username")) = $3
+         ON CONFLICT ("user_id", "role_id") DO NOTHING`,
+        [ownerRoleId, legacyRole.id, SYSTEM_OWNER_USERNAME],
+      );
+      await client.query(`DELETE FROM "user_role_assignments" WHERE "role_id" = $1`, [legacyRole.id]);
+      await client.query(
+        `UPDATE "roles"
+         SET "name" = 'legacy_owner_' || left("id"::text, 12),
+             "legacy_name" = 'Owner (legacy)',
+             "is_active" = false,
+             "is_system" = true,
+             "is_default" = false,
+             "rank" = LEAST("rank", $1),
+             "updated_at" = now()
+         WHERE "id" = $2`,
+        [SYSTEM_OWNER_RANK - 1, legacyRole.id],
+      );
+    }
+
+    await client.query(
+      `UPDATE "users"
+       SET "power" = 'owner', "role" = 'owner'
+       WHERE lower(trim("username")) = $1`,
+      [SYSTEM_OWNER_USERNAME],
+    );
+    await client.query(
+      `INSERT INTO "user_role_assignments" ("user_id", "role_id", "legacy_metadata")
+       SELECT "id"::text, $1, jsonb_build_object('source', 'system_owner_bootstrap')
+       FROM "users"
+       WHERE lower(trim("username")) = $2
+       ON CONFLICT ("user_id", "role_id") DO NOTHING`,
+      [ownerRoleId, SYSTEM_OWNER_USERNAME],
+    );
+    await client.query(
+      `DELETE FROM "user_role_assignments" ura
+       USING "users" u
+       WHERE ura."user_id" = u."id"::text
+         AND ura."role_id" = $1
+         AND lower(trim(u."username")) <> $2`,
+      [ownerRoleId, SYSTEM_OWNER_USERNAME],
+    );
+
+    for (const [resource, actions] of Object.entries(RESOURCE_ACTIONS)) {
+      for (const action of actions) {
+        await client.query(
+          `INSERT INTO "role_permissions"
+            ("role_id", "permission_key", "permission_value", "source")
+           VALUES ($1, $2, 'true'::jsonb, 'system_owner')
+           ON CONFLICT ("role_id", "permission_key")
+           DO UPDATE SET "permission_value" = 'true'::jsonb, "source" = 'system_owner'`,
+          [ownerRoleId, `${resource}.${action}`],
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function ensureChatFeaturePermissions() {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT set_config('hobi.site_owner_bootstrap', 'on', true)`);
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('hobi-chat-feature-permissions'));`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "permission_migrations" (
+        "migration_key" varchar(120) PRIMARY KEY,
+        "applied_at" timestamptz DEFAULT now() NOT NULL
+      );
+    `);
+    const migration = await client.query(
+      `INSERT INTO "permission_migrations" ("migration_key")
+       VALUES ('chat_feature_permissions_v1')
+       ON CONFLICT ("migration_key") DO NOTHING
+       RETURNING "migration_key"`,
+    );
+    if (migration.rowCount) {
+      await client.query(
+        `INSERT INTO "role_permissions" ("role_id", "permission_key", "permission_value", "source")
+         SELECT r."id", feature."permission_key", 'true'::jsonb, 'chat_features_migration'
+         FROM "roles" r
+         CROSS JOIN unnest($1::text[]) AS feature("permission_key")
+         WHERE r."is_active" = true AND r."is_owner" = false
+         ON CONFLICT ("role_id", "permission_key") DO NOTHING`,
+        [DEFAULT_CHAT_FEATURE_PERMISSION_KEYS],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 /**
  * Auto-migration: يُنشئ الجداول الناقصة تلقائياً عند تشغيل السيرفر.
@@ -600,6 +1959,15 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "user_follows_following_idx" ON "user_follows" ("following_id");
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "profile_like_cooldowns" (
+        "liker_id" varchar(255) NOT NULL,
+        "profile_id" varchar(255) NOT NULL,
+        "last_liked_at" timestamptz DEFAULT now() NOT NULL,
+        PRIMARY KEY ("liker_id", "profile_id")
+      );
+    `);
+
     // ----- جدول الإعجابات للـ wall posts (legacy bars) -----
     await client.query(`
       CREATE TABLE IF NOT EXISTS "bars_likes" (
@@ -621,46 +1989,7 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "bar_comment_likes_comment_idx" ON "bar_comment_likes" ("comment_id");
     `);
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS "roles" (
-        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "legacy_name" varchar(120),
-        "name" varchar(120) NOT NULL,
-        "rank" integer DEFAULT 0 NOT NULL,
-        "icon_url" text DEFAULT '' NOT NULL,
-        "is_system" boolean DEFAULT false NOT NULL,
-        "auto_enabled" boolean DEFAULT false NOT NULL,
-        "auto_promote" boolean DEFAULT false NOT NULL,
-        "auto_points" integer DEFAULT 0 NOT NULL,
-        "legacy_metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
-        "created_at" timestamptz DEFAULT now() NOT NULL,
-        "updated_at" timestamptz DEFAULT now() NOT NULL
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS "roles_name_idx" ON "roles" ("name");
-      CREATE INDEX IF NOT EXISTS "roles_rank_idx" ON "roles" ("rank");
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS "role_permissions" (
-        "role_id" uuid NOT NULL REFERENCES "roles"("id") ON DELETE CASCADE,
-        "permission_key" varchar(120) NOT NULL,
-        "permission_value" jsonb DEFAULT 'true'::jsonb NOT NULL,
-        "source" varchar(40) DEFAULT 'legacy_powers' NOT NULL,
-        PRIMARY KEY ("role_id", "permission_key")
-      );
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS "user_role_assignments" (
-        "user_id" varchar(255) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
-        "role_id" uuid NOT NULL REFERENCES "roles"("id") ON DELETE CASCADE,
-        "assigned_by" varchar(255) REFERENCES "users"("id") ON DELETE SET NULL,
-        "starts_at" timestamptz DEFAULT now() NOT NULL,
-        "expires_at" timestamptz,
-        "legacy_metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
-        PRIMARY KEY ("user_id", "role_id")
-      );
-    `);
+    await applyDefaultMemberRoleMigration(client);
 
     // --- STORIES ---
     await client.query(`
@@ -780,6 +2109,8 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "gift_transactions_receiver_idx" ON "gift_transactions" ("receiver_id");
       CREATE INDEX IF NOT EXISTS "gift_transactions_created_idx" ON "gift_transactions" ("created_at");
     `);
+
+    await ensureWalletLedgerSchema(client);
 
     // --- PRIVATE MESSAGES ---
     await client.query(`
@@ -1037,6 +2368,21 @@ export async function runAutoMigrations() {
       CREATE INDEX IF NOT EXISTS "room_kicks_banned_until_idx" ON "room_kicks" ("banned_until");
     `);
 
+    // --- جدول room_mutes (الكتم الغرفي المنفصل عن الكتم العام) ---
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "room_mutes" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "room_id" varchar(128) NOT NULL,
+        "user_id" varchar(255) NOT NULL,
+        "muted_by" varchar(255),
+        "reason" text,
+        "expires_at" timestamptz,
+        "created_at" timestamptz DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "room_mutes_room_user_idx" ON "room_mutes" ("room_id", "user_id");
+      CREATE INDEX IF NOT EXISTS "room_mutes_expires_idx" ON "room_mutes" ("expires_at");
+    `);
+
     // ========== فهارس الأداء الحرجة ==========
     if (process.env.MIGRATION_LOGS === "1") {
       console.log("[Migration] جاري إنشاء فهارس الأداء...");
@@ -1108,6 +2454,7 @@ export async function runAutoMigrations() {
     }
   } catch (error) {
     console.error("[Migration] ❌ خطأ أثناء تشغيل الـ migrations:", error);
+    throw error;
   } finally {
     client.release();
   }
@@ -1143,6 +2490,9 @@ export async function verifyDatabaseSchema() {
     "wall_posts",
     "wall_comments",
     "wall_post_likes",
+    "room_likes",
+    "user_follows",
+    "profile_like_cooldowns",
     "roles",
     "role_permissions",
     "user_role_assignments",
@@ -1152,6 +2502,16 @@ export async function verifyDatabaseSchema() {
     "gift_categories",
     "gift_catalog",
     "gift_transactions",
+    "wallet_settings",
+    "wallet_operations",
+    "wallet_balances",
+    "wallet_entries",
+    "cash_accounts",
+    "cash_operations",
+    "cash_entries",
+    "wallet_agent_packages",
+    "wallet_agent_inventory_orders",
+    "member_coin_purchases",
     "private_messages",
     "internal_mail",
     "cuts",
@@ -1182,10 +2542,95 @@ export async function verifyDatabaseSchema() {
 
     const existingTables = result.rows.map((row: { table_name: string }) => row.table_name);
     const missingTables = requiredTables.filter((table) => !existingTables.includes(table));
+    const requiredWalletColumns = [["wallet_operations", "metadata"]];
+    const requiredCashColumns = [
+      ["cash_accounts", "owner_type"],
+      ["cash_accounts", "owner_user_id"],
+      ["cash_accounts", "owner_agent_id"],
+      ["cash_accounts", "owner_reference"],
+      ["cash_accounts", "bucket"],
+      ["cash_accounts", "currency_code"],
+      ["cash_accounts", "balance_minor_units"],
+      ["cash_accounts", "updated_at"],
+      ["cash_operations", "actor_scope"],
+      ["cash_operations", "actor_user_id"],
+      ["cash_operations", "actor_agent_id"],
+      ["cash_operations", "operation_type"],
+      ["cash_operations", "idempotency_key"],
+      ["cash_operations", "currency_code"],
+      ["cash_operations", "request_fingerprint"],
+      ["cash_operations", "reference_type"],
+      ["cash_operations", "reference_id"],
+      ["cash_operations", "metadata"],
+      ["cash_operations", "created_at"],
+      ["cash_entries", "operation_id"],
+      ["cash_entries", "cash_account_id"],
+      ["cash_entries", "currency_code"],
+      ["cash_entries", "amount_minor_units"],
+      ["cash_entries", "reversal_of_entry_id"],
+      ["cash_entries", "created_at"],
+    ];
+    const walletColumnsResult = await client.query(
+      `SELECT table_name, column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = ANY($1);`,
+      [[...new Set(
+        [...requiredWalletColumns, ...requiredCashColumns].map(([tableName]) => tableName),
+      )]],
+    );
+    const existingWalletColumns = new Set(
+      walletColumnsResult.rows.map((row: { table_name: string; column_name: string }) =>
+        `${row.table_name}:${row.column_name}`,
+      ),
+    );
+    const missingWalletColumns = requiredWalletColumns
+      .map(([tableName, columnName]) => `${tableName}:${columnName}`)
+      .filter((column) => !existingWalletColumns.has(column));
+    const missingCashColumns = requiredCashColumns
+      .map(([tableName, columnName]) => `${tableName}:${columnName}`)
+      .filter((column) => !existingWalletColumns.has(column));
+    const requiredWalletGuards = [
+      ["wallet_operations", "wallet_operations_immutable"],
+      ["wallet_operations", "wallet_operations_no_truncate"],
+      ["wallet_entries", "wallet_entries_immutable"],
+      ["wallet_entries", "wallet_entries_no_truncate"],
+      ["user_profiles", "user_profiles_legacy_coins_update_fence"],
+      ["user_profiles", "user_profiles_legacy_coins_insert_fence"],
+    ];
+    const requiredCashGuards = [
+      ["cash_accounts", "cash_accounts_identity_immutable"],
+      ["cash_accounts", "cash_accounts_no_truncate"],
+      ["cash_operations", "cash_operations_immutable"],
+      ["cash_operations", "cash_operations_no_truncate"],
+      ["cash_entries", "cash_entries_immutable"],
+      ["cash_entries", "cash_entries_no_truncate"],
+    ];
+    const triggerResult = await client.query(
+      `SELECT c.relname AS table_name, t.tgname AS trigger_name
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
+    );
+    const existingGuards = new Set(
+      triggerResult.rows.map((row: { table_name: string; trigger_name: string }) =>
+        `${row.table_name}:${row.trigger_name}`,
+      ),
+    );
+    const missingWalletGuards = requiredWalletGuards
+      .map(([tableName, triggerName]) => `${tableName}:${triggerName}`)
+      .filter((guard) => !existingGuards.has(guard));
+    const missingCashGuards = requiredCashGuards
+      .map(([tableName, triggerName]) => `${tableName}:${triggerName}`)
+      .filter((guard) => !existingGuards.has(guard));
 
     return {
       existingTables,
       missingTables,
+      missingWalletColumns,
+      missingWalletGuards,
+      missingCashColumns,
+      missingCashGuards,
     };
   } finally {
     client.release();
@@ -1318,4 +2763,78 @@ export async function ensureRoomCustomRolesSchema(client: PoolClient) {
     CREATE INDEX IF NOT EXISTS "room_members_custom_role_idx"
       ON "room_members" ("custom_role_id")
   `);
+}
+
+export async function ensureUserIdentityAndConsolidation() {
+  const client = await dbPool.connect();
+  try {
+    // 1. Add mention_name and public_user_id columns if not exist
+    await client.query(`
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "mention_name" varchar(64);
+      ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "public_user_id" varchar(12);
+    `);
+
+    // 2. Sync display_name from topic where topic exists and differs
+    await client.query(`
+      UPDATE users 
+      SET display_name = topic 
+      WHERE topic IS NOT NULL AND topic != '' AND display_name != topic;
+    `);
+
+    // 3. Backfill mention_name and public_user_id for all users where NULL
+    const missing = await client.query(`
+      SELECT id, username, display_name, topic, mention_name, public_user_id 
+      FROM users 
+      WHERE mention_name IS NULL OR public_user_id IS NULL;
+    `);
+
+    if (missing.rows.length > 0) {
+      const { generatePublicUserId, sanitizeMentionName } = await import("../services/publicIdService");
+      
+      const existingRes = await client.query(`SELECT mention_name, public_user_id FROM users;`);
+      const existingMentions = new Set(existingRes.rows.map((r: any) => r.mention_name?.toLowerCase()).filter(Boolean));
+      const existingPublicIds = new Set(existingRes.rows.map((r: any) => r.public_user_id).filter(Boolean));
+
+      for (const row of missing.rows) {
+        let mention = row.mention_name;
+        if (!mention) {
+          const base = sanitizeMentionName(row.display_name || row.topic, sanitizeMentionName(row.username));
+          mention = base;
+          let counter = 1;
+          while (existingMentions.has(mention.toLowerCase())) {
+            mention = `${base.slice(0, 28)}_${counter++}`;
+          }
+          existingMentions.add(mention.toLowerCase());
+        }
+
+        let pubId = row.public_user_id;
+        if (!pubId) {
+          let attempts = 0;
+          do {
+            pubId = generatePublicUserId();
+            attempts++;
+          } while (existingPublicIds.has(pubId) && attempts < 5);
+          existingPublicIds.add(pubId);
+        }
+
+        await client.query(
+          `UPDATE users SET mention_name = $1, public_user_id = $2 WHERE id = $3`,
+          [mention, pubId, row.id]
+        );
+      }
+    }
+
+    // 4. Create unique indexes
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "users_mention_name_lower_idx" ON "users" (LOWER("mention_name"));
+      CREATE UNIQUE INDEX IF NOT EXISTS "users_public_user_id_idx" ON "users" ("public_user_id");
+      CREATE INDEX IF NOT EXISTS "users_display_name_lower_idx" ON "users" (LOWER("display_name"));
+    `);
+
+    console.log("[DB] ensureUserIdentityAndConsolidation complete.");
+  } catch (err) {
+    console.error("[DB] ensureUserIdentityAndConsolidation error:", err);
+  } finally {
+    client.release();
+  }
 }

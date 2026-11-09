@@ -1,9 +1,10 @@
-import { defineEventHandler, getHeader, readBody } from "h3";
+import { defineEventHandler, getHeader, readBody, setResponseStatus } from "h3";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { dbPool } from "../../../db";
 import { normalizeMinioUrl } from "../../../services/minioClient";
 import { getIO } from "../../../socket";
 import { publishGlobalEvent } from "../../../socket/SocketBroker";
+import { hasPermission } from "../../../services/permissionEngine";
 
 const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
 
@@ -37,7 +38,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody<{ frameUrl: string }>(event);
-  const frameUrl = body?.frameUrl || "";
+  const frameUrl = typeof body?.frameUrl === "string" ? body.frameUrl.trim() : "";
+  if (frameUrl && !(await hasPermission(userId, "frame.use"))) {
+    setResponseStatus(event, 403);
+    return { success: false, message: "لا تملك صلاحية استخدام إطار الصورة" };
+  }
   const normalizedUrl = frameUrl ? normalizeMinioUrl(frameUrl) : "";
 
   // تحديث user_profiles.avatar_frame_url فقط (يُستخدم للإطار على الصورة في المتواجدين)

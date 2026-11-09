@@ -1,400 +1,327 @@
-/**
- * Private Message Handlers - Real-time In-Memory Only
- * يدير أحداث الرسائل الخاصة بين المستخدمين بشكل لحظي بدون قاعدة بيانات
- * الرسائل مؤقتة في ذاكرة الخادم (آخر 100 رسالة لكل محادثة)
- */
 import type { Server, Socket } from "socket.io";
-import { randomUUID } from "node:crypto";
-import { getAllOnlineUsers } from "./presenceManager";
+import { getMessagePermissionRequirements } from "../../src/lib/chatFeaturePermissions";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
+import { processPrivateMessageText } from "../services/privateMessageText";
+import { dbPool } from "../db";
+import {
+  endPrivateMessageSession,
+  isEphemeralPrivateMessagingEnabled,
+  privateMessageStore,
+  registerPrivateMessageSession,
+  resolvePrivateMessageUser,
+} from "../services/privateMessageService";
 import { SOCKET_CHANNELS } from "./SocketChannels";
-import { processText } from "../services/filterService";
-import { applyShortcuts } from "../services/shortcutService";
-
-// ─── أنواع البيانات ────────────────────────────────────────────────────────────
 
 export type PMReactionType = "like" | "love" | "haha" | "wow" | "sad" | "angry";
 
 export const PM_REACTIONS: PMReactionType[] = ["like", "love", "haha", "wow", "sad", "angry"];
 
-interface PMUser {
-  id: string;
-  name: string;
-  avatar: string;
-}
-
-interface PMMessage {
-  id: string;
-  clientId?: string;
-  conversationId: string;
-  senderId: string;
-  senderName: string;
-  senderAvatar: string;
-  nameColor?: string;
-  statusFontColor?: string;
-  receiverId: string;
-  text: string;
-  mediaUrl?: string;
-  mediaType?: "image" | "video";
-  reactions?: Record<string, PMReactionType>;
-  replyToId?: string;
-  replyToText?: string;
-  replyToSenderName?: string;
-  replyToMediaUrl?: string;
-  replyToMediaType?: "image" | "video";
-  animatedFaces?: string[];
-  createdAt: string;
-  read: boolean;
-}
-
-interface Conversation {
-  id: string;
-  userA: PMUser;
-  userB: PMUser;
-  messages: PMMessage[];
-  updatedAt: string;
-}
-
-// ─── مخزن الذاكرة المؤقت ────────────────────────────────────────────────────────
-
-const MAX_MESSAGES_PER_CONV = 100;
-
-/** Map<conversationId, Conversation> */
-const pmStore = new Map<string, Conversation>();
-
-// ─── دوال مساعدة ─────────────────────────────────────────────────────────────
-
-const buildConvId = (a: string, b: string): string => [a, b].sort().join(":");
-
-const getOrCreateConv = (userA: PMUser, userB: PMUser): Conversation => {
-  const id = buildConvId(userA.id, userB.id);
-  if (!pmStore.has(id)) {
-    pmStore.set(id, { id, userA, userB, messages: [], updatedAt: new Date().toISOString() });
+const emitSessionEnd = (
+  io: Server,
+  ended: NonNullable<ReturnType<typeof endPrivateMessageSession>>,
+) => {
+  try {
+    const sessionRoom = SOCKET_CHANNELS.privateMessageSession(ended.sessionId);
+    const roomSize = io.sockets.adapter.rooms.get(sessionRoom)?.size ?? 0;
+    console.log(`[SOCKET_TRACE_PM_END] sessionId=${ended.sessionId} reason=${ended.reason} room=${sessionRoom} socketsInRoom=${roomSize} conversations=${ended.expiredConversations.length}`);
+  } catch (_) {}
+  for (const conversation of ended.expiredConversations) {
+    for (const sessionId of conversation.sessionIds) {
+      io.to(SOCKET_CHANNELS.privateMessageSession(sessionId)).emit("pm:conversation_expired", {
+        conversationId: conversation.conversationId,
+        reason: ended.reason,
+      });
+    }
   }
-  const conv = pmStore.get(id)!;
-  // تحديث معلومات المستخدمين دائماً بأحدث بيانات
-  const sorted = [userA, userB].sort((a, b) => a.id.localeCompare(b.id));
-  conv.userA = sorted[0];
-  conv.userB = sorted[1];
-  return conv;
+  const sessionRoom = SOCKET_CHANNELS.privateMessageSession(ended.sessionId);
+  io.to(sessionRoom).emit("force_logout", {
+    message: ended.reason === "expired" ? "انتهت صلاحية الجلسة" : "تم إنهاء الجلسة",
+  });
+  io.in(sessionRoom).disconnectSockets(true);
 };
 
-const getUserConversations = (userId: string): Conversation[] =>
-  Array.from(pmStore.values())
-    .filter(c => c.userA.id === userId || c.userB.id === userId)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-const getOtherUser = (conv: Conversation, myId: string): PMUser =>
-  conv.userA.id === myId ? conv.userB : conv.userA;
-
-const countUnread = (conv: Conversation, userId: string): number =>
-  conv.messages.filter(m => m.receiverId === userId && !m.read).length;
-
-const serializeConversations = (userId: string) =>
-  getUserConversations(userId).map(conv => {
-    const lastMsg = conv.messages[conv.messages.length - 1] || null;
-    const otherUser = getOtherUser(conv, userId);
-    return {
-      conversationId: conv.id,
-      lastMessage: lastMsg?.text || "",
-      lastMessageAt: conv.updatedAt,
-      otherUser,
-      unreadCount: countUnread(conv, userId),
-    };
-  });
-
-// ─── تسجيل معالجات Socket ────────────────────────────────────────────────────────
-
 export function registerPrivateHandlers(io: Server, socket: Socket): void {
-  const rawUser = socket.data.user;
+  const rawUser = socket.data?.user;
   if (!rawUser) return;
 
-  const myId = String(rawUser.id || rawUser.uid || socket.id);
-  const myInfo: PMUser = {
-    id: myId,
-    name: String(rawUser.username || rawUser.name || "زائر"),
-    avatar: String(rawUser.avatar || "/pic.png"),
+  const myId = String(rawUser.id || "");
+  const sessionId = String(rawUser.sessionId || "");
+  const sessionExpiresAt = Number(rawUser.sessionExpiresAt);
+
+  if (!isEphemeralPrivateMessagingEnabled() || !myId || !sessionId) {
+    socket.emit("pm:unavailable", {
+      message: isEphemeralPrivateMessagingEnabled()
+        ? "جلسة الرسائل الخاصة غير صالحة"
+        : "الرسائل الخاصة المؤقتة غير مهيأة على هذا الخادم",
+    });
+    return;
+  }
+
+  // ضمان تسجيل الجلسة وربط السوكيت بها
+  registerPrivateMessageSession({
+    sessionId,
+    userId: myId,
+    expiresAt: sessionExpiresAt,
+  });
+  privateMessageStore.attachSocket(sessionId, socket.id);
+  socket.join(SOCKET_CHANNELS.privateMessageSession(sessionId));
+
+  // منع تكرار تسجيل مستمعي الأحداث على نفس السوكيت
+  if ((socket as any).__privateHandlersRegistered) {
+    return;
+  }
+  (socket as any).__privateHandlersRegistered = true;
+
+  privateMessageStore.setSessionEndedListener((ended) => emitSessionEnd(io, ended));
+  socket.on("disconnect", () => {
+    (socket as any).__privateHandlersRegistered = false;
+    privateMessageStore.detachSocket(sessionId, socket.id);
+  });
+  socket.on("user_logout", () => endPrivateMessageSession(sessionId, "logout"));
+
+  const getSenderInfo = () => {
+    const u = socket.data?.user || rawUser;
+    return {
+      id: myId,
+      name: String(u.displayName || u.username || u.name || rawUser.username || "عضو"),
+      avatar: String(u.avatar || rawUser.avatar || "/pic.png"),
+      nameColor: String(u.nameColor || rawUser.nameColor || ""),
+      messageColor: String(u.messageColor || rawUser.messageColor || ""),
+    };
   };
 
-  // ─── إرسال رسالة خاصة ─────────────────────────────────────────────────────
-
   socket.on("pm:send", async (
-    data: { toUserId: string; text: string; clientId?: string; mediaUrl?: string; mediaType?: "image" | "video"; replyToId?: string; animatedFaces?: string[] },
-    callback?: (res: any) => void,
+    data: {
+      toUserId?: unknown;
+      text?: unknown;
+      clientId?: unknown;
+      mediaUrl?: unknown;
+      mediaType?: unknown;
+      mediaId?: unknown;
+      stickerId?: unknown;
+      replyToId?: unknown;
+      animatedFaces?: unknown;
+    },
+    callback?: (response: Record<string, unknown>) => void,
   ) => {
     try {
-      const toUserId = String(data?.toUserId || "").trim();
-      const text = String(data?.text || "").trim();
-      const clientId = data?.clientId;
-      const mediaUrl = data?.mediaUrl || "";
-      const mediaType = data?.mediaType;
-      const replyToId = data?.replyToId || "";
+      if (!isEphemeralPrivateMessagingEnabled()) {
+        return callback?.({ success: false, error: "الرسائل الخاصة غير مهيأة" });
+      }
+      if (data?.mediaUrl) {
+        return callback?.({ success: false, error: "رابط الوسيط غير مسموح" });
+      }
 
-      if (!toUserId || (!text && !mediaUrl && !data?.animatedFaces?.length)) {
+      const receiverId = String(data?.toUserId || "").trim();
+      const text = typeof data?.text === "string" ? data.text.trim() : "";
+      const clientId = typeof data?.clientId === "string" ? data.clientId : undefined;
+      const replyToId = typeof data?.replyToId === "string" ? data.replyToId : undefined;
+      const mediaId = typeof data?.mediaId === "string" ? data.mediaId : undefined;
+      const stickerId = typeof data?.stickerId === "string" ? data.stickerId : undefined;
+      const mediaType = data?.mediaType === "image" || data?.mediaType === "video" || data?.mediaType === "audio"
+        ? data.mediaType
+        : undefined;
+      if ((data?.mediaType && !mediaType) || (mediaId && stickerId) ||
+          (mediaId && !mediaType) || (stickerId && mediaType !== "image")) {
+        return callback?.({ success: false, error: "نوع الوسيط غير صالح" });
+      }
+      const animatedFaces = Array.isArray(data?.animatedFaces)
+        ? data.animatedFaces.filter((face): face is string =>
+            typeof face === "string" && face.length > 0 && face.length <= 2048,
+          ).slice(0, 10)
+        : undefined;
+
+      if (!receiverId || (!text && !animatedFaces?.length && !mediaId && !stickerId)) {
         return callback?.({ success: false, error: "بيانات الرسالة ناقصة" });
       }
       if (text.length > 1000) {
-        return callback?.({ success: false, error: "الرسالة طويلة جداً (الحد 1000 حرف)" });
+        return callback?.({ success: false, error: "الرسالة طويلة جدًا" });
       }
-      if (toUserId === myId) {
+      if (receiverId === myId) {
         return callback?.({ success: false, error: "لا يمكنك مراسلة نفسك" });
       }
 
-      // فحص الإسكات - المستخدم المكتوم لا يمكنه إرسال رسائل خاصة
-      if ((socket.data.user as any).muted) {
+      const currentUser = socket.data?.user || rawUser;
+      const sender = getSenderInfo();
+
+      // تأكيد استمرارية جلسة المرسل وسوكيته
+      registerPrivateMessageSession({
+        sessionId,
+        userId: myId,
+        expiresAt: sessionExpiresAt,
+      });
+      privateMessageStore.attachSocket(sessionId, socket.id);
+
+      const permissions = getMessagePermissionRequirements({
+        channel: "private",
+        text,
+        mediaType,
+        hasMedia: Boolean(mediaId || stickerId),
+        hasEffects: Boolean(animatedFaces?.length || stickerId),
+      });
+      if (!(await hasChatFeatureAccess(currentUser, permissions))) {
+        return callback?.({ success: false, error: "لا تملك صلاحية استخدام إحدى ميزات رسالة الخاص" });
+      }
+      if (currentUser.muted) {
         return callback?.({ success: false, muted: true, error: "تم منعك من الحديث في الدردشة" });
       }
 
-      // تطبيق الاختصارات ثم الفلتر على النص
-      let filteredText = text;
-      if (text) {
-        try {
-          const expanded = await applyShortcuts(text);
-          const filterRes = await processText({
-            text: expanded,
-            source: `محادثة خاصة مع ${receiverInfo.name}`,
-            user: { username: myInfo.name, topic: myInfo.name, ip: socket.handshake.address || "127.0.0.1" },
-            target: toUserId,
-          });
-          filteredText = filterRes.filteredText;
-        } catch {}
+      const receiver = await resolvePrivateMessageUser(receiverId);
+      if (!receiver) {
+        return callback?.({ success: false, error: "المستخدم غير موجود" });
       }
 
-      // جلب معلومات المستقبل — مع timeout 1.5s لتجنب التعليق
-      let receiverInfo: PMUser = { id: toUserId, name: "عضو", avatar: "/pic.png" };
-      try {
-        const onlineUsers = await Promise.race([
-          getAllOnlineUsers(),
-          new Promise<any[]>(resolve => setTimeout(() => resolve([]), 1500)),
-        ]);
-        const found = onlineUsers.find((u: any) =>
-          String(u.id) === toUserId || String(u.uid) === toUserId,
+      // إذا كان المستلم متصلاً في السيرفر عبر Socket لكن لم تُسجل جلسته في المتجر بعد، يتم استعادتها لحظياً
+      let recipientSessions = privateMessageStore.getActiveSocketSessionIds(receiver.id);
+      if (recipientSessions.length === 0) {
+        for (const [_, s] of io.sockets.sockets) {
+          const u = s.data?.user;
+          if (u && String(u.id) === receiver.id && u.sessionId) {
+            registerPrivateMessageSession({
+              sessionId: String(u.sessionId),
+              userId: receiver.id,
+              expiresAt: Number(u.sessionExpiresAt || Date.now() + 86400000),
+            });
+            privateMessageStore.attachSocket(String(u.sessionId), s.id);
+            s.join(SOCKET_CHANNELS.privateMessageSession(String(u.sessionId)));
+          }
+        }
+      }
+
+      let stickerUrl: string | undefined;
+      if (stickerId) {
+        const sticker = await dbPool.query(
+          `SELECT s.image_url
+           FROM stickers s
+           JOIN sticker_categories c ON c.id = s.category_id
+           WHERE s.id::text = $1 AND s.is_active = true AND c.is_active = true
+           LIMIT 1`,
+          [stickerId],
         );
-        if (found) {
-          receiverInfo = {
-            id: toUserId,
-            name: String(found.username || "عضو"),
-            avatar: String(found.avatar || "/pic.png"),
-          };
-        } else {
-          const existingConv = pmStore.get(buildConvId(myId, toUserId));
-          if (existingConv) receiverInfo = getOtherUser(existingConv, myId);
-        }
-      } catch {
-        // نستمر بمعلومات افتراضية
-      }
-
-      const conv = getOrCreateConv(myInfo, receiverInfo);
-
-      // ─── جلب بيانات الرسالة المردود عليها ──────────────────────────────────
-      let replyToText = "";
-      let replyToSenderName = "";
-      let replyToMediaUrl = "";
-      let replyToMediaType: "image" | "video" | undefined;
-
-      if (replyToId) {
-        const parentMsg = conv.messages.find(m => m.id === replyToId);
-        if (parentMsg) {
-          replyToText = parentMsg.text || "";
-          replyToSenderName = parentMsg.senderName || "";
-          replyToMediaUrl = parentMsg.mediaUrl || "";
-          replyToMediaType = parentMsg.mediaType;
+        stickerUrl = typeof sticker.rows[0]?.image_url === "string"
+          ? sticker.rows[0].image_url
+          : undefined;
+        if (!stickerUrl) {
+          return callback?.({ success: false, error: "الملصق غير موجود" });
         }
       }
 
-      const msg: PMMessage = {
-        id: randomUUID(),
-        clientId,
-        conversationId: conv.id,
-        senderId: myId,
-        senderName: myInfo.name,
-        senderAvatar: myInfo.avatar,
-        nameColor: socket.data.user.nameColor || "",
-        statusFontColor: socket.data.user.statusFontColor || "",
-        receiverId: toUserId,
+      const filteredText = text
+        ? await processPrivateMessageText(text, {
+            username: sender.name,
+            topic: sender.name,
+            ip: socket.handshake.address || "127.0.0.1",
+            recipientId: receiver.id,
+            recipientName: receiver.name,
+          })
+        : "";
+      const result = privateMessageStore.send({
+        sessionId,
+        sender,
+        receiver,
         text: filteredText,
-        mediaUrl: mediaUrl || undefined,
-        mediaType: mediaType || undefined,
-        replyToId: replyToId || undefined,
-        replyToText: replyToText || undefined,
-        replyToSenderName: replyToSenderName || undefined,
-        replyToMediaUrl: replyToMediaUrl || undefined,
-        replyToMediaType: replyToMediaType || undefined,
-        animatedFaces: data?.animatedFaces && data.animatedFaces.length > 0 ? data.animatedFaces : undefined,
-        createdAt: new Date().toISOString(),
-        read: false,
-      };
+        clientId,
+        replyToId,
+        nameColor: sender.nameColor,
+        statusFontColor: String(currentUser.statusFontColor || ""),
+        animatedFaces,
+        mediaId,
+        mediaType,
+        stickerUrl,
+      });
 
-      conv.messages.push(msg);
-      if (conv.messages.length > MAX_MESSAGES_PER_CONV) conv.messages.shift();
-      conv.updatedAt = msg.createdAt;
-
-      // إيصال الرسالة للمستقبل عبر قناته الاجتماعية
-      io.to(SOCKET_CHANNELS.social(toUserId)).emit("pm:message", msg);
-
-      // إرسال الرسالة للمرسل أيضاً حتى تتحدث قائمة المحادثات لحظياً
-      if (toUserId !== myId) {
-        io.to(SOCKET_CHANNELS.social(myId)).emit("pm:message", msg);
+      for (const targetSessionId of result.deliverySessionIds) {
+        io.to(SOCKET_CHANNELS.privateMessageSession(targetSessionId))
+          .emit("pm:message", result.message);
       }
-
-      callback?.({ success: true, message: msg });
-    } catch (err) {
-      console.error("[PM:send] Error:", err);
-      callback?.({ success: false, error: "خطأ في الخادم" });
+      callback?.({ success: true, message: result.message });
+    } catch (error) {
+      console.error("[PM:send] Failed to process ephemeral message:", error);
+      callback?.({
+        success: false,
+        error: error instanceof Error ? error.message : "تعذر إرسال الرسالة",
+      });
     }
   });
-
-  // ─── جلب سجل محادثة ────────────────────────────────────────────────────────
 
   socket.on("pm:history", (
-    data: { conversationId: string },
-    callback?: (res: any) => void,
+    data: { conversationId?: unknown },
+    callback?: (response: Record<string, unknown>) => void,
   ) => {
-    try {
-      const conversationId = String(data?.conversationId || "").trim();
-      if (!conversationId) return callback?.({ success: true, messages: [] });
+    const conversationId = typeof data?.conversationId === "string" ? data.conversationId : "";
+    callback?.({
+      success: true,
+      messages: conversationId ? privateMessageStore.getMessages(sessionId, conversationId) : [],
+    });
+  });
 
-      const conv = pmStore.get(conversationId);
-      if (!conv) return callback?.({ success: true, messages: [] });
+  socket.on("pm:conversations", (callback?: (response: Record<string, unknown>) => void) => {
+    callback?.({ success: true, conversations: privateMessageStore.listConversations(sessionId) });
+  });
 
-      // التحقق من أن المستخدم طرف في المحادثة
-      if (conv.userA.id !== myId && conv.userB.id !== myId) {
-        return callback?.({ success: true, messages: [] });
+  socket.on("pm:read", (data: { conversationId?: unknown }) => {
+    const conversationId = typeof data?.conversationId === "string" ? data.conversationId : "";
+    if (!conversationId) return;
+    const result = privateMessageStore.markRead(sessionId, conversationId);
+    if (result.changed) {
+      for (const targetSessionId of result.otherSessionIds) {
+        io.to(SOCKET_CHANNELS.privateMessageSession(targetSessionId)).emit("pm:read", {
+          conversationId,
+          readerId: myId,
+        });
       }
+    }
+    socket.emit("pm:unread_update", { conversationId, unreadCount: 0 });
+  });
 
-      // تعليم الرسائل المستلمة كمقروءة
-      conv.messages.forEach(m => {
-        if (m.receiverId === myId && !m.read) m.read = true;
+  socket.on("pm:typing", (data: { toUserId?: unknown }) => {
+    const toUserId = typeof data?.toUserId === "string" ? data.toUserId.trim() : "";
+    const currentUser = socket.data?.user || rawUser;
+    if (!toUserId || toUserId === myId || currentUser.muted) return;
+    const sender = getSenderInfo();
+    for (const targetSessionId of privateMessageStore.getActiveSocketSessionIds(toUserId)) {
+      io.to(SOCKET_CHANNELS.privateMessageSession(targetSessionId)).emit("pm:typing", {
+        fromUserId: myId,
+        username: sender.name,
       });
-
-      callback?.({ success: true, messages: conv.messages });
-    } catch (err) {
-      console.error("[PM:history] Error:", err);
-      callback?.({ success: true, messages: [] });
     }
   });
 
-  // ─── جلب قائمة المحادثات ───────────────────────────────────────────────────
-
-  socket.on("pm:conversations", (callback?: (res: any) => void) => {
-    try {
-      callback?.({ success: true, conversations: serializeConversations(myId) });
-    } catch (err) {
-      console.error("[PM:conversations] Error:", err);
-      callback?.({ success: true, conversations: [] });
-    }
-  });
-
-  // ─── تعليم محادثة كمقروءة ──────────────────────────────────────────────────
-
-  socket.on("pm:read", (data: { conversationId: string }) => {
-    try {
-      const conversationId = String(data?.conversationId || "").trim();
-      if (!conversationId) return;
-      const conv = pmStore.get(conversationId);
-      if (!conv) return;
-
-      let changed = false;
-      conv.messages.forEach(m => {
-        if (m.receiverId === myId && !m.read) {
-          m.read = true;
-          changed = true;
-        }
-      });
-
-      if (changed) {
-        const otherUser = getOtherUser(conv, myId);
-        io.to(SOCKET_CHANNELS.social(otherUser.id)).emit("pm:read", { conversationId, readerId: myId });
-      }
-
-      socket.emit("pm:unread_update", { conversationId, unreadCount: 0 });
-    } catch (err) {
-      console.error("[PM:read] Error:", err);
-    }
-  });
-
-  // ─── إشعار الكتابة ─────────────────────────────────────────────────────────
-
-  socket.on("pm:typing", (data: { toUserId: string }) => {
-    const toUserId = String(data?.toUserId || "").trim();
+  socket.on("pm:stop_typing", (data: { toUserId?: unknown }) => {
+    const toUserId = typeof data?.toUserId === "string" ? data.toUserId.trim() : "";
     if (!toUserId || toUserId === myId) return;
-    if ((socket.data.user as any).muted) return;
-    io.to(SOCKET_CHANNELS.social(toUserId)).emit("pm:typing", {
-      fromUserId: myId,
-      username: myInfo.name,
-    });
-  });
-
-  socket.on("pm:stop_typing", (data: { toUserId: string }) => {
-    const toUserId = String(data?.toUserId || "").trim();
-    if (!toUserId) return;
-    io.to(SOCKET_CHANNELS.social(toUserId)).emit("pm:stop_typing", {
-      fromUserId: myId,
-    });
-  });
-
-  // ─── تفاعل على رسالة ──────────────────────────────────────────────────────
-
-  socket.on("pm:react", (
-    data: { messageId: string; conversationId: string; reaction: PMReactionType },
-    callback?: (res: any) => void,
-  ) => {
-    try {
-      const conversationId = String(data?.conversationId || "").trim();
-      const messageId = String(data?.messageId || "").trim();
-      const reaction = data?.reaction;
-
-      if (!conversationId || !messageId || !reaction) {
-        return callback?.({ success: false, error: "بيانات ناقصة" });
-      }
-
-      if (!PM_REACTIONS.includes(reaction)) {
-        return callback?.({ success: false, error: "نوع تفاعل غير صالح" });
-      }
-
-      const conv = pmStore.get(conversationId);
-      if (!conv) {
-        return callback?.({ success: false, error: "محادثة غير موجودة" });
-      }
-
-      // التحقق من أن المستخدم طرف في المحادثة
-      if (conv.userA.id !== myId && conv.userB.id !== myId) {
-        return callback?.({ success: false, error: "غير مصرح" });
-      }
-
-      const msg = conv.messages.find(m => m.id === messageId);
-      if (!msg) {
-        return callback?.({ success: false, error: "الرسالة غير موجودة" });
-      }
-
-      // تهيئة reactions إذا لم تكن موجودة
-      if (!msg.reactions) msg.reactions = {};
-
-      const existingReaction = msg.reactions[myId];
-
-      if (existingReaction === reaction) {
-        // نفس التفاعل → إزالة (toggle off)
-        delete msg.reactions[myId];
-      } else {
-        // تفاعل جديد أو تغيير
-        msg.reactions[myId] = reaction;
-      }
-
-      const otherUserId = conv.userA.id === myId ? conv.userB.id : conv.userA.id;
-
-      // إرسال التحديث لطرفي المحادثة
-      const reactionUpdate = {
-        messageId,
-        conversationId,
-        reactions: msg.reactions,
-      };
-
-      io.to(SOCKET_CHANNELS.social(myId)).emit("pm:reaction", reactionUpdate);
-      io.to(SOCKET_CHANNELS.social(otherUserId)).emit("pm:reaction", reactionUpdate);
-
-      callback?.({ success: true, reactions: msg.reactions });
-    } catch (err) {
-      console.error("[PM:react] Error:", err);
-      callback?.({ success: false, error: "خطأ في الخادم" });
+    for (const targetSessionId of privateMessageStore.getActiveSocketSessionIds(toUserId)) {
+      io.to(SOCKET_CHANNELS.privateMessageSession(targetSessionId)).emit("pm:stop_typing", {
+        fromUserId: myId,
+      });
     }
+  });
+
+  socket.on("pm:react", async (
+    data: {
+      messageId?: unknown;
+      conversationId?: unknown;
+      reaction?: unknown;
+    },
+    callback?: (response: Record<string, unknown>) => void,
+  ) => {
+    const conversationId = typeof data?.conversationId === "string" ? data.conversationId : "";
+    const messageId = typeof data?.messageId === "string" ? data.messageId : "";
+    const reaction = data?.reaction;
+    if (!conversationId || !messageId || typeof reaction !== "string" || !PM_REACTIONS.includes(reaction as PMReactionType)) {
+      return callback?.({ success: false, error: "بيانات التفاعل غير صالحة" });
+    }
+    const currentUser = socket.data?.user || rawUser;
+    if (!(await hasChatFeatureAccess(currentUser, ["private_reactions.use"]))) {
+      return callback?.({ success: false, error: "لا تملك صلاحية التفاعل مع رسائل الخاص" });
+    }
+
+    const result = privateMessageStore.react(sessionId, conversationId, messageId, reaction);
+    if (!result) return callback?.({ success: false, error: "المحادثة أو الرسالة غير موجودة" });
+    const update = { messageId, conversationId, reactions: result.reactions };
+    for (const targetSessionId of result.sessionIds) {
+      io.to(SOCKET_CHANNELS.privateMessageSession(targetSessionId)).emit("pm:reaction", update);
+    }
+    callback?.({ success: true, reactions: result.reactions });
   });
 }

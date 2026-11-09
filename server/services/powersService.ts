@@ -1,6 +1,11 @@
 import { db, dbPool } from "../db/index";
 import { moderationEvents } from "../db/schema";
 import { invalidatePermissionCache } from "./permissionEngine";
+import {
+  SYSTEM_OWNER_RANK,
+  canAssignSystemOwnerRole,
+  isSystemOwnerUsername,
+} from "./systemOwner";
 
 export type PowerAction = "kick" | "ban" | "alert" | "mute" | "delmsg" | "clear_room";
 
@@ -248,15 +253,10 @@ export const getUserAuthoritativeRank = async (userIdOrName: string, fallbackUse
 
   let rank = row.role_rank || 0;
 
-  if (
-    usernameLower === "safarihost" ||
-    usernameLower === "admin" ||
-    powerLower === "owner" ||
-    powerLower === "ispower" ||
-    powerLower === "مالك" ||
-    roleLower === "owner"
-  ) {
-    rank = Math.max(rank, 100000);
+  if (isSystemOwnerUsername(usernameLower)) {
+    rank = Math.max(rank, SYSTEM_OWNER_RANK);
+  } else if (["owner", "ispower", "مالك"].includes(powerLower) || ["owner", "ispower", "مالك"].includes(roleLower)) {
+    rank = Math.max(rank, 9000);
   } else if (POWERS_MAP[powerLower]) {
     rank = Math.max(rank, POWERS_MAP[powerLower].rank);
   } else if (POWERS_MAP[roleLower]) {
@@ -269,7 +269,9 @@ export const getUserAuthoritativeRank = async (userIdOrName: string, fallbackUse
     id: String(row.id),
     username: String(row.username),
     roleId: row.role_id ? String(row.role_id) : undefined,
-    roleName: String(row.role_name || row.legacy_name || row.power || "عضو"),
+    roleName: isSystemOwnerUsername(row.username)
+      ? "Owner"
+      : String(row.role_name || row.legacy_name || row.power || "عضو"),
     rank,
     iconUrl: row.icon_url ? String(row.icon_url) : "",
   };
@@ -303,13 +305,11 @@ export const assignUserRole = async ({
     return { success: false, error: "لا يمكنك تعديل أو ترقية رتبتك بنفسك" };
   }
 
-  const isActorOwner = Boolean(
-    actor.rank >= 99999 ||
-    actor.username.toLowerCase() === "safarihost" ||
-    actor.roleName.toLowerCase() === "owner" ||
-    actor.roleName.toLowerCase() === "ispower" ||
-    actor.roleName === "مالك"
-  );
+  const isActorOwner = isSystemOwnerUsername(actor.username);
+
+  if (isSystemOwnerUsername(target.username)) {
+    return { success: false, error: "لا يمكن تغيير رتبة مالك الاستضافة" };
+  }
 
   // 2. التحقق من الهرمية: لا يمكن التعديل على رتبة مساوية أو أعلى إلا إذا كان الفاعل مالكاً
   if (target.rank >= actor.rank && !isActorOwner) {
@@ -320,8 +320,7 @@ export const assignUserRole = async ({
 
   // 3. إزالة الترقية وإعادة كعضو عادي
   if (!cleanRoleIdent) {
-    const canonicalRole = target.username.toLowerCase() === "safarihost" ? "owner" : "member";
-    await dbPool.query(`UPDATE users SET power = '', role = $1 WHERE id = $2`, [canonicalRole, target.id]);
+    await dbPool.query(`UPDATE users SET power = '', role = 'member' WHERE id = $1`, [target.id]);
     await dbPool.query(`UPDATE user_profiles SET power = '' WHERE user_id = $1`, [target.id]);
     await dbPool.query(`DELETE FROM user_role_assignments WHERE user_id = $1`, [target.id]);
     await invalidatePermissionCache(target.id);
@@ -339,7 +338,7 @@ export const assignUserRole = async ({
 
   // 4. فحص الرتبة المطلوبة في قاعدة البيانات
   const roleRes = await dbPool.query(
-    `SELECT id, name, legacy_name, rank, icon_url, is_active
+    `SELECT id, name, legacy_name, rank, icon_url, is_active, is_owner
      FROM roles
      WHERE (legacy_name = $1 OR name = $1 OR id::text = $1)
      LIMIT 1`,
@@ -351,6 +350,9 @@ export const assignUserRole = async ({
   }
 
   const role = roleRes.rows[0];
+  if (role.is_owner && !canAssignSystemOwnerRole(target.username)) {
+    return { success: false, error: "رتبة المالك مخصصة لحساب مالك الاستضافة" };
+  }
   if (!role.is_active) {
     return { success: false, error: "هذه الرتبة معطلة حالياً ولا يمكن إسنادها" };
   }
@@ -364,7 +366,7 @@ export const assignUserRole = async ({
   const roleLower = String(role.name || legacyName || "").toLowerCase().trim();
 
   let canonicalRole = "member";
-  if (["owner", "ispower", "مالك"].includes(roleLower) || target.username.toLowerCase() === "safarihost" || role.rank >= 99999) {
+  if (role.is_owner && canAssignSystemOwnerRole(target.username)) {
     canonicalRole = "owner";
   } else if (["admin", "ادمن", "أدمن"].includes(roleLower) || role.rank >= 8000) {
     canonicalRole = "admin";

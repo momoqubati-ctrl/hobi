@@ -1,12 +1,13 @@
 import { defineEventHandler, getRouterParam, setResponseStatus } from "h3";
 import { dbPool } from "../../../../../db";
 import { getAdminContext } from "../../../../../services/adminAccess";
+import { handleApiError } from "../../../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   const admin = getAdminContext(event);
   if (!admin.ok) {
     setResponseStatus(event, admin.statusCode);
-    return { success: false, message: admin.message };
+    return { success: false, message: admin.message, error: admin.message };
   }
 
   const roleId = getRouterParam(event, "id");
@@ -38,7 +39,6 @@ export default defineEventHandler(async (event) => {
       total: result.rowCount ?? 0,
     };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

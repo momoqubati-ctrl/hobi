@@ -1,18 +1,17 @@
-import { defineEventHandler, getRouterParam, getQuery, setResponseStatus } from "h3";
+import { getRouterParam, setResponseStatus } from "h3";
 import { deleteMail } from "../../../services/internalMailService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
   const id = getRouterParam(event, "id");
-  const query = getQuery(event);
-  const userId = query.userId as string;
 
-  if (!id || !userId) {
+  if (!id) {
     setResponseStatus(event, 400);
-    return { success: false, message: "id, userId مطلوبان" };
+    return { success: false, message: "id مطلوب" };
   }
 
   try {
-    await deleteMail(id, userId);
+    await deleteMail(id, auth.userId);
     return { success: true };
   } catch (error) {
     console.error("deleteMail error:", error);

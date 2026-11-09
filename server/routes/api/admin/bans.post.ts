@@ -1,16 +1,18 @@
 import { defineEventHandler, readBody } from "h3";
 import { dbPool } from "../../../db";
 import { guardAdminAction, logAdminAudit } from "../../../services/adminPermissions";
+import { ApiError, handleApiError } from "../../../utils/apiError";
+import { recordBanInCache, revokeIpTokens, revokeUserTokens } from "../../../services/tokenRevocation";
 
 export default defineEventHandler(async (event) => {
   try {
     const admin = await guardAdminAction(event, "ban");
     const body = await readBody(event);
 
-    const { targetName, type, value, ip, deviceFingerprint, deviceSignature, countryCode, reason, expiresAt, expiresLabel } = body;
+    const { targetName, type, value, ip, deviceFingerprint, deviceSignature, countryCode, reason, expiresAt, expiresLabel } = body || {};
 
     if (!targetName || !type) {
-      throw new Error("البيانات المطلوبة ناقصة");
+      throw new ApiError(400, "BAD_REQUEST", "البيانات المطلوبة ناقصة");
     }
 
     const adminId = await dbPool.query(
@@ -39,6 +41,20 @@ export default defineEventHandler(async (event) => {
       ],
     );
 
+    recordBanInCache({
+      targetName,
+      type,
+      ip,
+      deviceFingerprint,
+      deviceSignature,
+    });
+    if (targetName) {
+      revokeUserTokens(targetName);
+    }
+    if (ip) {
+      revokeIpTokens(ip);
+    }
+
     await logAdminAudit({
       actorId: admin.userId,
       action: "ban.create",
@@ -49,6 +65,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, message: "تم الحظر بنجاح", banId: result.rows[0].id };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

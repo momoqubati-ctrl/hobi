@@ -175,11 +175,19 @@ export function useAuth() {
 
   // Validate persisted token once on mount (expire check) and listen for auth events
   useEffect(() => {
-    const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem("authToken");
-    if (token && !isTokenValid(token)) {
-      terminateUserSession(false);
-      setState({ user: null, token: null, isLoading: false, error: null });
-    }
+    // ── فحص فوري عند mount ──────────────────────────────────────────────────
+    const checkAndExpire = () => {
+      const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem("authToken");
+      if (token && !isTokenValid(token)) {
+        terminateUserSession(false);
+        setState({ user: null, token: null, isLoading: false, error: null });
+        navigate("/");
+      }
+    };
+    checkAndExpire();
+
+    // ── فحص دوري كل 30 ثانية لاكتشاف انتهاء الجلسة أثناء الاستخدام ───────
+    const intervalId = setInterval(checkAndExpire, 30_000);
 
     const handleAuthLogin = () => {
       try {
@@ -198,15 +206,17 @@ export function useAuth() {
 
     const handleAuthLogout = () => {
       setState({ user: null, token: null, isLoading: false, error: null });
+      navigate("/");
     };
 
     window.addEventListener("app-auth-login", handleAuthLogin);
     window.addEventListener("app-auth-logout", handleAuthLogout);
     return () => {
+      clearInterval(intervalId);
       window.removeEventListener("app-auth-login", handleAuthLogin);
       window.removeEventListener("app-auth-logout", handleAuthLogout);
     };
-  }, []);
+  }, [navigate]);
 
   /** Persist successful auth to localStorage and update state */
   const persist = useCallback((token: string, user: AuthUser) => {

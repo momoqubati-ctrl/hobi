@@ -2,13 +2,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { isMinioEnabled, uploadToMinio } from "./minioClient";
 
-const allowedExtensions = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "mp4", "webm", "mov", "avi", "mp3", "wav", "ogg", "m4a"]);
+const allowedExtensions = new Set([
+  "jpg", "jpeg", "png", "webp", "gif",
+  "mp4", "webm", "mov", "avi", "mkv",
+  "mp3", "wav", "ogg", "m4a", "aac",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+  "zip", "rar", "7z", "txt", "csv", "json",
+]);
 
 const MIME_MAP: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
-  gif: "image/gif", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm",
+  gif: "image/gif", mp4: "video/mp4", webm: "video/webm",
   mov: "video/quicktime", avi: "video/x-msvideo", mp3: "audio/mpeg",
-  wav: "audio/wav", ogg: "audio/ogg", m4a: "audio/mp4",
+  wav: "audio/wav", ogg: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac", mkv: "video/x-matroska",
+  pdf: "application/pdf",
+  doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  zip: "application/zip", rar: "application/vnd.rar", "7z": "application/x-7z-compressed",
+  txt: "text/plain", csv: "text/csv", json: "application/json",
 };
 
 /** Maximum file size per kind (bytes) */
@@ -21,7 +33,10 @@ const MAX_SIZES: Record<string, number> = {
 };
 
 export const normalizeUploadExtension = (value: string) => {
-  const ext = value.toLowerCase() === "svg+xml" ? "svg" : value.toLowerCase();
+  const ext = value.toLowerCase().replace(/^\./, "");
+  if (ext === "svg" || ext === "svg+xml" || ext === "xml" || ext === "html" || ext === "htm") {
+    return "";
+  }
   return allowedExtensions.has(ext) ? ext : "";
 };
 

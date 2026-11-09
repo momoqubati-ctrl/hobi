@@ -1,0 +1,481 @@
+{
+  "source": "crux",
+  "origin": "https://example.com",
+  "generated": "2026-08-21T00:00:00.000Z",
+  "available": true,
+  "note": "CrUX publishes p75 only. p50/p90 are histogram-derived approximations; p95/p99 are not derivable.",
+  "records": [
+    {
+      "scope": "origin",
+      "target": "https://example.com",
+      "formFactor": "PHONE",
+      "status": "ok",
+      "record": {
+        "key": {},
+        "collectionPeriod": {
+          "firstDate": {
+            "year": 2026,
+            "month": 7,
+            "day": 25
+          },
+          "lastDate": {
+            "year": 2026,
+            "month": 8,
+            "day": 21
+          }
+        },
+        "metrics": {
+          "lcp": {
+            "p75": 3800,
+            "p50": 2183.3,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": true,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.42,
+              "needsImprovement": 0.36,
+              "poor": 0.22
+            },
+            "histogram": []
+          },
+          "inp": {
+            "p75": 260,
+            "p50": 138.2,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": true,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.55,
+              "needsImprovement": 0.3,
+              "poor": 0.15
+            },
+            "histogram": []
+          },
+          "cls": {
+            "p75": 0.18,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.61,
+              "needsImprovement": 0.24,
+              "poor": 0.15
+            },
+            "histogram": []
+          },
+          "fcp": {
+            "p75": 2100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.58,
+              "needsImprovement": 0.3,
+              "poor": 0.12
+            },
+            "histogram": []
+          },
+          "ttfb": {
+            "p75": 950,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.52,
+              "needsImprovement": 0.33,
+              "poor": 0.15
+            },
+            "histogram": []
+          }
+        }
+      }
+    },
+    {
+      "scope": "origin",
+      "target": "https://example.com",
+      "formFactor": "DESKTOP",
+      "status": "ok",
+      "record": {
+        "key": {},
+        "collectionPeriod": {
+          "firstDate": {
+            "year": 2026,
+            "month": 7,
+            "day": 25
+          },
+          "lastDate": {
+            "year": 2026,
+            "month": 8,
+            "day": 21
+          }
+        },
+        "metrics": {
+          "lcp": {
+            "p75": 1900,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.88,
+              "needsImprovement": 0.09,
+              "poor": 0.03
+            },
+            "histogram": []
+          },
+          "inp": {
+            "p75": 120,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.93,
+              "needsImprovement": 0.05,
+              "poor": 0.02
+            },
+            "histogram": []
+          },
+          "cls": {
+            "p75": 0.04,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.95,
+              "needsImprovement": 0.03,
+              "poor": 0.02
+            },
+            "histogram": []
+          },
+          "fcp": {
+            "p75": 1100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.9,
+              "needsImprovement": 0.07,
+              "poor": 0.03
+            },
+            "histogram": []
+          },
+          "ttfb": {
+            "p75": 600,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.86,
+              "needsImprovement": 0.1,
+              "poor": 0.04
+            },
+            "histogram": []
+          }
+        }
+      }
+    },
+    {
+      "scope": "url",
+      "target": "https://example.com/",
+      "route": "/",
+      "formFactor": "PHONE",
+      "status": "ok",
+      "record": {
+        "key": {},
+        "collectionPeriod": {
+          "firstDate": {
+            "year": 2026,
+            "month": 7,
+            "day": 25
+          },
+          "lastDate": {
+            "year": 2026,
+            "month": 8,
+            "day": 21
+          }
+        },
+        "metrics": {
+          "lcp": {
+            "p75": 3800,
+            "p50": 2183.3,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": true,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.42,
+              "needsImprovement": 0.36,
+              "poor": 0.22
+            },
+            "histogram": []
+          },
+          "inp": {
+            "p75": 260,
+            "p50": 138.2,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": true,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.55,
+              "needsImprovement": 0.3,
+              "poor": 0.15
+            },
+            "histogram": []
+          },
+          "cls": {
+            "p75": 0.18,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.61,
+              "needsImprovement": 0.24,
+              "poor": 0.15
+            },
+            "histogram": []
+          },
+          "fcp": {
+            "p75": 2100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.58,
+              "needsImprovement": 0.3,
+              "poor": 0.12
+            },
+            "histogram": []
+          },
+          "ttfb": {
+            "p75": 950,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.52,
+              "needsImprovement": 0.33,
+              "poor": 0.15
+            },
+            "histogram": []
+          }
+        }
+      }
+    },
+    {
+      "scope": "url",
+      "target": "https://example.com/",
+      "route": "/",
+      "formFactor": "DESKTOP",
+      "status": "ok",
+      "record": {
+        "key": {},
+        "collectionPeriod": {
+          "firstDate": {
+            "year": 2026,
+            "month": 7,
+            "day": 25
+          },
+          "lastDate": {
+            "year": 2026,
+            "month": 8,
+            "day": 21
+          }
+        },
+        "metrics": {
+          "lcp": {
+            "p75": 1900,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.88,
+              "needsImprovement": 0.09,
+              "poor": 0.03
+            },
+            "histogram": []
+          },
+          "inp": {
+            "p75": 120,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.93,
+              "needsImprovement": 0.05,
+              "poor": 0.02
+            },
+            "histogram": []
+          },
+          "cls": {
+            "p75": 0.04,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.95,
+              "needsImprovement": 0.03,
+              "poor": 0.02
+            },
+            "histogram": []
+          },
+          "fcp": {
+            "p75": 1100,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.9,
+              "needsImprovement": 0.07,
+              "poor": 0.03
+            },
+            "histogram": []
+          },
+          "ttfb": {
+            "p75": 600,
+            "p50": null,
+            "p90": null,
+            "p95": null,
+            "p99": null,
+            "approximate": {
+              "p50": false,
+              "p90": false
+            },
+            "distribution": {
+              "good": 0.86,
+              "needsImprovement": 0.1,
+              "poor": 0.04
+            },
+            "histogram": []
+          }
+        }
+      }
+    }
+  ],
+  "history": {
+    "status": "ok",
+    "periods": [
+      "2026-06-19",
+      "2026-06-26",
+      "2026-07-03",
+      "2026-07-10",
+      "2026-07-17",
+      "2026-07-24",
+      "2026-07-31",
+      "2026-08-07",
+      "2026-08-14"
+    ],
+    "series": {
+      "lcp": [
+        2400,
+        2450,
+        2500,
+        2600,
+        2900,
+        3200,
+        3500,
+        3700,
+        3800
+      ],
+      "cls": [
+        0.05,
+        0.05,
+        0.06,
+        0.06,
+        0.07,
+        0.07,
+        0.07,
+        0.08,
+        0.08
+      ]
+    }
+  }
+}

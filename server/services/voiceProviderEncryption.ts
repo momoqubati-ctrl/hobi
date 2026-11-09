@@ -6,6 +6,20 @@ const AES_GCM_IV_BYTES = 12;
 const AES_GCM_TAG_BYTES = 16;
 const AES_KEY_BYTES = 32;
 
+export class VoiceProviderEncryptionConfigurationError extends Error {
+  constructor() {
+    super(`${KEY_ENVIRONMENT_VARIABLE} must be configured as Base64 for a 32-byte key`);
+    this.name = "VoiceProviderEncryptionConfigurationError";
+  }
+}
+
+export class VoiceProviderSecretDecryptionError extends Error {
+  constructor(message = "Stored voice provider secret could not be decrypted") {
+    super(message);
+    this.name = "VoiceProviderSecretDecryptionError";
+  }
+}
+
 export interface EncryptedVoiceProviderSecret {
   version: typeof ENCRYPTION_VERSION;
   iv: string;
@@ -31,7 +45,7 @@ function getEncryptionKey(): Buffer {
   const key = decodeBase64(configuredKey);
 
   if (!key || key.length !== AES_KEY_BYTES) {
-    throw new Error(`${KEY_ENVIRONMENT_VARIABLE} must be configured as Base64 for a 32-byte key`);
+    throw new VoiceProviderEncryptionConfigurationError();
   }
 
   return key;
@@ -43,12 +57,12 @@ function parseEncryptedSecret(value: unknown): {
   authTag: Buffer;
 } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Invalid encrypted voice provider secret");
+    throw new VoiceProviderSecretDecryptionError("Invalid encrypted voice provider secret");
   }
 
   const envelope = value as Record<string, unknown>;
   if (envelope.version !== ENCRYPTION_VERSION) {
-    throw new Error("Invalid encrypted voice provider secret");
+    throw new VoiceProviderSecretDecryptionError("Invalid encrypted voice provider secret");
   }
 
   const iv = decodeBase64(envelope.iv);
@@ -61,7 +75,7 @@ function parseEncryptedSecret(value: unknown): {
     !authTag ||
     authTag.length !== AES_GCM_TAG_BYTES
   ) {
-    throw new Error("Invalid encrypted voice provider secret");
+    throw new VoiceProviderSecretDecryptionError("Invalid encrypted voice provider secret");
   }
 
   return { iv, ciphertext, authTag };
@@ -96,6 +110,6 @@ export function decryptVoiceProviderSecret(value: unknown): string {
       decipher.final(),
     ]).toString("utf8");
   } catch {
-    throw new Error("Stored voice provider secret could not be decrypted");
+    throw new VoiceProviderSecretDecryptionError();
   }
 }

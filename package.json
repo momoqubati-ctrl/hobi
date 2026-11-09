@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -15,6 +16,9 @@
     "legacy:normalize-performance": "node scripts/legacy-normalize-performance.cjs",
     "legacy:create-admin": "node scripts/create-safarihost-admin.cjs",
     "db:migrate": "node scripts/apply-distributed-schema.cjs",
+    "db:wallet-backfill": "node scripts/migrate-wallet-ledger.mjs",
+    "db:coin-purchases": "node scripts/migrate-coin-purchases.mjs",
+    "db:financial-foundation": "node scripts/migrate-financial-foundation-closeout.mjs",
     "db:verify": "node scripts/verify-db.cjs",
     "lint": "eslint .",
     "preview": "vite preview",

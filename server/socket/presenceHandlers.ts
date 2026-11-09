@@ -19,6 +19,8 @@ import { findInMemoryUser, updateInMemoryUserProfile } from "../services/authSer
 import { dbPool } from "../db";
 import { updatePersistedUserProfile } from "../services/userRepository";
 import { updateUserMessageIdentity } from "../services/chatStore";
+import { getUserContext } from "../services/permissionEngine";
+import { filterProfileUpdatesByPermissions } from "../services/visualProfilePermissions";
 
 type PresenceAssetFields = {
   avatar?: unknown;
@@ -139,6 +141,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   await addConnectedUser(socket.id, {
     id: user.id,
     username: user.username,
+    displayName: socket.data.user.displayName || user.displayName || user.username,
+    mentionName: socket.data.user.mentionName || user.mentionName || "",
+    publicUserId: socket.data.user.publicUserId || user.publicUserId || "",
     role: user.role,
     avatar: user.avatar,
     countryCode: user.countryCode,
@@ -163,14 +168,16 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     console.error("Failed to add connected user to presence:", err);
   });
 
-  const pendingDisconnect = pendingDisconnects.get(user.id);
-  if (pendingDisconnect) {
-    if (pendingDisconnect.socketId !== socket.id) {
-      clearTimeout(pendingDisconnect.timeout);
-      clearTimeout(pendingDisconnect.presenceTimeout);
-      pendingDisconnects.delete(user.id);
-      console.debug("[presence] canceled pending disconnect for reconnecting user", { userId: user.id, oldSocketId: pendingDisconnect.socketId, newSocketId: socket.id });
-    }
+  // إلغاء معلّقات قطع الاتصال السابقة لنفس المستخدم (المفاتيح الآن لكل جلسة socketId)
+  for (const [pKey, pEntry] of Array.from(pendingDisconnects.entries())) {
+    const isSameUser = String((pEntry.userData as any)?.id || "") === String(user.id);
+    const isOwn = pKey === socket.id || pEntry.socketId === socket.id;
+    if (!isSameUser && !isOwn) continue;
+    if (pEntry.socketId === socket.id) continue;
+    clearTimeout(pEntry.timeout);
+    if (pEntry.presenceTimeout) clearTimeout(pEntry.presenceTimeout);
+    pendingDisconnects.delete(pKey);
+    console.debug("[presence] canceled pending disconnect for reconnecting user", { userId: user.id, oldSocketId: pEntry.socketId, newSocketId: socket.id });
   }
 
   // Emit user_connected directly (not inside .then) to ensure it always fires
@@ -195,6 +202,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       socketId: socket.id,
       userId: user.id,
       username: user.username,
+      displayName: socket.data.user.displayName || user.displayName || user.username,
+      mentionName: socket.data.user.mentionName || user.mentionName || "",
+      publicUserId: socket.data.user.publicUserId || user.publicUserId || "",
       role: user.role,
       countryCode: user.countryCode,
       nameColor: dbNameColor || user.nameColor || "",
@@ -287,6 +297,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
           id: u.id,
           socketId: u.socketId,
           username: u.username,
+          displayName: (u as any).displayName || u.username,
+          mentionName: (u as any).mentionName || "",
+          publicUserId: (u as any).publicUserId || "",
           role: u.role,
           avatar: u.avatar,
           countryCode: u.countryCode,
@@ -321,10 +334,22 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
   const handleProfileUpdate = async (data: Record<string, any>) => {
     if (!data || typeof data !== "object") return;
 
-    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl", "nameColor", "messageColor", "statusFontColor", "giftedBannerUrl", "giftedGiftIconUrl", "giftedPromotionIconUrl"];
+    let visualPermissions: ReadonlySet<string> = new Set();
+    const hasVisualAssetUpdate =
+      (typeof data.avatarFrameUrl === "string" && data.avatarFrameUrl.trim() !== "") ||
+      (typeof data.memberCardBgUrl === "string" && data.memberCardBgUrl.trim() !== "");
+    if (hasVisualAssetUpdate) {
+      try {
+        visualPermissions = (await getUserContext(String(user.id))).permissions;
+      } catch (error) {
+        console.warn(`[ProfilePermissions] failed to load visual permissions for ${user.id}:`, error);
+      }
+    }
+    const permittedData = filterProfileUpdatesByPermissions(data, visualPermissions);
+    const allowedKeys = ["avatar", "avatarUrl", "cover", "profileCover", "profileMsg", "mentionName", "avatarFrameUrl", "giftIconUrl", "messageBubbleStyle", "siteBadge", "memberCardBgUrl", "nameColor", "messageColor", "statusFontColor", "giftedBannerUrl", "giftedGiftIconUrl", "giftedPromotionIconUrl"];
     for (const key of allowedKeys) {
-      if (typeof data[key] === "string") {
-        const val = data[key].trim().slice(0, 255);
+      if (typeof permittedData[key] === "string") {
+        const val = permittedData[key].trim().slice(0, 255);
         if (key === "avatarFrameUrl") {
           (socket.data.user as any)[key] = val || "";
         } else if (key === "avatar" || key === "avatarUrl") {
@@ -348,9 +373,15 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     }
 
     const oldUsername = user.username;
+    if (typeof data.mentionName === "string") {
+      const cleanM = data.mentionName.trim().slice(0, 32);
+      (socket.data.user as any).mentionName = cleanM;
+      (user as any).mentionName = cleanM;
+    }
     if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
-      user.username = data.displayName.trim().slice(0, 80);
-      socket.data.user.username = user.username;
+      const cleanDisplayName = data.displayName.trim().slice(0, 80);
+      user.displayName = cleanDisplayName;
+      socket.data.user.displayName = cleanDisplayName;
     }
 
     // تحديث البيانات في كاش الحضور بـ Redis
@@ -367,7 +398,7 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         profileUpdates.profileMsg = socket.data.user.profileMsg;
       }
       if (typeof data.displayName === "string" && data.displayName.trim().length > 0) {
-        profileUpdates.displayName = user.username;
+        profileUpdates.displayName = socket.data.user.displayName || data.displayName.trim().slice(0, 80);
       }
       if (typeof data.nameColor === "string") {
         console.log("[presenceHandlers] Setting nameColor in socket.data.user:", data.nameColor);
@@ -393,6 +424,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       await addConnectedUser(socket.id, {
         id: user.id,
         username: user.username,
+        displayName: socket.data.user.displayName || user.displayName || user.username,
+        mentionName: socket.data.user.mentionName || user.mentionName || "",
+        publicUserId: socket.data.user.publicUserId || user.publicUserId || "",
         role: user.role,
         avatar: socket.data.user.avatar,
         countryCode: user.countryCode,
@@ -483,6 +517,9 @@ const updatedAssets = normalizePresenceUserAssets({
       await addConnectedUser(socket.id, {
         id: user.id,
         username: user.username,
+        displayName: (socket.data.user as any)?.displayName || (user as any)?.displayName || user.username,
+        mentionName: (socket.data.user as any)?.mentionName || (user as any)?.mentionName || "",
+        publicUserId: (socket.data.user as any)?.publicUserId || (user as any)?.publicUserId || "",
         role: user.role,
         avatar: socket.data.user.avatar || user.avatar,
         countryCode: user.countryCode,
@@ -512,6 +549,9 @@ const updatedAssets = normalizePresenceUserAssets({
       socketId: socket.id,
       userId: user.id,
       username: user.username,
+      displayName: (socket.data.user as any)?.displayName || (user as any)?.displayName || user.username,
+      mentionName: (socket.data.user as any)?.mentionName || (user as any)?.mentionName || "",
+      publicUserId: (socket.data.user as any)?.publicUserId || (user as any)?.publicUserId || "",
       role: user.role,
       status: newStatus,
       avatar: socket.data.user.avatar || user.avatar,
@@ -525,17 +565,26 @@ const updatedAssets = normalizePresenceUserAssets({
    */
   socket.on("user_logout", async () => {
     try {
-      const roomId = socket.data.user.roomId;
+      const activeSockets = await io.fetchSockets();
+      const anotherSessionIsOnline = activeSockets.some(
+        (activeSocket) =>
+          activeSocket.id !== socket.id &&
+          String(activeSocket.data?.user?.id || "") === String(user.id) &&
+          String(activeSocket.data?.user?.sessionId || "") !==
+            String(socket.data.user.sessionId || ""),
+      );
       const removedUser = await removeConnectedUser(socket.id);
       const count = await getTotalOnlineCount();
       io.emit("online_count", { count });
-      io.emit("user_disconnected", {
-        socketId: socket.id,
-        userId: user.id,
-        username: user.username,
-        role: user.role,
-        count,
-      });
+      if (!anotherSessionIsOnline) {
+        io.emit("user_disconnected", {
+          socketId: socket.id,
+          userId: user.id,
+          username: user.username,
+          role: user.role,
+          count,
+        });
+      }
 
       if (removedUser && removedUser.roomId) {
         const memberCount = await getRoomMemberCount(removedUser.roomId);
@@ -543,11 +592,15 @@ const updatedAssets = normalizePresenceUserAssets({
       }
 
       // حذف أي مؤقتات معلقة لهذا المستخدم
-      const existing = pendingDisconnects.get(user.id);
-      if (existing) {
-        if (existing.timeout) clearTimeout(existing.timeout);
-        if (existing.presenceTimeout) clearTimeout(existing.presenceTimeout);
-        pendingDisconnects.delete(user.id);
+      if (!anotherSessionIsOnline) {
+        for (const [pKey, pEntry] of Array.from(pendingDisconnects.entries())) {
+          const isSameUser = String((pEntry.userData as any)?.id || "") === String(user.id);
+          const isOwn = pKey === socket.id || pEntry.socketId === socket.id;
+          if (!isSameUser && !isOwn) continue;
+          if (pEntry.timeout) clearTimeout(pEntry.timeout);
+          if (pEntry.presenceTimeout) clearTimeout(pEntry.presenceTimeout);
+          pendingDisconnects.delete(pKey);
+        }
       }
     } catch (err) {
       console.error("Failed to handle user_logout:", err);
@@ -583,22 +636,21 @@ const updatedAssets = normalizePresenceUserAssets({
         }
       };
 
-      // تحقق هل تمت الإزالة بالفعل عبر user_logout
-  const alreadyRemoved = !pendingDisconnects.has(user.id);
-      const existingDisconnect = pendingDisconnects.get(user.id);
+      // تحقق هل تمت الإزالة بالفعل عبر user_logout (المفاتيح الآن لكل جلسة socketId)
+      const existingDisconnect = pendingDisconnects.get(socket.id);
+      const alreadyRemoved = !existingDisconnect;
       if (existingDisconnect && existingDisconnect.socketId === socket.id) {
         await executeDisconnectPresence();
-        pendingDisconnects.delete(user.id);
+        pendingDisconnects.delete(socket.id);
         return;
       }
 
       if (roomId && !alreadyRemoved) {
-        const userKey = user.id;
         const presenceTimeout = setTimeout(() => {
           executeDisconnectPresence();
         }, 3000);
 
-          pendingDisconnects.set(userKey, {
+        pendingDisconnects.set(socket.id, {
           roomId,
           timeout: setTimeout(() => {}, 3000),
           presenceTimeout,

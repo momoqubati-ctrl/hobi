@@ -1,5 +1,7 @@
 import { dbPool } from "../db";
 import { redis, KEYS } from "./redis";
+import { SYSTEM_OWNER_RANK, isSystemOwnerUsername } from "./systemOwner";
+import { CHAT_FEATURE_PERMISSION_KEYS } from "../../src/lib/chatFeaturePermissions";
 
 // ──────────────────────────────────────────────────
 // الموارد (Resources) - كل مورد تحته read/edit/delete
@@ -24,10 +26,11 @@ export type BasicResource =
   // ── Admin Tabs ──
   | "admin_overview" | "admin_events" | "admin_actions"
   | "admin_users" | "admin_bans" | "admin_roles" | "admin_fltr"
-  | "admin_rooms" | "admin_stickers" | "admin_swiperbanners" | "admin_icons" | "admin_animatedfaces"
+  | "admin_rooms" | "admin_stickers" | "admin_gifts" | "admin_swiperbanners" | "admin_profileframes" | "admin_membercardtheme"
+  | "admin_icons" | "admin_animatedfaces"
   | "admin_roomBadges" | "admin_siteBadges"
   | "admin_shrt" | "admin_msgs" | "admin_bots"
-  | "admin_subs" | "admin_giftsgit" | "admin_agentwallets" | "admin_evaluationpoints"
+  | "admin_subs" | "admin_giftsgit" | "admin_agentwallets" | "admin_giftcommission" | "admin_evaluationpoints"
   | "admin_settings" | "admin_database" | "admin_micprovidercp" | "admin_ddosguardcp"
   | "admin_hostin" | "admin_hostcleanup" | "admin_hostcontrols" | "admin_hostsettings" | "admin_hostdomains";
 
@@ -42,6 +45,7 @@ export type PermissionKey =
   | `${BasicResource}.delete`
   | `${BasicResource}.all`
   | `${VisualResource}.use`
+  | (typeof CHAT_FEATURE_PERMISSION_KEYS)[number]
   | "cp.all";
 
 // ──────────────────────────────────────────────────
@@ -60,9 +64,9 @@ export function expandAllPermissions(perms: Set<string>): Set<string> {
     const resource = key.slice(0, dot);
     const suffix = key.slice(dot + 1);
     if (suffix === "all") {
-      expanded.add(`${resource}.read`);
-      expanded.add(`${resource}.edit`);
-      expanded.add(`${resource}.delete`);
+      const actions = RESOURCE_ACTIONS[resource]?.filter(action => action !== "all")
+        ?? ["read", "edit", "delete"];
+      actions.forEach(action => expanded.add(`${resource}.${action}`));
     }
   }
   return expanded;
@@ -72,6 +76,12 @@ export function expandAllPermissions(perms: Set<string>): Set<string> {
 // أنواع الـ CRUD لكل مورد
 // ──────────────────────────────────────────────────
 export const RESOURCE_ACTIONS: Record<string, string[]> = {
+  ...Object.fromEntries(
+    CHAT_FEATURE_PERMISSION_KEYS.map((permission) => [
+      permission.slice(0, permission.lastIndexOf(".")),
+      ["use"],
+    ]),
+  ),
   // Basic: read / edit / delete + all
   ...Object.fromEntries(
     ([
@@ -84,10 +94,11 @@ export const RESOURCE_ACTIONS: Record<string, string[]> = {
       "cp",
       "admin_overview", "admin_events", "admin_actions",
       "admin_users", "admin_bans", "admin_roles", "admin_fltr",
-      "admin_rooms", "admin_stickers", "admin_swiperbanners", "admin_icons", "admin_animatedfaces",
+      "admin_rooms", "admin_stickers", "admin_gifts", "admin_swiperbanners", "admin_profileframes", "admin_membercardtheme",
+      "admin_icons", "admin_animatedfaces",
       "admin_roomBadges", "admin_siteBadges",
       "admin_shrt", "admin_msgs", "admin_bots",
-      "admin_subs", "admin_giftsgit", "admin_agentwallets", "admin_evaluationpoints",
+      "admin_subs", "admin_giftsgit", "admin_agentwallets", "admin_giftcommission", "admin_evaluationpoints",
       "admin_settings", "admin_database", "admin_micprovidercp", "admin_ddosguardcp",
       "admin_hostin", "admin_hostcleanup", "admin_hostcontrols", "admin_hostsettings", "admin_hostdomains",
     ] as const).map(r => [r, ["read", "edit", "delete", "all"]])
@@ -124,13 +135,15 @@ export const getUserContext = async (userId: string): Promise<UserContext> => {
     if (cachedData) {
       const parsed = JSON.parse(cachedData);
       const perms = new Set(parsed.permissions || []);
-      return {
+      const cachedContext = {
         userId: parsed.userId,
         roleId: parsed.roleId,
         rankPriority: parsed.rankPriority,
         isStaff: parsed.isStaff,
         permissions: expandAllPermissions(perms),
       };
+      if (cachedContext.roleId || cachedContext.permissions.size > 0) return cachedContext;
+      await redis.del(cacheKey);
     }
   } catch (err) {
     console.warn(`[PermissionEngine] Redis cache read error for user ${userId}:`, err);
@@ -140,17 +153,49 @@ export const getUserContext = async (userId: string): Promise<UserContext> => {
   const result = await dbPool.query(`
     SELECT 
       u.id as "userId",
+      u.username as "username",
       u.power as "power",
-      r.id as "roleId",
-      r.rank as "rankPriority",
-      COALESCE(r.rank >= 9000, false) as "isStaff",
-      COALESCE(jsonb_object_agg(rp.permission_key, rp.permission_value) FILTER (WHERE rp.permission_key IS NOT NULL), '{}'::jsonb) as permissions
+      (SELECT assigned_role.id
+       FROM user_role_assignments role_assignment
+       JOIN roles assigned_role ON assigned_role.id = role_assignment.role_id
+       WHERE role_assignment.user_id = u.id
+         AND assigned_role.is_active = true
+         AND role_assignment.starts_at <= now()
+         AND (role_assignment.expires_at IS NULL OR role_assignment.expires_at > now())
+       ORDER BY assigned_role.rank DESC
+       LIMIT 1) as "roleId",
+      COALESCE(MAX(r.rank), 0) as "rankPriority",
+      COALESCE(BOOL_OR(r.rank >= 9000), false) as "isStaff",
+      COALESCE(BOOL_OR(r.is_owner), false) as "assignedOwner",
+      (SELECT owner_role.id
+       FROM user_role_assignments owner_assignment
+       JOIN roles owner_role ON owner_role.id = owner_assignment.role_id
+       WHERE owner_assignment.user_id = u.id
+         AND owner_role.is_owner = true
+       LIMIT 1) as "ownerRoleId",
+      COALESCE((
+        SELECT jsonb_object_agg(granted.permission_key, true)
+        FROM (
+          SELECT DISTINCT rp.permission_key
+          FROM user_role_assignments permission_assignment
+          JOIN roles permission_role
+            ON permission_role.id = permission_assignment.role_id
+           AND permission_role.is_active = true
+          JOIN role_permissions rp ON rp.role_id = permission_role.id
+          WHERE permission_assignment.user_id = u.id
+            AND permission_assignment.starts_at <= now()
+            AND (permission_assignment.expires_at IS NULL OR permission_assignment.expires_at > now())
+            AND rp.permission_value = 'true'::jsonb
+        ) granted
+      ), '{}'::jsonb) as permissions
     FROM users u
-    LEFT JOIN user_role_assignments ura ON u.id = ura.user_id
-    LEFT JOIN roles r ON ura.role_id = r.id
-    LEFT JOIN role_permissions rp ON r.id = rp.role_id
+    LEFT JOIN user_role_assignments ura
+      ON u.id = ura.user_id
+     AND ura.starts_at <= now()
+     AND (ura.expires_at IS NULL OR ura.expires_at > now())
+    LEFT JOIN roles r ON ura.role_id = r.id AND r.is_active = true
     WHERE u.id = $1
-    GROUP BY u.id, u.power, r.id, r.rank
+    GROUP BY u.id, u.username, u.power
   `, [userId]);
 
   if (result.rowCount === 0) {
@@ -165,20 +210,20 @@ export const getUserContext = async (userId: string): Promise<UserContext> => {
     }
   });
 
-  // منح كافة الصلاحيات لمستخدم الـ owner (ispower) حتى لو لم يكن مرتبطاً برتبة
-  const userPower = (row.power || "").toLowerCase().trim();
-  if (userPower === "owner" || userPower === "ispower") {
-    const allResources = Object.keys(RESOURCE_ACTIONS);
-    for (const resource of allResources) {
-      perms.add(`${resource}.all`);
+  const isOwner = isSystemOwnerUsername(row.username) && row.assignedOwner === true;
+  if (isOwner) {
+    for (const [resource, actions] of Object.entries(RESOURCE_ACTIONS)) {
+      for (const action of actions) {
+        perms.add(`${resource}.${action}`);
+      }
     }
   }
 
   const context: UserContext = {
     userId: row.userId,
-    roleId: row.roleId,
-    rankPriority: row.rankPriority || 0,
-    isStaff: userPower === "owner" || userPower === "ispower" ? true : (row.isStaff || false),
+    roleId: row.ownerRoleId || row.roleId || undefined,
+    rankPriority: isOwner ? SYSTEM_OWNER_RANK : Number(row.rankPriority) || 0,
+    isStaff: isOwner || row.isStaff || false,
     permissions: expandAllPermissions(perms),
   };
 

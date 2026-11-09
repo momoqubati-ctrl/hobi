@@ -1,6 +1,7 @@
 import { defineEventHandler, getRouterParam, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
 import { guardAdminAction, logAdminAudit } from "../../../../services/adminPermissions";
+import { handleApiError } from "../../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -33,7 +34,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, message: "تم حذف الكلمة من الفلتر بنجاح" };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

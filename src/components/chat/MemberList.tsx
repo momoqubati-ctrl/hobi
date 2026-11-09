@@ -1,4 +1,4 @@
-
+﻿
 // ===== Level Tier Styling Helper =====
 export const getLevelBadgeClass = (level: number = 1): string => {
   if (level >= 100) return "bg-gradient-to-r from-red-600 via-amber-500 to-purple-600 text-white font-black border border-amber-300 shadow-sm";
@@ -69,6 +69,7 @@ import StoryCreator from '@/components/story/StoryCreator';
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import { PermissionGate } from "@/components/ui/PermissionGate";
 
 interface MemberListProps {
   isSearchOpen?: boolean;
@@ -145,7 +146,10 @@ const getCurrentMember = () => {
     const raw = localStorage.getItem("user");
     if (!raw) return null;
     const user = JSON.parse(raw);
-    const name = typeof user.name === "string" && user.name.trim() ? user.name : "زائر";
+    const displayName = typeof user.displayName === "string" && user.displayName.trim() ? user.displayName : (typeof user.name === "string" && user.name.trim() ? user.name : "زائر");
+    const name = displayName;
+    const mentionName = typeof user.mentionName === "string" ? user.mentionName : "";
+    const publicUserId = typeof user.publicUserId === "string" ? user.publicUserId : "";
     const role = user.role === "admin" ? "admin" : user.role === "guest" ? "guest" : "member";
     const rawProfileMsg = typeof user.profileMsg === "string" ? user.profileMsg.trim() : "";
     const rawStatusMsg = typeof user.statusMsg === "string" ? user.statusMsg.trim() : "";
@@ -153,6 +157,9 @@ const getCurrentMember = () => {
 
     return {
       id: user.id || "0",
+      displayName,
+      mentionName,
+      publicUserId,
       idreg: (() => {
         const raw = user.idreg;
         if (typeof raw === "string" && raw.trim()) {
@@ -219,20 +226,21 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
     onlineUsers,
     onlineCount,
     mergeOnlineUser,
-    removeOnlineUser
+    removeOnlineUser,
+    myStatus,
+    myManualStatus,
+    setMyStatus,
   } = useRealtimeStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isConnected, setIsConnected] = useState(true); // Default to true since presence engine connects it
   const [storyCreatorOpen, setStoryCreatorOpen] = useState(false);
 
-  const [myStatus, setMyStatus] = useState<PresenceStatus>("online");
-  const myStatusRef = useRef<PresenceStatus>("online");
   const [userStatuses, setUserStatuses] = useState<Map<string, string>>(new Map());
   const [userCountries, setUserCountries] = useState<Map<string, string>>(new Map());
 
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const manualStatusRef = useRef<string | null>(null);
+  const manualStatusRef = useRef<string | null>(myManualStatus);
 
   const [profileTrigger, setProfileTrigger] = useState(0);
   const [ytPopupMember, setYtPopupMember] = useState<any>(null);
@@ -298,53 +306,58 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
     };
   }, [currentMember]);
 
+  // ===== Sync manual status from central store =====
+  useEffect(() => {
+    manualStatusRef.current = myManualStatus;
+    if (myManualStatus) {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    }
+  }, [myManualStatus]);
+
   // ===== Idle Detection for Current User =====
   useEffect(() => {
-    // Load manual status from sessionStorage
-    const storedManual = sessionStorage.getItem("manualStatus");
-    if (storedManual === "busy" || storedManual === "away") {
-      manualStatusRef.current = storedManual;
-      setMyStatus(storedManual as PresenceStatus);
-      myStatusRef.current = storedManual as PresenceStatus;
-      const socket = getSocket();
-      socket.emit("status_update", { status: storedManual });
-      return;
-    }
+    manualStatusRef.current = myManualStatus;
 
     const resetIdleTimer = () => {
       if (manualStatusRef.current) return;
 
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
 
-      setMyStatus((prev) => {
-        if (prev !== "online" && !manualStatusRef.current) {
-          const socket = getSocket();
+      const currentStatus = useRealtimeStore.getState().myStatus;
+      if (currentStatus !== "online" && !manualStatusRef.current) {
+        const socket = getSocket();
+        if (socket?.connected) {
           socket.emit("status_update", { status: "online" });
-          myStatusRef.current = "online";
-          return "online";
         }
-        return prev;
-      });
+        setMyStatus("online");
+      }
 
       idleTimerRef.current = setTimeout(() => {
         if (manualStatusRef.current) return;
         setMyStatus("idle");
-        myStatusRef.current = "idle";
         const socket = getSocket();
-        socket.emit("status_update", { status: "idle" });
+        if (socket?.connected) {
+          socket.emit("status_update", { status: "idle" });
+        }
       }, IDLE_TIMEOUT_MS);
     };
 
+    // Only start idle detection when there is no manual status override
+    if (!manualStatusRef.current) {
+      resetIdleTimer();
+    }
+
     const activityEvents = ["mousemove", "keydown", "click", "touchstart", "scroll"];
     activityEvents.forEach((ev) => window.addEventListener(ev, resetIdleTimer));
-
-    resetIdleTimer();
 
     return () => {
       activityEvents.forEach((ev) => window.removeEventListener(ev, resetIdleTimer));
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
-  }, []);
+  }, [myManualStatus, setMyStatus]);
 
   // ===== Build members list =====
   const members = useMemo(() => {
@@ -360,6 +373,10 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
       const onlineMatch = onlineUsers.find(o => String(o.id) === String(currentMember.id) || String(o.username || "").toLowerCase() === String(currentMember.name || "").toLowerCase());
       membersList.push({
         ...currentMember,
+        name: onlineMatch?.displayName || currentMember.displayName || currentMember.name,
+        displayName: onlineMatch?.displayName || currentMember.displayName || currentMember.name,
+        mentionName: onlineMatch?.mentionName || currentMember.mentionName || "",
+        publicUserId: onlineMatch?.publicUserId || currentMember.publicUserId || "",
         status: myStatus,
         country: resolvedCountry,
         giftedBannerUrl: onlineMatch?.giftedBannerUrl || currentMember.giftedBannerUrl || "",
@@ -416,7 +433,10 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
 
       membersList.push({
         id: user.id,
-        name: user.username,
+        name: (user as any).displayName || user.username,
+        displayName: (user as any).displayName || user.username,
+        mentionName: (user as any).mentionName || "",
+        publicUserId: (user as any).publicUserId || "",
         role: user.role,
         rank: user.role === "admin" ? 100 : 0,
         color: user.role === "admin" ? "text-red-600" : "text-foreground",
@@ -533,15 +553,15 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                 <div className="flex items-center gap-1.5">
                   {/* أيقونة الصلاحية */}
                   {(member.roleIconUrl || member.giftedPromotionIconUrl) && (
-                    <img src={member.roleIconUrl || member.giftedPromotionIconUrl} alt="role" className="h-4 w-4 rounded object-contain" title="أيقونة صلاحية" />
+                    <img loading="lazy" src={member.roleIconUrl || member.giftedPromotionIconUrl} alt="role" className="h-4 w-4 rounded object-contain" title="أيقونة صلاحية" />
                   )}
                   {/* أيقونة الهدية */}
                   {member.giftedGiftIconUrl && (
-                    <img src={member.giftedGiftIconUrl} alt="gift" className="h-4 w-4 rounded object-contain" title="أيقونة هدية" />
+                    <img loading="lazy" src={member.giftedGiftIconUrl} alt="gift" className="h-4 w-4 rounded object-contain" title="أيقونة هدية" />
                   )}
                   {/* أيقونة البنر (تظهر قبل الاسم) */}
                   {member.giftedBannerUrl && (
-                    <img src={member.giftedBannerUrl} alt="banner" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" title="بنر مُهدى" />
+                    <img loading="lazy" src={member.giftedBannerUrl} alt="banner" className="h-6 w-auto rounded object-contain max-w-[6.5rem]" title="بنر مُهدى" />
                   )}
                   {member.youtubeUrl && (
                     <button
@@ -580,7 +600,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                     </Badge>
                   )}
                   {member.giftIconUrl && (
-                    <img src={member.giftIconUrl} alt="gift" className="h-4 w-4 rounded object-cover" />
+                    <img loading="lazy" src={member.giftIconUrl} alt="gift" className="h-4 w-4 rounded object-cover" />
                   )}
                   {/* Status label badge */}
                   {member.status && member.status !== "online" && (
@@ -590,7 +610,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                   )}
                 </div>
                 <div className="flex items-center gap-1">
-                   <img src={getCountryFlagSrc(member.country)} alt={member.country} className="h-3 w-4 rounded-sm object-cover" />
+                   <img loading="lazy" src={getCountryFlagSrc(member.country)} alt={member.country} className="h-3 w-4 rounded-sm object-cover" />
                    <span className="text-[9px] text-muted-foreground font-bold">{member.idreg || ""}</span>
                 </div>
               </div>
@@ -600,7 +620,7 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
                   {member.statusMsg || '(عضو جديد)'}
                 </p>
                 <div className="flex items-center gap-1 text-[9px] text-muted-foreground font-bold">
-                  <span>@{member.name ? member.name.replace(' ', '') : ""}</span>
+                  {(member as any).mentionName ? <span>@{(member as any).mentionName.replace(/^@/, "").replace(/\s+/g, "")}</span> : null}
                 </div>
               </div>
             </div>
@@ -619,12 +639,14 @@ const MemberList = ({ isSearchOpen = false, setIsSearchOpen, onOpenChat, onOpenP
       {/* YouTube Popup */}
       {ytPopupMember && <YouTubeMemberPopup member={ytPopupMember} onClose={() => setYtPopupMember(null)} />}
 
-      <StoryCreator open={storyCreatorOpen} onClose={() => setStoryCreatorOpen(false)} />
+      <PermissionGate requiredPermissions={["story_publish.use"]}>
+        <StoryCreator open={storyCreatorOpen} onClose={() => setStoryCreatorOpen(false)} />
+      </PermissionGate>
     </div>
   );
 };
 
-export default MemberList;
+export default React.memo(MemberList);
 
 /* ─── YouTube Member Popup ──────────────────────────────────── */
 const YouTubeMemberPopup: React.FC<{ member: any; onClose: () => void }> = ({ member, onClose }) => {

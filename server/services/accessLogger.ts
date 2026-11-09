@@ -1,6 +1,7 @@
 import { dbPool } from "../db";
 import { H3Event, getRequestHeader } from "h3";
 import { detectCountryCode } from "./requestCountry";
+import { getClientIp } from "../middleware/rateLimiter";
 
 export type LogState = 
   | "دخول" 
@@ -27,9 +28,7 @@ export const logAccess = async (params: LogParams) => {
   const { event, state, username, topic, isin } = params;
   
   try {
-    const ip = getRequestHeader(event, "x-forwarded-for") || 
-               getRequestHeader(event, "x-real-ip") || 
-               "127.0.0.1";
+    const ip = getClientIp(event);
     
     const countryCode = detectCountryCode(event);
     const userAgent = getRequestHeader(event, "user-agent") || "Unknown";

@@ -2,6 +2,7 @@ import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import {
   assertSafeTableName,
   countTableRows,
+  isAdminTableReadable,
   listAdminColumns,
   listAdminTables,
   listTableRows,
@@ -27,6 +28,11 @@ export default defineEventHandler(async (event) => {
 
     if (!tableName) {
       return { success: true, tables, selectedTable: null, columns: [], rows: [], totalRows: 0, primaryKey: "id" };
+    }
+
+    if (!isAdminTableReadable(tableName)) {
+      setResponseStatus(event, 403);
+      return { success: false, message: "لا يمكن عرض هذا الجدول من محرر قاعدة البيانات" };
     }
 
     if (!(await tableExists(tableName))) {
@@ -58,4 +64,3 @@ export default defineEventHandler(async (event) => {
     return { success: false, message: "تعذر قراءة بيانات القاعدة" };
   }
 });
-

@@ -122,6 +122,71 @@ test("updating account metadata without new credentials preserves the encrypted 
   assert.equal(account?.hasApiSecret, true);
 });
 
+test("putting an existing voice provider account preserves omitted credentials", async () => {
+  const store = createVoiceProviderStore(
+    makeDatabase(async () => ({ rows: [publicAccountRow], rowCount: 1 })),
+  );
+
+  const result = await store.putAccount("account-1", {
+    name: "Renamed LiveKit",
+    url: "wss://voice.example.com",
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.account.hasApiKey, true);
+  assert.equal(result.account.hasApiSecret, true);
+});
+
+test("putting a missing voice provider account creates it when both credentials are provided", async () => {
+  await withEncryptionKey(VALID_KEY, async () => {
+    let queryCount = 0;
+    let insertValues: unknown[] | undefined;
+    const store = createVoiceProviderStore(
+      makeDatabase(async (sql, values) => {
+        queryCount += 1;
+        if (sql.includes("INSERT INTO voice_provider_accounts")) {
+          insertValues = values;
+          return { rows: [publicAccountRow], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    );
+
+    const result = await store.putAccount("account-1", {
+      name: "Primary LiveKit",
+      url: "wss://voice.example.com",
+      apiKey: "livekit-api-key",
+      apiSecret: "livekit-api-secret",
+    });
+
+    assert.equal(queryCount, 2);
+    assert.equal(result.created, true);
+    assert.ok(insertValues);
+    assert.equal(
+      decryptVoiceProviderSecret(JSON.parse(String(insertValues[3])) as unknown),
+      "livekit-api-key",
+    );
+    assert.equal(
+      decryptVoiceProviderSecret(JSON.parse(String(insertValues[4])) as unknown),
+      "livekit-api-secret",
+    );
+  });
+});
+
+test("putting a missing voice provider account requires both credentials", async () => {
+  const store = createVoiceProviderStore(
+    makeDatabase(async () => ({ rows: [], rowCount: 0 })),
+  );
+
+  await assert.rejects(
+    store.putAccount("account-1", {
+      name: "Primary LiveKit",
+      url: "wss://voice.example.com",
+    }),
+    /credentials are required/i,
+  );
+});
+
 test("reading credentials decrypts them only for trusted server-side callers", async () => {
   await withEncryptionKey(VALID_KEY, async () => {
     const apiKey = encryptVoiceProviderSecret("livekit-api-key");
@@ -141,6 +206,42 @@ test("reading credentials decrypts them only for trusted server-side callers", a
       apiSecret: "livekit-api-secret",
     });
   });
+});
+
+test("runtime configuration reads the selected LiveKit account from persisted storage", async () => {
+  await withEncryptionKey(VALID_KEY, async () => {
+    const apiKey = encryptVoiceProviderSecret("livekit-api-key");
+    const apiSecret = encryptVoiceProviderSecret("livekit-api-secret");
+    const store = createVoiceProviderStore(
+      makeDatabase(async () => ({
+        rows: [{
+          provider: "livekit",
+          livekit_account_id: "account-1",
+          url: "wss://voice.example.com",
+          api_key_encrypted: apiKey,
+          api_secret_encrypted: apiSecret,
+        }],
+        rowCount: 1,
+      })),
+    );
+
+    assert.deepStrictEqual(await store.getRuntimeConfig(), {
+      url: "wss://voice.example.com",
+      apiKey: "livekit-api-key",
+      apiSecret: "livekit-api-secret",
+    });
+  });
+});
+
+test("runtime configuration remains inactive for the WebRTC selection", async () => {
+  const store = createVoiceProviderStore(
+    makeDatabase(async () => ({
+      rows: [{ provider: "webrtc", livekit_account_id: null }],
+      rowCount: 1,
+    })),
+  );
+
+  assert.equal(await store.getRuntimeConfig(), null);
 });
 
 test("selecting a LiveKit account with unreadable credentials does not persist the selection", async () => {

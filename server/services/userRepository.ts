@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { dbPool } from "../db";
 import { AuthRole, UserProfileDefaults } from "./userProfileDefaults";
 import { normalizeMinioUrl } from "./minioClient";
+import { shouldAssignDefaultMemberRole } from "./defaultMemberRole";
+import { isSystemOwnerUsername } from "./systemOwner";
+import { generatePublicUserId, sanitizeMentionName } from "./publicIdService";
 
 export type PersistedUser = {
   id: string;
   username: string;
   displayName: string;
+  mentionName?: string;
+  publicUserId?: string;
   role: AuthRole;
   countryCode: string;
   passwordHash?: string;
@@ -28,7 +33,8 @@ let databaseAvailable: boolean | undefined;
 const normalizeRole = (power: string, username: string): AuthRole => {
   const value = String(power || "").toLowerCase().trim();
   const user = String(username || "").toLowerCase().trim();
-  if (user === "admin" || user === "safarihost" || ["owner", "ispower", "hide", "chatmaster", "مالك"].includes(value)) return "owner";
+  if (isSystemOwnerUsername(user)) return "owner";
+  if (["owner", "ispower", "hide", "chatmaster", "مالك"].includes(value)) return "admin";
   if (["admin", "ادمن", "أدمن"].includes(value)) return "admin";
   if (["moderator", "سوبر", "مشرف"].includes(value)) return "moderator";
   return "member";
@@ -41,7 +47,9 @@ const mapLegacyUser = (row: any): PersistedUser => {
   return {
     id: String(row.id || row.uid || row.idreg),
     username: String(row.username || ""),
-    displayName: String(row.topic || row.username || ""),
+    displayName: String(row.display_name || row.topic || row.username || ""),
+    mentionName: String(row.mention_name || ""),
+    publicUserId: String(row.public_user_id || ""),
     role,
     countryCode: "SA",
     passwordHash: row.password || row.password_hash || undefined,
@@ -158,8 +166,14 @@ const syncProfileToCanonicalStore = async (
     addProfileField("profile_msg", updates.profileMsg);
     addLegacyField("msg", updates.profileMsg);
   }
+  if (updates.mentionName !== undefined) {
+    const cleanMention = updates.mentionName ? String(updates.mentionName).trim().slice(0, 32) : null;
+    addLegacyField("mention_name", cleanMention);
+  }
   if (updates.displayName !== undefined) {
-    addLegacyField("topic", String(updates.displayName).slice(0, 120));
+    const cleanDisplay = String(updates.displayName).trim().slice(0, 120);
+    addLegacyField("display_name", cleanDisplay);
+    addLegacyField("topic", cleanDisplay);
   }
   if (updates.nameColor !== undefined) {
     addProfileField("name_color", updates.nameColor);
@@ -225,12 +239,25 @@ export const createPersistedUser = async (input: CreateUserInput): Promise<Persi
     const uid = randomUUID().replaceAll("-", "").slice(0, 22);
     const lid = randomUUID().replaceAll("-", "").slice(0, 31);
     const token = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
+    const publicUserId = generatePublicUserId();
+    const mentionName = sanitizeMentionName(input.displayName || input.username);
     const inserted = await dbPool.query(
-      `INSERT INTO users
-        (id, display_name, bg, mcol, ucol, evaluation, ico, ip, fp, lid, uid, msg, pic, pich, power, rep, topic, username, password, them, cover, gift_ico, gcol, lastssen, joinuser, coins, site_badge_id, site_badge, wall_post_likes, gifts_received_count, muted, documentationc)
+      `WITH inserted_user AS (
+       INSERT INTO users
+        (id, display_name, mention_name, public_user_id, bg, mcol, ucol, evaluation, ico, ip, fp, lid, uid, msg, pic, pich, power, rep, topic, username, password, them, cover, gift_ico, gcol, lastssen, joinuser, coins, site_badge_id, site_badge, wall_post_likes, gifts_received_count, muted, documentationc)
        VALUES
-        (gen_random_uuid(), $4, '#FFFFFF', '#000000', '#000000', 0, '', '', '', $1, $2, '(عضو جديد)', '/pic.png', '/pich.png', $3, 0, $4, $5, $6, '', '', '', '#FFFFFF', $7, $7, 0, '', '', 0, 0, 0, false)
-       RETURNING *`,
+        (gen_random_uuid(), $4, $9, $10, '#FFFFFF', '#000000', '#000000', 0, '', '', '', $1, $2, '(عضو جديد)', '/pic.png', '/pich.png', $3, 0, $4, $5, $6, '', '', '', '#FFFFFF', $7, $7, 0, '', '', 0, 0, 0, false)
+       RETURNING *
+      ), default_role_assignment AS (
+        INSERT INTO user_role_assignments (user_id, role_id, legacy_metadata)
+        SELECT inserted_user.id::text, r.id, jsonb_build_object('source', 'default_member_signup')
+        FROM inserted_user
+        JOIN roles r ON r.is_default = true AND r.is_active = true
+        WHERE $8::boolean
+        ON CONFLICT (user_id, role_id) DO NOTHING
+        RETURNING user_id
+      )
+      SELECT * FROM inserted_user`,
       [
         lid,
         uid,
@@ -239,6 +266,9 @@ export const createPersistedUser = async (input: CreateUserInput): Promise<Persi
         input.username,
         input.passwordHash,
         String(now),
+        shouldAssignDefaultMemberRole(input.role),
+        mentionName,
+        publicUserId,
       ],
     );
     databaseAvailable = true;
@@ -289,6 +319,10 @@ export const updatePersistedUserProfile = async (
       fields.push(`msg = $${paramIndex++}`);
       values.push(profileUpdates.profileMsg);
     }
+    if (profileUpdates.mentionName !== undefined) {
+      fields.push(`mention_name = ${paramIndex++}`);
+      values.push(profileUpdates.mentionName ? String(profileUpdates.mentionName).trim().slice(0, 32) : null);
+    }
     if (profileUpdates.displayName !== undefined) {
       fields.push(`topic = $${paramIndex++}`);
       values.push(String(profileUpdates.displayName).slice(0, 120));
@@ -326,4 +360,3 @@ export const updatePersistedUserProfile = async (
     return false;
   }
 };
-

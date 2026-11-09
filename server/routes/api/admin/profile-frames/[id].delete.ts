@@ -1,10 +1,9 @@
 import { defineEventHandler, getRouterParam } from "h3";
 import { dbPool } from "../../../../db";
-import { getAdminContext } from "../../../../services/adminAccess";
+import { guardAdminAction } from "../../../../services/adminPermissions";
 
 export default defineEventHandler(async (event) => {
-  const admin = getAdminContext(event);
-  if (!admin.ok) return { success: false, message: admin.message };
+  await guardAdminAction(event, "admin_profileframes");
 
   const id = getRouterParam(event, "id");
   if (!id) return { success: false, message: "معرف الإطار مطلوب" };

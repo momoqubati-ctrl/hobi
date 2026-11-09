@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -106,12 +106,12 @@ const ProfileModal = ({ user, isOpen, onClose, isAdmin = true }: ProfileModalPro
                 <h2 className="text-2xl font-bold text-foreground" style={user.nameColor && user.nameColor !== "#000000" ? { color: user.nameColor } : undefined}>{user.name}</h2>
                 {user.role === 'admin' && <Crown className="text-red-500" size={20} />}
                 <Badge className="bg-blue-50 text-blue-600 border-blue-100">موثق</Badge>
-                {user.giftIconUrl && <img src={user.giftIconUrl} alt="gift" className="h-5 w-5 rounded object-cover" />}
-                {user.profileIconUrl && <img src={user.profileIconUrl} alt="profile icon" className="h-5 w-5 rounded object-cover" />}
+                {user.giftIconUrl && <img loading="lazy" src={user.giftIconUrl} alt="gift" className="h-5 w-5 rounded object-cover" />}
+                {user.profileIconUrl && <img loading="lazy" src={user.profileIconUrl} alt="profile icon" className="h-5 w-5 rounded object-cover" />}
               </div>
               <p className="text-muted-foreground text-sm flex items-center gap-1 mt-1">
                 <MapPin size={14} />
-                <img src={getCountryFlagSrc(user.country)} alt={user.country} className="h-3 w-4 rounded-sm object-cover" />
+                <img loading="lazy" src={getCountryFlagSrc(user.country)} alt={user.country} className="h-3 w-4 rounded-sm object-cover" />
                 {getCountryName(user.country)} • {user.room}
               </p>
             </div>

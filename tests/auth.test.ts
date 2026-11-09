@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { createGuestSession, findInMemoryUser } from "../server/services/authService";
+import { createGuestSession, findInMemoryUser, registerMember } from "../server/services/authService";
 import { addConnectedUser, getConnectedUser, removeUserPresenceByUserId } from "../server/socket/presenceManager";
 
 test("Auth - should create guest session with valid token and public user", async () => {
@@ -22,6 +22,15 @@ test("Auth - findInMemoryUser should locate created guest session", async () => 
   assert.ok(found, "User should be found in memory store");
   assert.strictEqual(found?.id, session.user.id);
   assert.strictEqual(found?.displayName, "أحمد_المختبر");
+});
+
+test("Auth - Safarihost username is reserved for the system owner account", async () => {
+  const result = await registerMember({ username: "  SAFARIHOST ", password: "example-password" });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.code, "USERNAME_RESERVED");
+  }
 });
 
 test("Auth - removeUserPresenceByUserId should terminate presence across all sessions", async () => {

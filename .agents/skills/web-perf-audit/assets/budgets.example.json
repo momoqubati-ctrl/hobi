@@ -1,0 +1,37 @@
+{
+  "//": "Copy to budgets.json and adapt to this project. Defaults are Google's Core Web Vitals 'good' thresholds plus common asset ceilings — they are a starting point, not a law. Checked by scripts/budgets.mjs (exit 1 on breach).",
+
+  "cwv": {
+    "lcpMs": 2500,
+    "inpMs": 200,
+    "cls": 0.1,
+    "fcpMs": 1800,
+    "ttfbMs": 800
+  },
+
+  "javascript": {
+    "initialKb": 200,
+    "routeKb": 300
+  },
+
+  "network": {
+    "totalKb": 1600
+  },
+
+  "images": {
+    "heroKb": 250,
+    "totalKb": 800
+  },
+
+  "fonts": {
+    "totalKb": 150
+  },
+
+  "api": {
+    "p95Ms": 500
+  },
+
+  "thirdParty": {
+    "blockingMs": 150
+  }
+}

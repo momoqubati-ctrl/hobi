@@ -4,6 +4,15 @@ import { resolveRoomId } from "./roomAccess";
 import { publishSocketEvent, publishUserEvent } from "./SocketBroker";
 import { dbPool } from "../db";
 import { voiceStageStore, type RoomVoiceStage, type VoiceSeat } from "../services/voiceStageStore";
+import {
+  disconnectConfiguredLiveKitParticipant,
+  ensureConfiguredLiveKitRoom,
+  reconcileConfiguredLiveKitPublishPermissions,
+  syncConfiguredLiveKitPublishPermission,
+} from "../services/livekitVoicePermissions";
+import { canPublishFromSeat } from "../services/voiceTokenAccess";
+import { hasChatFeatureAccess } from "../services/chatAuthorization";
+import { createVoiceProviderStore } from "../services/voiceProviderStore";
 
 /**
  * الحصول على حالة الاستيج لغرفة معينة أو تهيئتها
@@ -54,7 +63,15 @@ export async function vacateUserFromAllSeats(userId?: string | number, _io?: Ser
   const result = await voiceStageStore.leaveSeat(targetIdStr);
   if (!result) return;
 
+  let permissionSyncError: unknown;
+  try {
+    await syncConfiguredLiveKitPublishPermission(result.roomId, targetIdStr, false);
+  } catch (error) {
+    permissionSyncError = error;
+    console.error("[VoiceStage] Failed to revoke LiveKit publishing after seat removal:", error);
+  }
   await publishSocketEvent(result.roomId, "voice_stage:seats_updated", result.stage);
+  if (permissionSyncError) throw permissionSyncError;
 }
 
 /**
@@ -69,6 +86,14 @@ function ensureVoiceExpTicker(io: Server) {
   setInterval(async () => {
     try {
       const activeSeats = await voiceStageStore.listActiveSeats();
+      const activePublisherKeys = new Set(
+        activeSeats
+        .filter(({ seat }) => canPublishFromSeat(seat, seat.role))
+        .map(({ roomId, seat }) => `${roomId}\u0000${seat.userId}`),
+      );
+      if (await voiceStageStore.claimPermissionReconciliationTick()) {
+        await reconcileConfiguredLiveKitPublishPermissions(activePublisherKeys);
+      }
       for (const { roomId, seat } of activeSeats) {
         if (!seat.isMuted && await voiceStageStore.claimExperienceTick(seat.userId)) {
           await addUserExp(seat.userId, 10, {
@@ -80,7 +105,7 @@ function ensureVoiceExpTicker(io: Server) {
         }
       }
     } catch (err) {
-      console.error("[VoiceStage] EXP ticker error:", err);
+      console.error("[VoiceStage] Maintenance ticker error:", err);
     }
   }, 60000);
 }
@@ -100,11 +125,13 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         return;
       }
       const stage = await getOrCreateRoomStage(canonicalRoomId);
+      const { provider } = await createVoiceProviderStore().getRequestedSelection();
       callback?.({
         success: true,
         roomId: canonicalRoomId,
         maxSeats: stage.maxSeats,
         isVoiceChannel: stage.isVoiceChannel,
+        provider,
         seats: stage.seats,
       });
     } catch (err: any) {
@@ -120,10 +147,35 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         return;
       }
       const refreshed = await voiceStageStore.heartbeat(canonicalRoomId, getUser().id);
+      if (!refreshed) {
+        await syncConfiguredLiveKitPublishPermission(canonicalRoomId, String(getUser().id), false);
+      }
       callback?.({ success: refreshed });
     } catch (err) {
       console.error("[VoiceStage] Seat heartbeat failed:", err);
       callback?.({ success: false, message: "تعذر تحديث حالة المقعد" });
+    }
+  });
+
+  socket.on("voice_stage:livekit_disconnected", async (
+    data: { roomId: string },
+    callback?: (res: { success: boolean; message?: string }) => void,
+  ) => {
+    try {
+      const canonicalRoomId = await resolveRoomId(data?.roomId);
+      if (!canonicalRoomId || !socket.rooms.has(`room:${canonicalRoomId}`)) {
+        callback?.({ success: false, message: "يجب الانضمام إلى الغرفة أولاً" });
+        return;
+      }
+
+      await disconnectConfiguredLiveKitParticipant(
+        canonicalRoomId,
+        String(getUser().id),
+      );
+      callback?.({ success: true });
+    } catch (error) {
+      console.error("[VoiceStage] Failed to remove disconnected LiveKit participant:", error);
+      callback?.({ success: false, message: "تعذر إنهاء جلسة LiveKit" });
     }
   });
 
@@ -142,6 +194,11 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         return;
       }
 
+      if (!(await hasChatFeatureAccess(user, ["room_voice.use"]))) {
+        callback?.({ success: false, message: "لا تملك صلاحية استخدام مايك الغرفة" });
+        return;
+      }
+
       // التحقق من الصلاحيات والإسكات
       if (user.muted) {
         callback?.({ success: false, message: "لا يمكنك الصعود على المايك، حسابك مكتوم حالياً" });
@@ -153,6 +210,8 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         callback?.({ success: false, message: "رقم المقعد خارج نطاق هذه الغرفة" });
         return;
       }
+
+      await ensureConfiguredLiveKitRoom(canonicalRoomId);
 
       // جلب إطار المقعد الصوتي للمستخدم
       let seatFrameUrl = (user as any).seatFrameUrl || "";
@@ -170,6 +229,7 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         seatIndex,
         userId: user.id,
         username: user.username,
+        role: user.role || "guest",
         avatar: user.avatar || "/pic.png",
         seatFrameUrl: seatFrameUrl || undefined,
         isMuted: false,
@@ -183,12 +243,36 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         return;
       }
 
-      if (change.previousStage && change.previousRoomId && change.previousRoomId !== canonicalRoomId) {
-        await publishSocketEvent(change.previousRoomId, "voice_stage:seats_updated", change.previousStage);
+      let permissionSyncError: unknown;
+      if (change.previousRoomId && change.previousRoomId !== canonicalRoomId) {
+        try {
+          await syncConfiguredLiveKitPublishPermission(change.previousRoomId, String(user.id), false);
+        } catch (error) {
+          permissionSyncError = error;
+          console.error("[VoiceStage] Failed to revoke LiveKit publishing after moving rooms:", error);
+        }
+        if (change.previousStage) {
+          await publishSocketEvent(change.previousRoomId, "voice_stage:seats_updated", change.previousStage);
+        }
       }
 
+      try {
+        const seatCanPublish = canPublishFromSeat(newSeat, user.role) && !user.muted;
+        await syncConfiguredLiveKitPublishPermission(
+          canonicalRoomId,
+          String(user.id),
+          seatCanPublish,
+        );
+      } catch (error) {
+        permissionSyncError = error;
+        console.error("[VoiceStage] Failed to synchronize LiveKit publishing after taking a seat:", error);
+      }
       await publishSocketEvent(canonicalRoomId, "voice_stage:seats_updated", change.stage);
 
+      if (permissionSyncError) {
+        callback?.({ success: false, message: "تم أخذ المقعد لكن تعذرت مزامنة صلاحية الصوت" });
+        return;
+      }
       callback?.({ success: true, seat: newSeat, payload: change.stage });
     } catch (err: any) {
       console.error("[VoiceStage] take_seat error:", err);
@@ -222,8 +306,23 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       }
       await getOrCreateRoomStage(canonicalRoomId);
       const stage = await voiceStageStore.toggleMute(canonicalRoomId, user.id, Boolean(data.isMuted));
+      const seat = stage?.seats.find((entry) => entry?.userId === String(user.id));
+      let permissionSyncError: unknown;
+      try {
+        await syncConfiguredLiveKitPublishPermission(
+          canonicalRoomId,
+          String(user.id),
+          canPublishFromSeat(seat, user.role) && !user.muted,
+        );
+      } catch (error) {
+        permissionSyncError = error;
+        console.error("[VoiceStage] Failed to synchronize LiveKit publishing after mute change:", error);
+      }
       if (stage) await publishSocketEvent(canonicalRoomId, "voice_stage:seats_updated", stage);
-      callback?.({ success: true });
+      callback?.({
+        success: !permissionSyncError,
+        ...(permissionSyncError ? { message: "تعذر مزامنة صلاحية الصوت" } : {}),
+      });
     } catch (err: any) {
       callback?.({ success: false, message: err?.message });
     }
@@ -293,10 +392,8 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       const stage = await getOrCreateRoomStage(canonicalRoomId);
 
       // تحقق من الصلاحيات الإدارية
-      const userRole = user.role || "guest";
-      const isAdminOrOwner = ["admin", "owner", "moderator"].includes(userRole);
-      if (!isAdminOrOwner) {
-        callback?.({ success: false, message: "لا تملك صلاحية قفل المقاعد" });
+      if (!(await hasChatFeatureAccess(user, ["room_voice_moderation.use"]))) {
+        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
         return;
       }
 
@@ -331,10 +428,8 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       }
       const stage = await getOrCreateRoomStage(canonicalRoomId);
 
-      const userRole = user.role || "guest";
-      const isAdminOrOwner = ["admin", "owner", "moderator"].includes(userRole);
-      if (!isAdminOrOwner) {
-        callback?.({ success: false, message: "لا تملك صلاحية إنزال الأعضاء" });
+      if (!(await hasChatFeatureAccess(user, ["room_voice_moderation.use"]))) {
+        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
         return;
       }
 
@@ -347,12 +442,24 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
         callback?.({ success: false, message: "تعذر إنزال العضو" });
         return;
       }
+      let permissionSyncError: unknown;
+      if (kicked.userId) {
+        try {
+          await syncConfiguredLiveKitPublishPermission(canonicalRoomId, kicked.userId, false);
+        } catch (error) {
+          permissionSyncError = error;
+          console.error("[VoiceStage] Failed to revoke LiveKit publishing after seat kick:", error);
+        }
+      }
       await publishSocketEvent(canonicalRoomId, "voice_stage:seats_updated", kicked.stage);
       if (kicked.userId) {
         await publishUserEvent(kicked.userId, "voice_stage:kicked_from_seat", { roomId: canonicalRoomId });
       }
 
-      callback?.({ success: true });
+      callback?.({
+        success: !permissionSyncError,
+        ...(permissionSyncError ? { message: "تم إنزال العضو لكن تعذرت مزامنة صلاحية الصوت" } : {}),
+      });
     } catch (err: any) {
       callback?.({ success: false, message: err?.message });
     }

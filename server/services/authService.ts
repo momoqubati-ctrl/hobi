@@ -1,15 +1,23 @@
-import { createHmac, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, scrypt as scryptAsync, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import { normalizeCountryCode } from "./countries";
 import { AuthRole, createUserProfileDefaults, UserProfileDefaults } from "./userProfileDefaults";
 import { canUseDatabaseAuth, createPersistedUser, findPersistedUserByUsername, PersistedUser } from "./userRepository";
 import { addSharedUser } from "./sharedUserStore";
 import { checkBan } from "./banCheck";
 import { dbPool } from "../db";
+import { isSystemOwnerUsername } from "./systemOwner";
+import { isSiteOwnerUsername } from "./siteOwner";
+import { isTokenRevoked, isUserActivelyBanned } from "./tokenRevocation";
+
+const scrypt = promisify(scryptAsync);
 
 type StoredUser = {
   id: string;
   username: string;
   displayName: string;
+  mentionName?: string;
+  publicUserId?: string;
   role: AuthRole;
   countryCode: string;
   profile: UserProfileDefaults;
@@ -21,6 +29,9 @@ export type PublicUser = {
   id: string;
   username: string;
   name: string;
+  displayName?: string;
+  mentionName?: string;
+  publicUserId?: string;
   role: AuthRole;
   countryCode: string;
 } & UserProfileDefaults;
@@ -62,18 +73,18 @@ const getSecret = () => {
 
 const normalizeUsername = (value: string) => value.trim().toLowerCase();
 
-const hashPassword = (password: string) => {
+export const hashPassword = async (password: string): Promise<string> => {
   const salt = randomUUID().replaceAll("-", "");
-  const hash = scryptSync(password, salt, 64).toString("hex");
+  const hash = ((await scrypt(password, salt, 64)) as Buffer).toString("hex");
   return `${salt}:${hash}`;
 };
 
-const verifyPassword = (password: string, storedHash: string) => {
+export const verifyPassword = async (password: string, storedHash: string): Promise<boolean> => {
   const [salt, hash] = storedHash.split(":");
   if (!salt || !hash) return false;
 
   const expected = Buffer.from(hash, "hex");
-  const actual = scryptSync(password, salt, 64);
+  const actual = ((await scrypt(password, salt, 64)) as Buffer);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 };
 
@@ -83,6 +94,9 @@ const toPublicUser = (user: StoredUser): PublicUser & { statusMsg: string } => (
   id: user.id,
   username: user.username,
   name: user.displayName,
+  displayName: user.displayName,
+  mentionName: (user as any).mentionName || "",
+  publicUserId: (user as any).publicUserId || "",
   role: user.role,
   countryCode: user.countryCode,
   ...user.profile,
@@ -90,18 +104,136 @@ const toPublicUser = (user: StoredUser): PublicUser & { statusMsg: string } => (
 });
 
 export const issueToken = (user: { id: string | number; username: string; role: string }) => {
+  return issueSignedToken({
+    sub: user.id,
+    username: user.username,
+    role: user.role,
+  });
+};
+
+export const issueAgentToken = (agent: { id: string | number; username: string }) => {
+  return issueSignedToken({
+    sub: agent.id,
+    username: agent.username,
+    role: "agent",
+    type: "wallet_agent",
+  });
+};
+
+export const issueHostingOwnerToken = (owner: { username: string }) =>
+  issueSignedToken({
+    sub: owner.username,
+    username: owner.username,
+    role: "hosting_owner",
+    type: "hosting_owner",
+    expiresInMs: 60 * 60 * 1000,
+  });
+
+export type AuthTokenClaims = {
+  sub: string;
+  username: string;
+  role: string;
+  exp: number;
+  type?: string;
+};
+
+const issueSignedToken = (claims: {
+  sub: string | number;
+  username: string;
+  role: string;
+  type?: string;
+  expiresInMs?: number;
+}) => {
+  const { expiresInMs = 1000 * 60 * 60 * 24, ...tokenClaims } = claims;
   const payload = Buffer.from(
     JSON.stringify({
-      sub: user.id,
-      username: user.username,
-      role: user.role,
+      ...tokenClaims,
       iat: Date.now(),
-      exp: Date.now() + 1000 * 60 * 60 * 24,
+      exp: Date.now() + expiresInMs,
     }),
     "utf8",
   ).toString("base64url");
-
   return `${payload}.${sign(payload)}`;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const verifyAuthToken = (token: string, now = Date.now()): AuthTokenClaims | null => {
+  if (typeof token !== "string" || token.length > 8192) return null;
+
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const [payload, signature] = parts;
+
+  const expectedSignature = sign(payload);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const actualBuffer = Buffer.from(signature);
+  if (
+    expectedBuffer.length !== actualBuffer.length ||
+    !timingSafeEqual(expectedBuffer, actualBuffer)
+  ) {
+    return null;
+  }
+
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(claims)) return null;
+
+  const sub = claims.sub;
+  const username = claims.username;
+  const role = claims.role;
+  const exp = claims.exp;
+  const type = claims.type;
+
+  if (
+    (typeof sub !== "string" && typeof sub !== "number") ||
+    !String(sub).trim() ||
+    typeof username !== "string" ||
+    !username.trim() ||
+    typeof role !== "string" ||
+    !role.trim() ||
+    typeof exp !== "number" ||
+    !Number.isFinite(exp) ||
+    exp <= now ||
+    (type !== undefined && typeof type !== "string")
+  ) {
+    return null;
+  }
+
+  const effectiveRole = isSystemOwnerUsername(username)
+    ? "owner"
+    : ["owner", "ispower", "مالك"].includes(role.toLowerCase())
+      ? "admin"
+      : role;
+
+  const sessionId = createHash("sha256").update(token).digest("base64url");
+  if (
+    isTokenRevoked({
+      sessionId,
+      userId: String(sub),
+      username,
+      iat: typeof claims.iat === "number" ? claims.iat : undefined,
+    })
+  ) {
+    return null;
+  }
+
+  if (
+    isUserActivelyBanned({
+      username,
+      userId: String(sub),
+    })
+  ) {
+    return null;
+  }
+
+  return { sub: String(sub), username, role: effectiveRole, exp, type };
 };
 
 const issueSession = (user: StoredUser) => {
@@ -116,6 +248,8 @@ const persistedToStoredUser = (user: PersistedUser): StoredUser => ({
   id: user.id,
   username: user.username,
   displayName: user.displayName,
+  mentionName: user.mentionName,
+  publicUserId: user.publicUserId,
   role: user.role,
   countryCode: user.countryCode,
   profile: user.profile,
@@ -156,6 +290,9 @@ export const createGuestSession = async (displayName?: string, countryCode?: str
     throw Object.assign(new Error("يرجى إدخال اسم الزائر"), { code: "USERNAME_REQUIRED" });
   }
   const name = rawName.slice(0, 40);
+  if (isSiteOwnerUsername(name)) {
+    throw Object.assign(new Error("اسم المستخدم محجوز لحساب مالك الموقع"), { code: "USERNAME_RESERVED" });
+  }
   const normalizedCountryCode = normalizeCountryCode(countryCode);
 
   const banCheck = await checkBan({
@@ -232,6 +369,14 @@ export const createGuestSession = async (displayName?: string, countryCode?: str
 
 export const registerMember = async (input: { username: string; password: string; displayName?: string; countryCode?: string; clientIp?: string; deviceFingerprint?: string; deviceSignature?: string }) => {
   const username = normalizeUsername(input.username);
+  if (isSystemOwnerUsername(username) || isSiteOwnerUsername(username)) {
+    return {
+      ok: false as const,
+      code: "USERNAME_RESERVED",
+      message: "اسم المستخدم محجوز لحساب نظام",
+    };
+  }
+
   const persistedUser = await findPersistedUserByUsername(username);
   if (persistedUser || usersByUsername.has(username)) {
     return {
@@ -241,10 +386,10 @@ export const registerMember = async (input: { username: string; password: string
     };
   }
 
-  const role: AuthRole = username === "admin" ? "owner" : "member";
+  const role: AuthRole = "member";
   const normalizedCountryCode = normalizeCountryCode(input.countryCode);
   const profile = createUserProfileDefaults(role);
-  const passwordHash = hashPassword(input.password);
+  const passwordHash = await hashPassword(input.password);
 
   if (canUseDatabaseAuth()) {
     const persisted = await createPersistedUser({
@@ -325,7 +470,8 @@ export const loginMember = async (input: { username: string; password: string; c
   const persisted = await findPersistedUserByUsername(username);
   if (persisted) {
     const user = persistedToStoredUser(persisted);
-    if (!user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
+    const isPasswordValid = user.passwordHash ? await verifyPassword(input.password, user.passwordHash) : false;
+    if (!isPasswordValid) {
       return {
         ok: false as const,
         code: "INVALID_CREDENTIALS",
@@ -376,7 +522,8 @@ export const loginMember = async (input: { username: string; password: string; c
   // 2. DB unavailable – fall back to in-memory cache
   if (!canUseDatabaseAuth()) {
     const user = usersByUsername.get(username);
-    if (user && user.passwordHash && verifyPassword(input.password, user.passwordHash)) {
+    const isPasswordValid = user?.passwordHash ? await verifyPassword(input.password, user.passwordHash) : false;
+    if (user && isPasswordValid) {
       if (input.countryCode) {
         user.countryCode = normalizeCountryCode(input.countryCode);
       }
@@ -417,4 +564,3 @@ export const updateInMemoryUserProfile = (username: string, updates: { avatar?: 
   }
   return null;
 };
-

@@ -33,7 +33,13 @@ interface RealtimeState {
   isLoadingWallPosts: boolean;
   isLoadingNotifications: boolean;
   isLoadingMail: boolean;
-  
+
+  // Manual / Presence status
+  myManualStatus: "busy" | "away" | null;
+  myStatus: "online" | "idle" | "busy" | "away";
+  setMyManualStatus: (status: "busy" | "away" | "online" | null) => void;
+  setMyStatus: (status: "online" | "idle" | "busy" | "away") => void;
+
   // Initial load flags (to prevent double fetching when mounting tabs)
   isRoomsLoaded: boolean;
   isOnlineUsersLoaded: boolean;
@@ -147,7 +153,36 @@ function countAllComments(comments: any[]): number {
   return count;
 }
 
+const getInitialManualStatus = (): "busy" | "away" | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = sessionStorage.getItem("manualStatus");
+    if (stored === "busy" || stored === "away") return stored;
+  } catch {}
+  return null;
+};
+
 export const useRealtimeStore = create<RealtimeState>((set) => ({
+  myManualStatus: getInitialManualStatus(),
+  myStatus: getInitialManualStatus() || "online",
+  setMyManualStatus: (status) => set(() => {
+    const normalized = (status === "busy" || status === "away") ? status : null;
+    if (typeof window !== "undefined") {
+      try {
+        if (normalized) {
+          sessionStorage.setItem("manualStatus", normalized);
+        } else {
+          sessionStorage.removeItem("manualStatus");
+        }
+      } catch {}
+    }
+    return {
+      myManualStatus: normalized,
+      myStatus: normalized || "online",
+    };
+  }),
+  setMyStatus: (status) => set({ myStatus: status }),
+
   presence: {},
   activityFeed: [],
   activeRoom: null,
@@ -307,9 +342,12 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     isLoadingOnlineUsers: false,
   }),
   resetSession: () => set({
+    myManualStatus: null,
+    myStatus: "online",
     presence: {},
     onlineUsers: [],
     onlineCount: 0,
+    userPermissions: [],
     notifications: [],
     notificationUnreadCount: 0,
     inbox: [],

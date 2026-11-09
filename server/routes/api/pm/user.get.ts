@@ -1,9 +1,28 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
+import { getQuery, setResponseHeader, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
+import {
+  isEphemeralPrivateMessagingEnabled,
+  registerPrivateMessageSession,
+  resolveUserIdentity,
+} from "../../../services/privateMessageService";
 
-export default defineEventHandler(async (event) => {
+export default createAuthenticatedUserHandler(async (event, auth) => {
+  setResponseHeader(event, "Cache-Control", "private, no-store");
+  if (!isEphemeralPrivateMessagingEnabled()) {
+    setResponseStatus(event, 503);
+    return { success: false, message: "الرسائل الخاصة المؤقتة غير مهيأة على هذا الخادم" };
+  }
+  if (!auth.sessionId || !registerPrivateMessageSession({
+    sessionId: auth.sessionId,
+    userId: auth.userId,
+    expiresAt: auth.expiresAt,
+  })) {
+    setResponseStatus(event, 401);
+    return { success: false, message: "جلسة غير صالحة" };
+  }
   const query = getQuery(event);
-  const userId = query.userId as string;
+  const userId = typeof query.userId === "string" ? query.userId : "";
 
   if (!userId) {
     setResponseStatus(event, 400);
@@ -11,35 +30,43 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    const identity = await resolveUserIdentity(userId);
+    if (!identity) {
+      setResponseStatus(event, 404);
+      return { success: false, message: "المستخدم غير موجود" };
+    }
+
     const result = await dbPool.query(
-      `SELECT u.id, u.uid, u.username, u.topic, u.pic,
+      `SELECT u.id, u.username, u.display_name, u.topic, u.mention_name, u.public_user_id, u.pic,
               COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as name_color,
               COALESCE(NULLIF(up.message_color, ''), NULLIF(u.mcol, '')) as message_color
        FROM users u
        LEFT JOIN user_profiles up ON up.user_id = u.id
-       WHERE u.id::text = $1 OR u.uid::text = $1 OR u.idreg::text = $1 OR lower(u.username) = lower($1) 
-       LIMIT 1`,
-      [userId]
+       WHERE u.id::text = $1`,
+      [identity.id]
     );
 
     if (result.rows.length === 0) {
+      setResponseStatus(event, 404);
       return { success: false, message: "المستخدم غير موجود" };
     }
 
     const user = result.rows[0];
-    // نُرجع uid (معرّف العضو النصي) لأنه يطابق localStorage.user.id ويستخدم في كل أنحاء التطبيق
     return {
       success: true,
       user: {
-        id: user.id || user.uid,
-        name: user.topic || user.username,
+        id: user.id,
+        name: user.display_name || user.topic || user.username,
+        mentionName: user.mention_name || "",
+        publicUserId: user.public_user_id || "",
         avatar: user.pic || "/pic.png",
         nameColor: user.name_color || "",
         messageColor: user.message_color || "",
       },
     };
-  } catch (error: any) {
+  } catch (error) {
+    console.error("PM user lookup failed:", error);
     setResponseStatus(event, 500);
-    return { success: false, message: error.message || "خطأ في الخادم" };
+    return { success: false, message: "خطأ في الخادم" };
   }
 });

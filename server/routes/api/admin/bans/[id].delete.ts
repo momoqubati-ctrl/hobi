@@ -1,6 +1,8 @@
 import { defineEventHandler, getRouterParam, setResponseStatus } from "h3";
 import { dbPool } from "../../../../db";
 import { guardAdminAction, logAdminAudit } from "../../../../services/adminPermissions";
+import { handleApiError } from "../../../../utils/apiError";
+import { removeBanFromCache } from "../../../../services/tokenRevocation";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -29,6 +31,8 @@ export default defineEventHandler(async (event) => {
       [id],
     );
 
+    removeBanFromCache(ban.target_name, ban.ban_type);
+
     await logAdminAudit({
       actorId: admin.userId,
       action: "ban.delete",
@@ -42,7 +46,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, message: "تم فك الحظر بنجاح" };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

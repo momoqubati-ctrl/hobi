@@ -3,6 +3,7 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { isTokenValid } from "@/lib/authSession";
 import { Loader2 } from "lucide-react";
 
 interface ProtectedRouteProps {
@@ -23,8 +24,8 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
 
   const effectiveToken = token || localStorage.getItem("auth_token") || localStorage.getItem("authToken");
 
-  if (!effectiveToken) {
-    // تحويل المستخدم لصفحة الدخول مع حفظ المسار الذي كان يحاول الوصول إليه
+  // التحقق من وجود التوكن وعدم انتهاء صلاحيته
+  if (!effectiveToken || !isTokenValid(effectiveToken)) {
     return <Navigate to="/" state={{ from: location }} replace />;
   }
 

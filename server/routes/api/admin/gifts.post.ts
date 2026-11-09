@@ -1,15 +1,28 @@
-import { defineEventHandler, readBody } from "h3";
+import { defineEventHandler, readBody, setResponseStatus } from "h3";
 import { dbPool } from "../../../db";
 import { getAdminContext } from "../../../services/adminAccess";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   const admin = getAdminContext(event);
-  if (!admin.ok) return { success: false, message: admin.message };
+  if (!admin.ok) {
+    setResponseStatus(event, admin.statusCode);
+    return { success: false, message: admin.message, error: admin.message };
+  }
 
   const body = await readBody<{ name: string; icon: string; price: number; category_id?: string; category?: string }>(event);
-  if (!body?.name?.trim()) return { success: false, message: "اسم الهدية مطلوب" };
-  if (!body?.icon?.trim()) return { success: false, message: "الايقونة مطلوبة" };
-  if (body.price == null || body.price < 0) return { success: false, message: "السعر مطلوب" };
+  if (!body?.name?.trim()) {
+    setResponseStatus(event, 400);
+    return { success: false, message: "اسم الهدية مطلوب" };
+  }
+  if (!body?.icon?.trim()) {
+    setResponseStatus(event, 400);
+    return { success: false, message: "الايقونة مطلوبة" };
+  }
+  if (body.price == null || body.price < 0) {
+    setResponseStatus(event, 400);
+    return { success: false, message: "السعر مطلوب" };
+  }
 
   try {
     const { rows: iconCol } = await dbPool.query(
@@ -26,7 +39,6 @@ export default defineEventHandler(async (event) => {
     );
     return { success: true, gift: result.rows[0] };
   } catch (error: any) {
-    console.error("[Admin Gifts] Create error:", error);
-    return { success: false, message: `فشل إنشاء الهدية: ${error.message}` };
+    return handleApiError(event, error);
   }
 });

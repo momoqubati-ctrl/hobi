@@ -4,6 +4,8 @@ export interface VoiceSeat {
   seatIndex: number;
   userId: string;
   username: string;
+  role?: string;
+  accountMuted?: boolean;
   avatar: string;
   seatFrameUrl?: string;
   isMuted: boolean;
@@ -200,6 +202,25 @@ redis.call('SET', stageKey, cjson.encode(stage), 'EX', roomTtl)
 return cjson.encode(stage)
 `;
 
+const ACCOUNT_MUTE_SCRIPT = `
+local userId = ARGV[1]
+local roomPrefix = ARGV[2]
+local roomTtl = tonumber(ARGV[3])
+local isMuted = ARGV[4] == '1'
+local locationValue = redis.call('GET', KEYS[1])
+if not locationValue then return '' end
+local location = cjson.decode(locationValue)
+local roomKey = roomPrefix .. location.roomId
+local value = redis.call('GET', roomKey)
+if not value then return '' end
+local stage = cjson.decode(value)
+local seat = stage.seats[tonumber(location.seatIndex) + 1]
+if seat == cjson.null or seat.userId ~= userId then return '' end
+seat.accountMuted = isMuted
+redis.call('SET', roomKey, cjson.encode(stage), 'EX', roomTtl)
+return cjson.encode({ roomId = location.roomId, stage = stage, seat = seat })
+`;
+
 const LOCK_SEAT_SCRIPT = `
 local seatIndex = tonumber(ARGV[1])
 local isLocked = ARGV[2] == '1'
@@ -283,6 +304,7 @@ export class VoiceStageStore {
   private readonly stages = new Map<string, RoomVoiceStage>();
   private readonly activeSeats = new Map<string, SeatLocation>();
   private readonly experienceClaims = new Map<string, number>();
+  private lastPermissionReconciliationMinute: number | null = null;
 
   constructor(options: StoreOptions = {}) {
     this.redisEnabled = options.redisEnabled ?? isRedisEnabled;
@@ -433,6 +455,28 @@ export class VoiceStageStore {
     ], [roomId, userId, isMuted ? "1" : "0", String(ROOM_TTL_SECONDS)]);
   }
 
+  async setAccountMuted(
+    userId: string,
+    isMuted: boolean,
+  ): Promise<{ roomId: string; stage: RoomVoiceStage; seat: VoiceSeat } | null> {
+    this.assertAvailable();
+    if (!this.redisEnabled) {
+      const location = this.activeSeats.get(userId);
+      const stage = location ? this.stages.get(location.roomId) : undefined;
+      const seat = location ? stage?.seats[location.seatIndex] : null;
+      if (!location || !stage || !seat || seat.userId !== userId) return null;
+      seat.accountMuted = isMuted;
+      return { roomId: location.roomId, stage, seat };
+    }
+
+    return this.evalJson(ACCOUNT_MUTE_SCRIPT, [this.userKey(userId)], [
+      userId,
+      `${KEY_PREFIX}:room:`,
+      String(ROOM_TTL_SECONDS),
+      isMuted ? "1" : "0",
+    ]);
+  }
+
   async setSeatLock(roomId: string, seatIndex: number, isLocked: boolean): Promise<RoomVoiceStage | null> {
     this.assertAvailable();
     const stage = await this.getStage(roomId);
@@ -544,6 +588,26 @@ export class VoiceStageStore {
     }
     const result = await this.redisClient.set(
       `${KEY_PREFIX}:exp:${userId}:${minute}`,
+      "1",
+      "EX",
+      120,
+      "NX",
+    );
+    return result === "OK";
+  }
+
+  async claimPermissionReconciliationTick(
+    minute = Math.floor(Date.now() / 60000),
+  ): Promise<boolean> {
+    this.assertAvailable();
+    if (!this.redisEnabled) {
+      if (this.lastPermissionReconciliationMinute === minute) return false;
+      this.lastPermissionReconciliationMinute = minute;
+      return true;
+    }
+
+    const result = await this.redisClient.set(
+      `${KEY_PREFIX}:permissions:reconcile:${minute}`,
       "1",
       "EX",
       120,

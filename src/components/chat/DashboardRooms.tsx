@@ -190,7 +190,7 @@ const DashboardRooms = ({
             "Content-Type": "application/json",
             Authorization: `Bearer ${token || ""}`,
           },
-          body: JSON.stringify({ roomId: room.id, userId: currentUser.id }),
+          body: JSON.stringify({ roomId: room.id }),
           signal: controller.signal,
         });
         clearTimeout(timeoutId);

@@ -1,17 +1,9 @@
-import { defineEventHandler, getQuery, setResponseStatus } from "h3";
 import { getUnreadCount } from "../../../services/internalMailService";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
 
-export default defineEventHandler(async (event) => {
-  const query = getQuery(event);
-  const userId = query.userId as string;
-
-  if (!userId) {
-    setResponseStatus(event, 400);
-    return { success: false, message: "userId مطلوب" };
-  }
-
+export default createAuthenticatedUserHandler(async (_event, auth) => {
   try {
-    const count = await getUnreadCount(userId);
+    const count = await getUnreadCount(auth.userId);
     return { success: true, count };
   } catch (error) {
     console.error("getUnreadMailCount error:", error);

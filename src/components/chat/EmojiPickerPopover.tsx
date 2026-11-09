@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { SmilePlus, ArrowLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fetchAnimatedFaces, AnimatedFace } from "@/lib/animatedFaceData";
+import { useRealtimeStore } from "@/lib/realtime-store";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
 
 const EMOJI_CATEGORIES = [
   {
@@ -117,16 +119,19 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
   isOpen
 }) => {
   const [animatedFaces, setAnimatedFaces] = useState<AnimatedFace[]>([]);
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canUseAnimatedFaces = hasPermissionAccess(permissions, "chat_effects.use");
+  const visibleCategory = !canUseAnimatedFaces && activeCategory === "animated" ? "smileys" : activeCategory;
 
   useEffect(() => {
-    if (activeCategory === "animated" && animatedFaces.length === 0) {
+    if (canUseAnimatedFaces && visibleCategory === "animated" && animatedFaces.length === 0) {
       fetchAnimatedFaces().then(setAnimatedFaces);
     }
-  }, [activeCategory, animatedFaces.length]);
+  }, [canUseAnimatedFaces, visibleCategory, animatedFaces.length]);
 
   const getFilteredEmojis = () => {
     if (!search) {
-      const cat = EMOJI_CATEGORIES.find(c => c.id === activeCategory);
+      const cat = EMOJI_CATEGORIES.find(c => c.id === visibleCategory);
       return cat ? cat.emojis : [];
     }
 
@@ -153,7 +158,7 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
         <div className="flex flex-col sm:flex-row gap-2 justify-between items-center border-b border-border/40 pb-2">
           {/* Categories Tabs */}
           <div className="flex items-center gap-1 overflow-x-auto max-w-full pb-1 no-scrollbar select-none order-2 sm:order-1">
-            {EMOJI_CATEGORIES.map((cat) => (
+            {EMOJI_CATEGORIES.filter((category) => canUseAnimatedFaces || category.id !== "animated").map((cat) => (
               <button
                 key={cat.id}
                 type="button"
@@ -162,14 +167,14 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
                   setSearch("");
                 }}
                 className={`px-3 py-1.5 rounded-xl text-lg transition-all relative shrink-0 ${
-                  activeCategory === cat.id && !search
+                  visibleCategory === cat.id && !search
                     ? "bg-slate-100 dark:bg-slate-800 scale-105"
                     : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
                 }`}
                 title={cat.label}
               >
                 <span>{cat.icon}</span>
-                {activeCategory === cat.id && !search && (
+                {visibleCategory === cat.id && !search && (
                   <span className="absolute bottom-0 inset-x-3 h-0.5 bg-primary rounded-full" />
                 )}
               </button>
@@ -192,7 +197,7 @@ export const EmojiPanel: React.FC<EmojiPanelProps> = ({
 
         {/* Emojis Grid */}
         <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 max-h-[140px] overflow-y-auto p-1 no-scrollbar select-none">
-          {activeCategory === "animated" ? (
+          {visibleCategory === "animated" ? (
             animatedFaces.map((face) => (
               <button
                 key={face.id}

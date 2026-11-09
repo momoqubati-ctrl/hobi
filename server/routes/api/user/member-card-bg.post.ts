@@ -1,9 +1,10 @@
-import { defineEventHandler, getHeader, readBody } from "h3";
+import { defineEventHandler, getHeader, readBody, setResponseStatus } from "h3";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { dbPool } from "../../../db";
 import { normalizeMinioUrl } from "../../../services/minioClient";
 import { getIO } from "../../../socket";
 import { publishGlobalEvent } from "../../../socket/SocketBroker";
+import { hasPermission } from "../../../services/permissionEngine";
 
 const getSecret = () => process.env.AUTH_SECRET || "dev-only-change-this-secret";
 
@@ -37,8 +38,18 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody<{ memberCardBgUrl: string }>(event);
-  const bgUrl = body?.memberCardBgUrl || "";
+  const bgUrl = typeof body?.memberCardBgUrl === "string" ? body.memberCardBgUrl.trim() : "";
   const isColor = /^#[0-9a-fA-F]{3,8}$/.test(bgUrl);
+  const requiredPermission = isColor ? "custombg.use" : "chattem.use";
+  if (bgUrl && !(await hasPermission(userId, requiredPermission))) {
+    setResponseStatus(event, 403);
+    return {
+      success: false,
+      message: isColor
+        ? "لا تملك صلاحية تغيير لون بطاقة العضو"
+        : "لا تملك صلاحية استخدام خلفية بطاقة العضو",
+    };
+  }
   const normalizedUrl = bgUrl ? (isColor ? bgUrl : normalizeMinioUrl(bgUrl)) : "";
 
   try {

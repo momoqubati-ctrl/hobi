@@ -15,18 +15,34 @@ initDeviceCache();
 
 function readSocketAuth(): Record<string, string> {
   try {
-    const raw = localStorage.getItem("user");
+    const raw = localStorage.getItem("user") || localStorage.getItem("auth_user");
     if (!raw) return {};
+    const token = localStorage.getItem("auth_token") || localStorage.getItem("authToken") || "";
+    if (!token) return {};
 
     const user = JSON.parse(raw);
     const profileMsg = typeof user.profileMsg === "string" ? user.profileMsg : "";
     const statusMsg = typeof user.statusMsg === "string" ? user.statusMsg : profileMsg;
+    let manualStatus: string | undefined = undefined;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("manualStatus");
+        if (stored === "busy" || stored === "away") {
+          manualStatus = stored;
+        }
+      } catch {}
+    }
     return {
       userId: user.id || "",
-      username: user.name || "زائر",
+      token,
+      username: user.username || user.name || "زائر",
+      displayName: user.displayName || user.name || "",
+      mentionName: user.mentionName || "",
+      publicUserId: user.publicUserId || "",
       role: user.role || "guest",
       avatar: user.avatar || "/pic.png",
       countryCode: user.countryCode || "SA",
+      status: manualStatus || "online",
       avatarFrameUrl: user.avatarFrameUrl || "",
       giftIconUrl: user.giftIconUrl || "",
       memberCardBgUrl: user.memberCardBgUrl || "",
@@ -50,8 +66,30 @@ function readSocketAuth(): Record<string, string> {
   }
 }
 
+/** فك تشفير حمولة التوكن والتحقق من انتهاء صلاحيته */
+function isSocketTokenValid(token: string): boolean {
+  try {
+    const [payloadB64] = token.split(".");
+    if (!payloadB64) return false;
+    const base64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64)) as Record<string, unknown>;
+    if (typeof payload.exp === "number") {
+      // exp بالثواني أو بالملي ثانية
+      const expMs = payload.exp > 1e11 ? payload.exp : payload.exp * 1000;
+      return Date.now() < expMs;
+    }
+    return true; // بدون exp → السيرفر يتحكم
+  } catch {
+    return false;
+  }
+}
+
 export function hasValidUserAuth(): boolean {
   try {
+    const token = localStorage.getItem("auth_token") || localStorage.getItem("authToken");
+    if (!token) return false;
+    // التحقق من انتهاء الصلاحية قبل الاتصال
+    if (!isSocketTokenValid(token)) return false;
     const raw = localStorage.getItem("user") || localStorage.getItem("auth_user");
     if (!raw) return false;
     const user = JSON.parse(raw);
@@ -83,17 +121,42 @@ export function getSocket(): Socket {
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
+    reconnectionDelayMax: 8000,   // حد أقصى 8 ثانية بين المحاولات (أفضل للهواتف)
     timeout: 20000,
   });
 
+  // التحقق من صلاحية التوكن عند خطأ الاتصال الأول فقط (قبل بدء reconnectionManager)
+  // reconnectionManager يتولى الحالات اللاحقة
+  socket.once("connect_error", (err: Error) => {
+    const isAuthError =
+      (err as any)?.data?.type === "AuthError" ||
+      err.message?.toLowerCase().includes("unauthorized") ||
+      err.message?.toLowerCase().includes("unauthenticated");
+
+    if (isAuthError || !hasValidUserAuth()) {
+      // توكن منتهي أو غير صالح → أوقف المحاولات وأخطر التطبيق
+      socket?.io?.opts && (socket.io.opts.reconnection = false);
+      socket?.disconnect();
+      window.dispatchEvent(new CustomEvent("app-auth-logout"));
+    }
+  });
+
   socket.on("connect", () => {
-    console.log("[CLIENT_SOCKET] connected", { id: socket?.id, auth: readSocketAuth() });
+    console.log("[CLIENT_SOCKET] connected", { id: socket?.id, userId: readSocketAuth().userId });
     // Join user-specific channels for call signaling
     const auth = readSocketAuth();
     if (auth.userId) {
       socket?.emit("join_user", { userId: auth.userId });
       console.log("[CLIENT_SOCKET] emitted join_user for", auth.userId);
+    }
+    // Re-apply manual status on connect/reconnect if set
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("manualStatus");
+        if (stored === "busy" || stored === "away") {
+          socket?.emit("status_update", { status: stored });
+        }
+      } catch {}
     }
   });
 
@@ -249,9 +312,18 @@ export function refreshSocketAuth(): void {
 
 export function reconnectSocket(): Socket {
   const auth = readSocketAuth();
+  try {
+    // تتبّع مؤقت: من يستدعي إعادة الاتصال؟ (لاكتشاف أي حلقة connect/logout)
+    console.warn("[CLIENT_SOCKET_TRACE] reconnectSocket called from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
+  } catch {}
   if (socket) {
     socket.auth = auth;
     if (socket.connected) {
+      // إبلاغ السيرفر بإزالة حضور الجلسة القديمة فوراً (يمنع احتساب الإنسان مرتين
+      // أثناء فترة سماح قطع الاتصال، مثل ترقية الزائر إلى عضو)
+      try {
+        socket.emit("user_logout");
+      } catch {}
       socket.disconnect();
     }
     if (hasValidUserAuth()) {
@@ -274,6 +346,10 @@ export function logoutSocket(): void {
   if (socket) {
     try {
       if (socket.connected) {
+        try {
+          // تتبّع مؤقت: من يستدعي تسجيل الخروج؟
+          console.warn("[CLIENT_SOCKET_TRACE] logoutSocket (user_logout) from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
+        } catch {}
         socket.emit("user_logout");
       }
     } catch {}

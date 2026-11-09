@@ -10,6 +10,7 @@ import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
 import { optimisticAddComment, optimisticToggleCommentLike } from "@/lib/optimistic-actions";
 import { getSocket } from "@/lib/socket";
+import { hasPermissionAccess } from "@/lib/permissionAccess";
 const showMuteAlert = (message: string) => {
   let detail: any = {
     alertId: String(Date.now()),
@@ -84,11 +85,15 @@ const CommentThread = ({
   const [isReplying, setIsReplying] = useState(false);
   const [showReplies, setShowReplies] = useState(depth < 1);
   const { wallCommentLiked, wallCommentLikeCounts, onlineUsers } = useRealtimeStore();
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canComment = hasPermissionAccess(permissions, "wall_comments.use");
+  const canReact = hasPermissionAccess(permissions, "wall_reactions.use");
   const isLiked = wallCommentLiked.has(String(comment.id));
   const likeCount = wallCommentLikeCounts[String(comment.id)] ?? 0;
   const replyCount = comment.replies?.length || 0;
 
   const handleSubmitReply = async () => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "wall_comments.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -106,6 +111,7 @@ const CommentThread = ({
   };
 
   const handleToggleLike = async () => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "wall_reactions.use")) return;
     if (!currentUser || comment.isOptimistic) return;
     try {
       await optimisticToggleCommentLike(comment.id);
@@ -168,25 +174,25 @@ const CommentThread = ({
           <div className="flex items-center gap-2 mt-1">
             {currentUser && !comment.isOptimistic && (
               <>
-                <button
+                {canReact && <button
                   className={`flex items-center gap-0.5 text-[9px] transition-colors ${isLiked ? "text-red-500" : "text-muted-foreground hover:text-red-500"}`}
                   onClick={handleToggleLike}
                 >
                   <Heart size={10} className={isLiked ? "fill-red-500" : ""} />
                   {likeCount > 0 && <span className="font-bold">{likeCount}</span>}
-                </button>
-                <button
+                </button>}
+                {canComment && <button
                   className="flex items-center gap-0.5 text-[9px] text-muted-foreground hover:text-primary transition-colors"
                   onClick={() => setShowReplyInput(!showReplyInput)}
                 >
                   <Reply size={10} />
                   رد
-                </button>
+                </button>}
               </>
             )}
           </div>
 
-          {showReplyInput && currentUser && (
+          {showReplyInput && currentUser && canComment && (
             <div className="flex gap-1.5 mt-1.5">
               <Input
                 placeholder="اكتب رداً..."
@@ -239,6 +245,8 @@ const CommentThread = ({
 
 const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen, onToggle, onOpenProfile }: WallCommentsProps) => {
   const { wallComments, setComments, setCommentLiked, updateCommentLikeCount } = useRealtimeStore();
+  const permissions = useRealtimeStore((state) => state.userPermissions);
+  const canComment = hasPermissionAccess(permissions, "wall_comments.use");
   const comments = wallComments[postId] || [];
   
   const [internalOpen, setInternalOpen] = useState(false);
@@ -266,7 +274,7 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
       const updateAuthor = (c: any): any => ({
         ...c,
         author: String(c.author?.id) === String(data.userId)
-          ? { ...c.author, name: data.username || c.author.name, avatar: data.avatar || c.author.avatar, nameColor: data.nameColor !== undefined ? data.nameColor : c.author.nameColor, statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : c.author.statusFontColor }
+          ? { ...c.author, name: data.displayName || data.username || c.author.name, avatar: data.avatar || c.author.avatar, nameColor: data.nameColor !== undefined ? data.nameColor : c.author.nameColor, statusFontColor: data.statusFontColor !== undefined ? data.statusFontColor : c.author.statusFontColor }
           : c.author,
         replies: c.replies?.map(updateAuthor) || [],
       });
@@ -323,6 +331,7 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
   };
 
   const handlePostComment = async () => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "wall_comments.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -344,6 +353,7 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
   };
 
   const handleReply = async (parentId: string, text: string) => {
+    if (!hasPermissionAccess(useRealtimeStore.getState().userPermissions, "wall_comments.use")) return;
     if (useRealtimeStore.getState().isMuted) {
       showMuteAlert("تم منعك من الحديث في الدردشة (اسكات)");
       return;
@@ -391,7 +401,7 @@ const WallComments = ({ postId, commentCount, currentUser, isOpen: externalOpen,
             </div>
           )}
 
-          {currentUser && (
+          {currentUser && canComment && (
             <div className="flex gap-1.5 mt-2 pt-2 border-t">
               <Avatar className="w-11 h-11 rounded-lg shrink-0">
                 <AvatarImage src={currentUser.avatar || "/pic.png"} />

@@ -1,20 +1,33 @@
-import { defineEventHandler, readBody, setResponseStatus } from "h3";
-import { markConversationRead } from "../../../services/privateMessageService";
+import { readBody, setResponseHeader, setResponseStatus } from "h3";
+import { createAuthenticatedUserHandler } from "../../../services/authenticatedUserHandler";
+import {
+  isEphemeralPrivateMessagingEnabled,
+  privateMessageStore,
+  registerPrivateMessageSession,
+} from "../../../services/privateMessageService";
 
-export default defineEventHandler(async (event) => {
-  const body = await readBody(event);
-  const { conversationId, userId } = body;
+export default createAuthenticatedUserHandler(async (event, auth) => {
+  setResponseHeader(event, "Cache-Control", "private, no-store");
+  if (!isEphemeralPrivateMessagingEnabled()) {
+    setResponseStatus(event, 503);
+    return { success: false, message: "الرسائل الخاصة المؤقتة غير مهيأة على هذا الخادم" };
+  }
+  if (!auth.sessionId || !registerPrivateMessageSession({
+    sessionId: auth.sessionId,
+    userId: auth.userId,
+    expiresAt: auth.expiresAt,
+  })) {
+    setResponseStatus(event, 401);
+    return { success: false, message: "جلسة غير صالحة" };
+  }
+  const body = await readBody<Record<string, unknown> | null>(event);
+  const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
 
-  if (!conversationId || !userId) {
+  if (!conversationId) {
     setResponseStatus(event, 400);
-    return { success: false, message: "conversationId و userId مطلوبان" };
+    return { success: false, message: "conversationId مطلوب" };
   }
 
-  try {
-    await markConversationRead(conversationId, userId);
-    return { success: true };
-  } catch (error) {
-    console.error("markRead error:", error);
-    return { success: false, message: "تعذر تحديث حالة القراءة" };
-  }
+  privateMessageStore.markRead(auth.sessionId, conversationId);
+  return { success: true };
 });

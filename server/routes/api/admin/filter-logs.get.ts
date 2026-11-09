@@ -1,6 +1,7 @@
-import { defineEventHandler, setResponseStatus } from "h3";
+import { defineEventHandler } from "h3";
 import { dbPool } from "../../../db";
 import { guardAdminAction } from "../../../services/adminPermissions";
+import { handleApiError } from "../../../utils/apiError";
 
 export default defineEventHandler(async (event) => {
   try {
@@ -24,7 +25,6 @@ export default defineEventHandler(async (event) => {
 
     return { success: true, logs: result.rows };
   } catch (error: any) {
-    setResponseStatus(event, 500);
-    return { success: false, message: error.message };
+    return handleApiError(event, error);
   }
 });

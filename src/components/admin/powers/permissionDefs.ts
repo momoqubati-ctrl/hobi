@@ -1,3 +1,5 @@
+import { CHAT_FEATURE_GROUPS, CHAT_FEATURE_PERMISSION_KEYS } from "../../../lib/chatFeaturePermissions";
+
 export interface ResourceDef {
   key: string;
   label: string;
@@ -25,6 +27,10 @@ export const BASIC_GROUPS: PermissionGroup[] = [
       { key: "history", label: "سجل الرسائل" },
     ],
   },
+  ...CHAT_FEATURE_GROUPS.map((group) => ({
+    label: group.label,
+    resources: group.resources.map(({ key, label }) => ({ key, label })),
+  })),
   {
     label: "الأعضاء والرتب",
     resources: [
@@ -50,6 +56,7 @@ export const BASIC_GROUPS: PermissionGroup[] = [
       { key: "publicmsghide", label: "رسائل عامة مخفية" },
       { key: "bot", label: "إدارة البوتات" },
       { key: "grupes", label: "إدارة المجموعات" },
+      { key: "lockedroom", label: "تجاوز حماية الغرف المقفلة" },
     ],
   },
   {
@@ -94,6 +101,7 @@ export const BASIC_GROUPS: PermissionGroup[] = [
       { key: "admin_fltr", label: "فلتر" },
       { key: "admin_rooms", label: "الغرف" },
       { key: "admin_stickers", label: "الملصقات" },
+      { key: "admin_gifts", label: "الهدايا" },
       { key: "admin_swiperbanners", label: "بنرات السوابر" },
       { key: "admin_profileframes", label: "اطارات صورة البروفايل" },
       { key: "admin_membercardtheme", label: "ثيم بطاقة العضو" },
@@ -107,6 +115,7 @@ export const BASIC_GROUPS: PermissionGroup[] = [
       { key: "admin_subs", label: "الإشتراكات" },
       { key: "admin_giftsgit", label: "هدايا git" },
       { key: "admin_agentwallets", label: "شحن الوكلاء" },
+      { key: "admin_giftcommission", label: "عمولة الهدايا" },
       { key: "admin_evaluationpoints", label: "احتساب النقاط" },
       { key: "admin_settings", label: "إدارة الموقع" },
       { key: "admin_database", label: "قاعدة البيانات" },
@@ -145,8 +154,155 @@ export const ACTION_LABELS: Record<string, string> = {
 /** Returns the list of action suffixes for a given resource key */
 export function getActionsForResource(key: string): string[] {
   // Visual resources have only "use"
-  if (VISUAL_RESOURCES.some(r => r.key === key)) {
+  if (VISUAL_RESOURCES.some(r => r.key === key) ||
+      CHAT_FEATURE_PERMISSION_KEYS.some((permission) => permission.startsWith(`${key}.`))) {
     return ["use"];
   }
   return ["read", "edit", "delete", "all"];
+}
+
+export const ADMIN_SECTION_PERMISSION_BY_ID: Readonly<Record<string, string>> = {
+  overview: "admin_overview",
+  events: "admin_events",
+  actions: "admin_actions",
+  users: "admin_users",
+  bans: "admin_bans",
+  roles: "admin_roles",
+  fltr: "admin_fltr",
+  rooms: "admin_rooms",
+  stickers: "admin_stickers",
+  swiperbanners: "admin_swiperbanners",
+  profileframes: "admin_profileframes",
+  membercardtheme: "admin_membercardtheme",
+  icons: "admin_icons",
+  animatedfaces: "admin_animatedfaces",
+  roomBadges: "admin_roomBadges",
+  siteBadges: "admin_siteBadges",
+  gifts: "admin_gifts",
+  shrt: "admin_shrt",
+  msgs: "admin_msgs",
+  bots: "admin_bots",
+  subs: "admin_subs",
+  giftsgit: "admin_giftsgit",
+  agentwallets: "admin_agentwallets",
+  giftcommission: "admin_giftcommission",
+  evaluationpoints: "admin_evaluationpoints",
+  settings: "admin_settings",
+  database: "admin_database",
+  micprovidercp: "admin_micprovidercp",
+  ddosguardcp: "admin_ddosguardcp",
+  hostin: "admin_hostin",
+  hostcleanup: "admin_hostcleanup",
+  hostcontrols: "admin_hostcontrols",
+  hostsettings: "admin_hostsettings",
+  hostdomains: "admin_hostdomains",
+};
+
+/** Only actions with an active UI gate or server check can be edited. */
+const IMPLEMENTED_PERMISSION_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  ...Object.fromEntries(
+    CHAT_FEATURE_PERMISSION_KEYS.map((permission) => [permission.slice(0, permission.lastIndexOf(".")), ["use"]]),
+  ),
+  cp: ["read", "all"],
+  kick: ["read", "edit", "all"],
+  ban: ["read", "edit", "all"],
+  meiut: ["read", "edit", "all"],
+  history: ["read", "edit", "all"],
+  edituser: ["read", "edit", "all"],
+  setpower: ["read", "edit", "all"],
+  loveu: ["read", "edit", "all"],
+  ulike: ["read", "edit", "all"],
+  roomowner: ["read", "edit", "all"],
+  createroom: ["edit"],
+  rooms: ["read", "edit", "all"],
+  lockedroom: ["read"],
+  flter: ["read", "delete", "all"],
+  micprovideredit: ["edit", "delete"],
+  custombg: ["use"],
+  chattem: ["use"],
+  frame: ["use"],
+  admin_overview: ["read"],
+  admin_events: ["read"],
+  admin_actions: ["read"],
+  admin_users: ["read"],
+  admin_bans: ["read"],
+  admin_roles: ["read", "all"],
+  admin_fltr: ["read"],
+  admin_rooms: ["read", "edit", "all"],
+  admin_stickers: ["read"],
+  admin_gifts: ["read"],
+  admin_swiperbanners: ["read", "edit", "delete", "all"],
+  admin_profileframes: ["read", "edit", "delete", "all"],
+  admin_membercardtheme: ["read", "edit", "delete", "all"],
+  admin_icons: ["read", "edit", "delete", "all"],
+  admin_animatedfaces: ["read"],
+  admin_roomBadges: ["read"],
+  admin_siteBadges: ["read"],
+  admin_shrt: ["read"],
+  admin_msgs: ["read"],
+  admin_bots: ["read"],
+  admin_subs: ["read"],
+  admin_giftsgit: ["read"],
+  admin_agentwallets: ["read"],
+  admin_giftcommission: ["read", "edit"],
+  admin_evaluationpoints: ["read"],
+  admin_settings: ["read"],
+  admin_database: ["read"],
+  admin_micprovidercp: ["read"],
+  admin_ddosguardcp: ["read"],
+  admin_hostin: ["read"],
+  admin_hostcleanup: ["read"],
+  admin_hostcontrols: ["read"],
+  admin_hostsettings: ["read"],
+  admin_hostdomains: ["read"],
+};
+
+export function isPermissionActionImplemented(resource: string, action: string): boolean {
+  return IMPLEMENTED_PERMISSION_ACTIONS[resource]?.includes(action) ?? false;
+}
+
+export function togglePermissionValue(
+  current: Record<string, boolean>,
+  resource: string,
+  action: string,
+): Record<string, boolean> {
+  if (!isPermissionActionImplemented(resource, action)) return current;
+
+  const key = `${resource}.${action}`;
+  const next = { ...current, [key]: !current[key] };
+  if (action === "all") {
+    ["read", "edit", "delete"].forEach(child => {
+      next[`${resource}.${child}`] = next[key];
+    });
+  } else if (!next[key] && next[`${resource}.all`]) {
+    next[`${resource}.all`] = false;
+  }
+  return next;
+}
+
+export function canAccessControlPanel(permissions: readonly string[]): boolean {
+  return permissions.includes("cp") ||
+    permissions.includes("cp.read") ||
+    permissions.includes("cp.all");
+}
+
+export function canViewAdminSection(permissions: readonly string[], section: string): boolean {
+  const resource = ADMIN_SECTION_PERMISSION_BY_ID[section];
+  return resource !== undefined &&
+    (permissions.includes(`${resource}.read`) || permissions.includes(`${resource}.all`));
+}
+
+export function canManageAdminSection(
+  permissions: readonly string[],
+  section: string,
+  action: "edit" | "delete",
+): boolean {
+  const resource = ADMIN_SECTION_PERMISSION_BY_ID[section];
+  return resource !== undefined &&
+    (permissions.includes(`${resource}.${action}`) || permissions.includes(`${resource}.all`));
+}
+
+export function canUseVisualResource(permissions: readonly string[], resource: string): boolean {
+  return VISUAL_RESOURCES.some(item => item.key === resource) &&
+    permissions.includes(`${resource}.use`);
 }

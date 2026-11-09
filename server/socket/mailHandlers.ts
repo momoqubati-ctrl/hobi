@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import { sendMail, getInbox, getOutbox, markAsRead, deleteMail, getUnreadCount } from "../services/internalMailService";
 import { createNotification } from "../services/notificationService";
-import { publishGlobalEvent } from "./SocketBroker";
+import { publishMailToParticipants } from "./mailDelivery";
 
 export function registerMailHandlers(io: Server, socket: Socket): void {
   const user = socket.data.user;
@@ -29,17 +29,21 @@ export function registerMailHandlers(io: Server, socket: Socket): void {
         senderStatusFontColor: user.statusFontColor || "",
       };
 
-      publishGlobalEvent("internal_mail", enrichedMail).catch(err => 
-        console.error("Failed to broadcast mail:", err)
-      );
+      let realtimeDelivery = "delivered";
+      try {
+        await publishMailToParticipants(mail, enrichedMail);
+      } catch (error) {
+        realtimeDelivery = "failed";
+        console.error("Failed to deliver mail to participant rooms:", error);
+      }
 
-      if (String(user.id) !== recipientId) {
-        createNotification(recipientId, user.id, "mail", "internal_mail", mail.id, {
+      if (String(mail.senderId) !== String(mail.recipientId)) {
+        createNotification(String(mail.recipientId), String(mail.senderId), "mail", "internal_mail", mail.id, {
           body: body.slice(0, 100),
         }).catch(err => console.error("Failed to create mail notification:", err));
       }
 
-      callback?.({ success: true, mail: enrichedMail });
+      callback?.({ success: true, mail: enrichedMail, realtimeDelivery });
     } catch (err: any) {
       console.error("Error sending mail via socket:", err);
       callback?.({ success: false, error: err.message || "تعذر إرسال البريد" });
