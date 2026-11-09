@@ -19,10 +19,10 @@ const pool = new Pool({
     ? { rejectUnauthorized: false }
     : undefined,
   // Keep each application instance within a conservative database connection budget.
-  max: Number(process.env.DB_POOL_MAX ?? 5),
+  max: Number(process.env.DB_POOL_MAX ?? 10),
   min: Number(process.env.DB_POOL_MIN ?? 0),
   idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? 30_000),
-  connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS ?? 3_000),
+  connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS ?? 15_000),
   allowExitOnIdle: false,
 });
 

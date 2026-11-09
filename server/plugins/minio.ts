@@ -15,6 +15,11 @@ export default (nitroApp: any) => {
     const pathname = event.url?.pathname || event.req?.url || "";
     if (!pathname.startsWith("/minio/")) return next();
 
+    if (process.env.MINIO_ENABLED === "false") {
+      setResponseStatus(event, 404);
+      return "MinIO is disabled";
+    }
+
     if (!initialized) {
       initialized = true;
       await initMinio();

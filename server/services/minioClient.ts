@@ -15,6 +15,7 @@ let client: Client | null = null;
 let enabled = false;
 
 export const isMinioEnabled = () => {
+  if (process.env.MINIO_ENABLED === "false") return false;
   if (!client) {
     getMinioClient();
   }
