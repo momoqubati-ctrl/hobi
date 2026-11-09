@@ -25,10 +25,11 @@ export async function resolveRoomIdVariants(input?: string | null): Promise<stri
   try {
     if (candidates.length > 0) {
       const result = await dbPool.query(
-        `SELECT CAST(id AS text) AS id, slug
+        `SELECT CAST(id AS text) AS id, slug, CAST(idroom AS text) AS idroom
          FROM rooms
          WHERE CAST(id AS text) = ANY($1::text[])
             OR slug = ANY($1::text[])
+            OR CAST(idroom AS text) = ANY($1::text[])
          LIMIT 20`,
         [candidates]
       );
@@ -36,6 +37,7 @@ export async function resolveRoomIdVariants(input?: string | null): Promise<stri
       for (const row of result.rows) {
         if (row?.id) variants.add(String(row.id));
         if (row?.slug) variants.add(String(row.slug));
+        if (row?.idroom) variants.add(String(row.idroom));
       }
     }
   } catch {
@@ -64,6 +66,7 @@ export async function resolveRoomId(input?: string | null): Promise<string> {
        FROM rooms
        WHERE CAST(id AS text) = ANY($1::text[])
           OR slug = ANY($1::text[])
+          OR CAST(idroom AS text) = ANY($1::text[])
        LIMIT 1`,
       [candidates]
     );

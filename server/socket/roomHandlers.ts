@@ -283,11 +283,12 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
    * دخول غرفة
    */
   socket.on("join_room", async (data: { roomId: string; password?: string }, callback?: (res: any) => void) => {
-    const roomId = String(data?.roomId || "").trim();
-    if (!roomId) {
-      callback?.({ success: false, message: "معرف الغرفة مطلوب" });
-      return;
-    }
+    try {
+      const roomId = String(data?.roomId || "").trim();
+      if (!roomId) {
+        callback?.({ success: false, message: "معرف الغرفة مطلوب" });
+        return;
+      }
 
     // ── Check if user is temporarily kicked/banned from this room ──
     try {
@@ -749,7 +750,11 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         });
       }
     }
-  });
+  } catch (unhandledJoinError) {
+    console.error("[JOIN_ROOM] Fatal unhandled error in join_room:", unhandledJoinError);
+    callback?.({ success: false, message: "تعذر الانضمام للغرفة، يرجى المحاولة مرة أخرى" });
+  }
+});
 
   /**
    * إرسال رسالة في غرفة (مع الفلترة)

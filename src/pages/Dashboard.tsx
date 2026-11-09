@@ -84,7 +84,14 @@ const Dashboard = () => {
     setPendingRoomLoading(true);
     setPendingRoomError("");
     console.log("[CLIENT_JOIN] emitting join_room", { roomId: resolvedRoom.id, password });
+    const joinTimeout = window.setTimeout(() => {
+      setPendingRoomLoading(false);
+      setPendingRoom(null);
+      setPendingRoomError("استغرقت الاستجابة وقتاً طويلاً. يرجى النقر على الغرفة مجدداً.");
+    }, 8000);
+
     socket.emit("join_room", { roomId: resolvedRoom.id, password }, (res: any) => {
+      window.clearTimeout(joinTimeout);
       console.log("[CLIENT_JOIN] callback", { roomId: resolvedRoom.id, res });
       setPendingRoomLoading(false);
       setPendingRoom(null);
