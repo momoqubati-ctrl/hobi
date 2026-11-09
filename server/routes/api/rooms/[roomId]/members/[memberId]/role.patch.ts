@@ -1,3 +1,3 @@
-import { roomCustomRoleHandlers } from "../../../../../../../services/roomCustomRoleApi";
+import { roomCustomRoleHandlers } from "../../../../../../services/roomCustomRoleApi";
 
 export default roomCustomRoleHandlers.assignMemberRole;
