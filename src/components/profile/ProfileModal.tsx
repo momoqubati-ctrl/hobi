@@ -248,7 +248,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
     <>
       <Dialog open={!!profileId} onOpenChange={(open) => !open && onClose()}>
         <DialogContent
-          className="flex flex-col w-full max-w-[460px] max-h-[92dvh] p-0 gap-0 overflow-y-auto rounded-[28px] border border-border/80 bg-card text-card-foreground shadow-2xl backdrop-blur-2xl dark:border-blue-500/30 dark:bg-[#070b18]/95 dark:text-white dark:shadow-[0_0_50px_rgba(30,58,138,0.35)] [&>button]:hidden scrollbar-thin"
+          className="flex flex-col w-full max-w-[460px] max-h-[92dvh] p-0 gap-0 overflow-y-auto rounded-[28px] border border-border/80 bg-card text-card-foreground shadow-2xl dark:border-blue-500/30 dark:bg-[#070b18]/95 dark:text-white dark:shadow-[0_0_50px_rgba(30,58,138,0.35)] [&>button]:hidden scrollbar-thin"
           dir="rtl"
         >
           <DialogTitle className="sr-only">الملف الشخصي</DialogTitle>
@@ -328,7 +328,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
 
               {/* 3. أدوات الإهداء للأدمن (منح بنر، منح أيقونة، منح ترقية) في مكان مخصص وبارز */}
               {effectiveIsAdmin && !relationship.isSelf && (
-                <div className="mx-5 mb-3 rounded-2xl border border-pink-500/30 bg-[#0b1226]/90 p-3 shadow-inner backdrop-blur-md">
+                <div className="mx-5 mb-3 rounded-2xl border border-pink-500/30 bg-[#0b1226]/90 p-3 shadow-inner">
                   <div className="flex items-center justify-between mb-2 px-1">
                     <span className="text-xs font-black text-pink-400 flex items-center gap-1.5">
                       <Gift className="h-4 w-4" />
@@ -425,7 +425,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
               <ProfileStats stats={stats} profile={profile} />
 
               {/* 5. بطاقة المستوى والتقدم المرجعية مع درع المستوى ثلاثي الأبعاد وشريط النيون */}
-              <div className="mx-5 mb-3 rounded-2xl border border-border/60 bg-muted/30 text-foreground dark:border-blue-900/40 dark:bg-[#0b1226]/80 p-3.5 flex items-center justify-between gap-3.5 shadow-sm dark:shadow-inner backdrop-blur-md">
+              <div className="mx-5 mb-3 rounded-2xl border border-border/60 bg-muted/30 text-foreground dark:border-blue-900/40 dark:bg-[#0b1226]/80 p-3.5 flex items-center justify-between gap-3.5 shadow-sm dark:shadow-inner">
                 {/* درع المستوى على اليمين */}
                 <LevelShieldBadge level={levelInfo.level} />
 
@@ -458,7 +458,7 @@ export function ProfileModal({ profileId, onClose, isAdmin, onMessage }: Profile
               </div>
 
               {/* 6. قسم الشارات والإنجازات المرجعي مع البطاقات الـ 4 */}
-              <div className="mx-5 mb-3 rounded-2xl border border-border/60 bg-muted/30 text-foreground dark:border-blue-900/40 dark:bg-[#0b1226]/80 p-4 shadow-sm dark:shadow-inner backdrop-blur-md">
+              <div className="mx-5 mb-3 rounded-2xl border border-border/60 bg-muted/30 text-foreground dark:border-blue-900/40 dark:bg-[#0b1226]/80 p-4 shadow-sm dark:shadow-inner">
                 {/* شريط عنوان القسم وزر عرض الكل */}
                 <div className="flex items-center justify-between mb-3.5">
                   <div className="flex items-center gap-2 text-foreground dark:text-white font-black text-sm">

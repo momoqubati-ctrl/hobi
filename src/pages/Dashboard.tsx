@@ -174,6 +174,7 @@ const Dashboard = () => {
   };
 
   const handleOpenProfile = useCallback((uid: string) => { setViewProfileId(uid); }, []);
+  const handleCloseProfile = useCallback(() => setViewProfileId(null), []);
 
   const handleOpenChat = useCallback((userId: string) => {
     isOpeningChatRef.current = true;
@@ -864,7 +865,7 @@ const Dashboard = () => {
 
       <ProfileModal
         profileId={viewProfileId}
-        onClose={() => setViewProfileId(null)}
+        onClose={handleCloseProfile}
         isAdmin={isAdmin}
         onMessage={(userId) => {
           setViewProfileId(null);

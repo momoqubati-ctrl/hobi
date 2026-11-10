@@ -3,10 +3,11 @@
  * ═══════════════════════════════════════════════════════════════════════
  * يبقي التبويب فعّالاً بالكامل حتى في الخلفية عبر 5 طبقات مستقلة:
  *
- *  1. <audio> حقيقي صامت في حلقة — الطبقة الأهم:
+ *  1. <audio> حقيقي بإشارة شبه منعدمة (-80dB) في حلقة — الطبقة الأهم:
  *     iOS Safari يعلّق WebAudio وجميع المؤقتات في الخلفية، لكن يشغّل
- *     الوسائط الحقيقية بكامل قوتها (كأنه تطبيق مشغّل موسيقى).
- *     ملف WAV صامت مُولَّد وقتياً في حلقة مفتوحة = خيط JS لا يتجمّد أبداً.
+ *     الوسائط الحقيقية بكامل قوتها (كأنه تطبيق مشغّل موسيقى) ويظهر لجلستها
+ *     إشعار وسائط دائم في شريط الإشعارات (محتوى الإشارة فعلية وليست صفرية
+ *     حتى لا تصنّفها الأنظمة "غير مسموعة" وتُسقط الجلسة والإشعار).
  *
  *  2. MediaSession API — نُعلن playbackState="playing" لنظام التشغيل،
  *     فيعامل التبويب كتطبيق وسائط نشط (معفى من Doze/tab-freezing على
@@ -107,6 +108,7 @@ class BrowserAliveKeeper {
 
     document.removeEventListener("click",      this._onUserInteraction);
     document.removeEventListener("touchstart", this._onUserInteraction);
+    document.removeEventListener("touchend",   this._onUserInteraction);
     document.removeEventListener("keydown",    this._onUserInteraction);
     document.removeEventListener("pointerdown",this._onUserInteraction);
     document.removeEventListener("visibilitychange", this._onVisibilityChange);
@@ -145,9 +147,46 @@ class BrowserAliveKeeper {
       audio.play().catch(() => {
         // التوكنليس — سيعيد الحارس المحاولة لاحقاً بعد أول تفاعل
       });
+
+      // ⚡ التعافي من المقاطعة: عندما يقطع النظام جلسة الصوت (تطبيق آخر يشغّل
+      // فيديو/موسيقى مثل تيك توك — مقاطعة Audio Focus على iOS/Android)
+      // يُطلق حدث pause، وهنا تبدأ سلسلة استئناف متدرّجة فورية بدل انتظار الحارس.
+      audio.addEventListener("pause",   () => { if (this.started) this._scheduleReplay(); });
+      audio.addEventListener("ended",   () => { if (this.started) this._scheduleReplay(); });
+      audio.addEventListener("stalled", () => { if (this.started) this._scheduleReplay(); });
     } catch (e) {
       console.warn("[BrowserAliveKeeper] silent audio unavailable:", e);
     }
+  }
+
+  /**
+   * استئناف متدرّج بعد مقاطعة خارجية (تطبيق وسائط آخر سرق جلسة الصوت).
+   * المستخدم ينتقل من تيك توك إلى واتساب مثلاً: ما إن يتخلى التطبيق الأول
+   * عن جلسة الصوت حتى تُلتقطها هذه السلسلة وتُشغّل الصوت الصامت مجدداً
+   * خلال أجزاء من الثانية إلى ثوانٍ — بدل بقاء التبويب مجمداً حتى عودته.
+   */
+  private _scheduleReplay(): void {
+    if (!this.started) return;
+    const audio = this.silentAudio;
+    if (!audio || !audio.paused) return;   // عاد للعمل من تلقاء نفسه
+
+    const delays = [50, 150, 400, 1000, 2500, 5000, 8000]; // مجموع ≈ 17 ثانية
+    const attempt = (i: number): void => {
+      if (!this.started) return;
+      const a = this.silentAudio;
+      if (!a || !a.paused) return;
+      a.play().then(() => {
+        // نجاح — أعلن للنظام أن الوسائط تلعب مجدداً
+        try {
+          const ms = (navigator as any).mediaSession;
+          if (ms) ms.playbackState = "playing";
+        } catch (_) {}
+      }).catch(() => {
+        const next = delays[i];
+        if (next) setTimeout(() => attempt(i + 1), next);
+      });
+    };
+    attempt(0);
   }
 
   private _createSilentWavUrl(): string {
@@ -173,7 +212,16 @@ class BrowserAliveKeeper {
     view.setUint16(34, 16, true);                    // bits per sample
     writeStr(36, "data");
     view.setUint32(40, numSamples * 2, true);
-    // عينات = 0 إفتراضياً (ArrayBuffer مهيأ بالصفر) = صمت تام
+
+    // عينات = إشارة شبه معدومة (±3 من 32767 ≈ ‎-80dB) تتبدّل كل عينة (4kHz square).
+    // ليس صفراً تماماً عمداً: أنظمة الهواتف (Android/iOS) قد تصنّف المحتوى
+    // الصفري كلياً كـ"غير مسموع" فتُسقط جلسة الصوت وتخفي إشعار الوسائط
+    // (Persistent Media Notification) من شريط الإشعارات — وهذه الطاقة
+    // المجهريّة غير المسموعة تُبقي الجلسة "مسموعة" والإشعار ظاهراً وتعمل
+    // حتى أثناء التوّجه لتطبيقات أخرى.
+    for (let i = 0; i < numSamples; i++) {
+      view.setInt16(44 + i * 2, i % 2 === 0 ? 3 : -3, true);
+    }
 
     const blob = new Blob([buffer], { type: "audio/wav" });
     return URL.createObjectURL(blob);
@@ -361,10 +409,15 @@ class BrowserAliveKeeper {
     this.watchdogTimer = setInterval(() => {
       if (!this.started) return;
 
-      // ① عنصر الصوت: إذا أوقفه النظام — أعده
+      // ① عنصر الصوت: إذا أوقفه النظام — أعده (ويُحدَّث إشعار الوسائط عند النجاح)
       try {
         if (this.silentAudio && this.silentAudio.paused) {
-          this.silentAudio.play().catch(() => {});
+          this.silentAudio.play().then(() => {
+            try {
+              const ms = (navigator as any).mediaSession;
+              if (ms) ms.playbackState = "playing";
+            } catch (_) {}
+          }).catch(() => {});
         }
       } catch (_) {}
 
@@ -396,6 +449,7 @@ class BrowserAliveKeeper {
     // نربط دائماً — متصفحات الموبايل ترفض play() قبل لمسة حقيقية حتى مع وجود focus
     add("click");
     add("touchstart");
+    add("touchend");   // بعض متصفحات الهاتف لا تُعتبر touchstart إيماءة صوت مؤهِّلة
     add("pointerdown");
     add("keydown");
 

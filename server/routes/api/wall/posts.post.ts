@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
     const userRes = auth.role === "guest"
       ? { rows: [] }
       : await dbPool.query(
-          `SELECT u.username, u.topic, u.muted as legacy_muted, up.muted as profile_muted 
+          `SELECT u.username, u.display_name, u.topic, u.muted as legacy_muted, up.muted as profile_muted
            FROM users u
            LEFT JOIN user_profiles up ON CAST(up.user_id AS text) = CAST(u.id AS text)
            WHERE CAST(u.uid AS text) = $1 OR CAST(u.id AS text) = $1 OR CAST(u.idreg AS text) = $1 OR lower(u.username) = lower($1) 
@@ -60,8 +60,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403);
       return { success: false, message: "تم منعك من الحديث في الدردشة" };
     }
-    const fallbackAuthorName = auth.username;
-    const user = dbUser || { username: auth.username, topic: fallbackAuthorName };
+    // الاسم المستعار فقط — لا نستخدم اسم المستخدم الحقيقي كاسم معروض
+    const fallbackAuthorName = dbUser?.topic || dbUser?.display_name || "";
     const ip = getRequestHeader(event, "x-forwarded-for") || getRequestHeader(event, "x-real-ip") || "127.0.0.1";
 
     // --- تطبيق الاختصارات ثم الفلترة ---
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
     const filterRes = await processText({
       text: expanded,
       source: "الحائط",
-      user: { username: user.username, topic: user.topic, ip }
+      user: { username: auth.username || auth.userId, topic: fallbackAuthorName, ip }
     });
 
     const post = await createWallPost(auth.userId, filterRes.filteredText, mediaUrl, fallbackAuthorName, auth.role, animatedFaces);

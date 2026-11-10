@@ -69,7 +69,7 @@ export async function getActiveStories(currentUserId?: string): Promise<any[]> {
   const result = await dbPool.query(`
     SELECT
       s.*,
-      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), NULLIF(u.username, ''), LEFT(s.author_id, 12)) AS author_username,
+      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), LEFT(s.author_id, 12)) AS author_username,
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover,
@@ -119,7 +119,7 @@ export async function getUserStories(userId: string, currentViewerId?: string): 
   const result = await dbPool.query(`
     SELECT
       s.*,
-      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), NULLIF(u.username, ''), LEFT(s.author_id, 12)) AS author_username,
+      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), LEFT(s.author_id, 12)) AS author_username,
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover,
@@ -159,7 +159,7 @@ export async function getStoryById(storyId: string): Promise<any | null> {
   const result = await dbPool.query(`
     SELECT
       s.*,
-      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), NULLIF(u.username, ''), LEFT(s.author_id, 12)) AS author_username,
+      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), LEFT(s.author_id, 12)) AS author_username,
       COALESCE(u.role, 'guest') AS author_role,
       COALESCE(u.pic, '/pic.png') AS author_avatar,
       u.cover AS author_cover,
@@ -214,7 +214,7 @@ export async function markStoryViewed(storyId: string, viewerId: string, viewerN
 export async function getStoryViewers(storyId: string): Promise<any[]> {
   const result = await dbPool.query(`
     SELECT sv.viewer_id AS id, sv.viewed_at,
-      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), NULLIF(u.username, ''), sv.viewer_name, 'زائر') AS username,
+      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), sv.viewer_name, 'زائر') AS username,
       COALESCE(u.pic, '/pic.png') AS avatar
     FROM story_views sv
     LEFT JOIN users u ON u.id = sv.viewer_id
@@ -233,7 +233,7 @@ export async function getStoryViewers(storyId: string): Promise<any[]> {
 export async function getStoryReactions(storyId: string, type: string = "like"): Promise<any[]> {
   const result = await dbPool.query(`
     SELECT sr.user_id AS id, sr.created_at,
-      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), NULLIF(u.username, ''), sr.user_name, 'زائر') AS username,
+      COALESCE(NULLIF(u.display_name, ''), NULLIF(u.topic, ''), sr.user_name, 'زائر') AS username,
       COALESCE(u.pic, '/pic.png') AS avatar
     FROM story_reactions sr
     LEFT JOIN users u ON u.id = sr.user_id

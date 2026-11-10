@@ -71,6 +71,20 @@ const saveToDisk = (filename: string, buffer: Buffer) => {
 
 const getContentType = (extension: string) => MIME_MAP[extension] || "application/octet-stream";
 
+export const saveWithLocalFallback = async (
+  uploadToRemote: () => Promise<string>,
+  saveLocally: () => string,
+): Promise<string> => {
+  try {
+    const url = await uploadToRemote();
+    if (url) return url;
+  } catch (error) {
+    console.error("[Upload] MinIO upload failed; falling back to local storage:", error);
+  }
+
+  return saveLocally();
+};
+
 export const saveUploadBuffer = async (params: {
   kind: "avatar" | "cover" | "story" | "wall" | "file";
   userId: string;
@@ -91,9 +105,10 @@ export const saveUploadBuffer = async (params: {
   // Try MinIO first if enabled
   if (isMinioEnabled()) {
     const contentType = getContentType(extension);
-    const url = await uploadToMinio(filename, params.buffer, contentType);
-    if (url) return url;
-    // Fallback to disk if MinIO fails
+    return saveWithLocalFallback(
+      () => uploadToMinio(filename, params.buffer, contentType),
+      () => saveToDisk(filename, params.buffer),
+    );
   }
 
   return saveToDisk(filename, params.buffer);

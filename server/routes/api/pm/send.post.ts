@@ -23,9 +23,25 @@ import {
   type EphemeralPmSession,
 } from "../../../services/ephemeralPrivateMessageStore";
 import { SOCKET_CHANNELS } from "../../../socket/SocketChannels";
+import { dbPool } from "../../../db";
+import { resolvePublicName } from "../../../utils/publicIdentity";
 
 type AuthContext = ReturnType<typeof getUserAuthContext>;
 type AuthenticatedContext = Extract<AuthContext, { ok: true }>;
+
+/** جلب الاسم المستعار للمرسل من قاعدة البيانات (لا يُرسل اسم المستخدم الحقيقي أبداً) */
+const resolveSenderPublicName = async (userId: string): Promise<string> => {
+  try {
+    const res = await dbPool.query(
+      `SELECT idreg, username, display_name, topic FROM users
+       WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 OR lower(username) = lower($1) LIMIT 1`,
+      [userId],
+    );
+    return resolvePublicName(res.rows[0]);
+  } catch {
+    return "عضو";
+  }
+};
 
 type SendDependencies = {
   authenticate: (event: H3Event) => AuthContext;
@@ -186,9 +202,11 @@ export function createPrivateMessageSendHandler(overrides: Partial<SendDependenc
         recipientId: receiver.id,
         recipientName: receiver.name,
       });
+      // الاسم المستعار فقط — هذا الاسم يظهر في رسائل الخاص للمستقبل
+      const senderPublicName = await resolveSenderPublicName(auth.userId);
       const result = dependencies.sendMessage({
         sessionId: auth.sessionId,
-        sender: { id: auth.userId, name: auth.username, avatar: "/pic.png" },
+        sender: { id: auth.userId, name: senderPublicName, avatar: "/pic.png" },
         receiver,
         text: filteredText,
         clientId: typeof clientId === "string" ? clientId : undefined,

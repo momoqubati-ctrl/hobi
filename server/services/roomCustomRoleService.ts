@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { dbPool } from "../db";
 import type { Pool } from "pg";
+import { getPowerLevel } from "./powersService";
 
 export const DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS = {
   canKick: false,
@@ -65,6 +66,46 @@ export interface RoomCustomRole {
   createdAt: string;
 }
 
+export interface RoomCustomRoleMemberAssignment {
+  userId: string;
+  customRoleId: string;
+}
+
+export interface RoomMemberCustomRoleUpdate {
+  roomId: string;
+  userId: string;
+  customRoleId: string | null;
+  customRole: RoomCustomRole | null;
+  roomRole: string;
+  powerLevel: number;
+}
+
+export interface RoomCustomRoleMemberAccess {
+  userId: string;
+  isOwner: boolean;
+  powerLevel: number;
+  globalRole: string;
+  permissions: RoomCustomRolePermissions;
+}
+
+export type RoomCustomRolePermission = keyof RoomCustomRolePermissions;
+
+export function canPerformRoomCustomRoleAction(
+  actor: RoomCustomRoleMemberAccess,
+  target: RoomCustomRoleMemberAccess,
+  permission: RoomCustomRolePermission,
+): boolean {
+  if (target.isOwner && !actor.isOwner) return false;
+  const actorGlobalPower = getPowerLevel(actor.globalRole).rank;
+  const targetGlobalPower = getPowerLevel(target.globalRole).rank;
+  if (targetGlobalPower >= 9_000 && actorGlobalPower <= targetGlobalPower) return false;
+  if (actor.isOwner) return true;
+  if (actorGlobalPower >= 9_000) return true;
+  return !target.isOwner &&
+    actor.permissions[permission] &&
+    actor.powerLevel > target.powerLevel;
+}
+
 export type RoomCustomRoleErrorCode =
   | "INVALID_REQUEST"
   | "ROOM_NOT_FOUND"
@@ -119,10 +160,9 @@ const isUniqueViolation = (error: unknown): boolean =>
   error.code === "23505";
 
 export function createRoomCustomRoleService(database: RoomCustomRoleDatabase = dbPool) {
-  const resolveOwnedRoomId = async (roomRef: string, actorUserId: string): Promise<string> => {
+  const resolveRoom = async (roomRef: string) => {
     const normalizedRoomRef = roomRef.trim();
-    const normalizedActorId = actorUserId.trim();
-    if (!normalizedRoomRef || normalizedRoomRef.length > 128 || !normalizedActorId) {
+    if (!normalizedRoomRef || normalizedRoomRef.length > 128) {
       throw new RoomCustomRoleServiceError("INVALID_REQUEST");
     }
 
@@ -166,11 +206,73 @@ export function createRoomCustomRoleService(database: RoomCustomRoleDatabase = d
       }
     }
 
-    if (ownerUserId !== normalizedActorId) {
+    return { id: String(room.id), ownerUserId };
+  };
+
+  const resolveOwnedRoomId = async (roomRef: string, actorUserId: string): Promise<string> => {
+    const normalizedActorId = actorUserId.trim();
+    if (!normalizedActorId) throw new RoomCustomRoleServiceError("INVALID_REQUEST");
+    const room = await resolveRoom(roomRef);
+    if (room.ownerUserId !== normalizedActorId) {
       throw new RoomCustomRoleServiceError("NOT_ALLOWED");
     }
+    return room.id;
+  };
 
-    return String(room.id);
+  const getMemberAccess = async (
+    roomRef: string,
+    userId: string,
+  ): Promise<RoomCustomRoleMemberAccess> => {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) throw new RoomCustomRoleServiceError("INVALID_REQUEST");
+    const room = await resolveRoom(roomRef);
+    const isOwner = room.ownerUserId === normalizedUserId;
+    const memberResult = await database.query(
+      `SELECT COALESCE(cr.power_level, rm.power, 1000) AS power_level,
+              cr.permissions, u.role AS global_role
+       FROM rooms r
+       LEFT JOIN room_members rm
+         ON rm.room_id = r.id AND rm.user_id = $2
+       LEFT JOIN room_custom_roles cr
+         ON cr.id = rm.custom_role_id AND cr.room_id = r.id
+       LEFT JOIN users u ON CAST(u.id AS text) = $2
+       WHERE r.id = $1`,
+      [room.id, normalizedUserId],
+    );
+    const member = memberResult.rows[0] as {
+      power_level?: number;
+      permissions?: RoomCustomRolePermissions | null;
+      global_role?: string;
+    } | undefined;
+    return {
+      userId: normalizedUserId,
+      isOwner,
+      powerLevel: isOwner ? 100_000 : Number(member?.power_level) || 1000,
+      globalRole: String(member?.global_role || "guest").toLowerCase(),
+      permissions: member?.permissions || DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS,
+    };
+  };
+
+  const hasPermission = async (
+    roomRef: string,
+    userId: string,
+    permission: RoomCustomRolePermission,
+  ): Promise<boolean> => {
+    const access = await getMemberAccess(roomRef, userId);
+    return access.isOwner || access.permissions[permission];
+  };
+
+  const canManageMember = async (
+    roomRef: string,
+    actorUserId: string,
+    targetUserId: string,
+    permission: RoomCustomRolePermission,
+  ): Promise<boolean> => {
+    const [actor, target] = await Promise.all([
+      getMemberAccess(roomRef, actorUserId),
+      getMemberAccess(roomRef, targetUserId),
+    ]);
+    return canPerformRoomCustomRoleAction(actor, target, permission);
   };
 
   const listForRoom = async (roomRef: string, actorUserId: string): Promise<RoomCustomRole[]> => {
@@ -183,6 +285,23 @@ export function createRoomCustomRoleService(database: RoomCustomRoleDatabase = d
       [roomId],
     );
     return result.rows.map((row) => toPublicRoomCustomRole(row as RoomCustomRoleRow));
+  };
+
+  const listMemberAssignmentsForRoom = async (
+    roomRef: string,
+    actorUserId: string,
+  ): Promise<RoomCustomRoleMemberAssignment[]> => {
+    const roomId = await resolveOwnedRoomId(roomRef, actorUserId);
+    const result = await database.query(
+      `SELECT user_id, custom_role_id
+       FROM room_members
+       WHERE room_id = $1 AND custom_role_id IS NOT NULL`,
+      [roomId],
+    );
+    return result.rows.map((row) => ({
+      userId: String(row.user_id),
+      customRoleId: String(row.custom_role_id),
+    }));
   };
 
   const createForRoom = async (
@@ -259,37 +378,59 @@ export function createRoomCustomRoleService(database: RoomCustomRoleDatabase = d
     actorUserId: string,
     memberUserId: string,
     customRoleId: string | null,
-  ): Promise<{ userId: string; customRoleId: string | null }> => {
+  ): Promise<RoomMemberCustomRoleUpdate> => {
     const roomId = await resolveOwnedRoomId(roomRef, actorUserId);
     const normalizedMemberId = memberUserId.trim();
     if (!normalizedMemberId || normalizedMemberId.length > 255) {
       throw new RoomCustomRoleServiceError("INVALID_REQUEST");
     }
 
+    let customRole: RoomCustomRole | null = null;
     if (customRoleId !== null) {
       const roleResult = await database.query(
-        `SELECT id
+        `SELECT id, name, color, power_level, permissions, created_at
          FROM room_custom_roles
          WHERE room_id = $1 AND id = $2
          LIMIT 1`,
         [roomId, customRoleId],
       );
       if (!roleResult.rows[0]) throw new RoomCustomRoleServiceError("ROLE_NOT_FOUND");
+      customRole = toPublicRoomCustomRole(roleResult.rows[0] as RoomCustomRoleRow);
     }
 
     const result = await database.query(
-      `UPDATE room_members
-       SET custom_role_id = $1
-       WHERE room_id = $2 AND user_id = $3
-       RETURNING user_id`,
-      [customRoleId, roomId, normalizedMemberId],
+      `INSERT INTO room_members (room_id, user_id, custom_role_id)
+       SELECT $1, CAST(id AS varchar(255)), $3
+       FROM users
+       WHERE CAST(id AS text) = $2
+       ON CONFLICT (room_id, user_id)
+       DO UPDATE SET custom_role_id = EXCLUDED.custom_role_id
+       RETURNING user_id, role, power`,
+      [roomId, normalizedMemberId, customRoleId],
     );
     if (!result.rows[0]) throw new RoomCustomRoleServiceError("MEMBER_NOT_FOUND");
 
-    return { userId: String(result.rows[0].user_id), customRoleId };
+    return {
+      roomId,
+      userId: String(result.rows[0].user_id),
+      customRoleId,
+      customRole,
+      roomRole: String(result.rows[0].role || "member"),
+      powerLevel: Number(result.rows[0].power) || 1000,
+    };
   };
 
-  return { listForRoom, createForRoom, updateForRoom, deleteForRoom, assignMemberRole };
+  return {
+    listForRoom,
+    listMemberAssignmentsForRoom,
+    getMemberAccess,
+    hasPermission,
+    canManageMember,
+    createForRoom,
+    updateForRoom,
+    deleteForRoom,
+    assignMemberRole,
+  };
 }
 
 export const roomCustomRoleService = createRoomCustomRoleService();

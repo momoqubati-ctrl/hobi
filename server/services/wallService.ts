@@ -86,7 +86,7 @@ export const listWallPosts = async () => {
     const result = await dbPool.query(`
       SELECT b.id, b.msg as body, b.pic as "mediaUrl", b.media_urls as "mediaUrls", b.animated_faces as "animatedFaces",
              b.uid as "authorId", b.topic as "fallbackAuthorName",
-             COALESCE(NULLIF(u.topic, ''), NULLIF(u.username, '')) as "authorName",
+             COALESCE(NULLIF(u.topic, ''), NULLIF(u.display_name, ''), NULLIF(u.username, '')) as "authorName",
              NULLIF(u.pic, '') as "authorAvatar",
              COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as "authorNameColor",
              up.gifted_banner_url as "authorGiftedBannerUrl",
@@ -124,7 +124,7 @@ export const createWallPost = async (
   const userRes = isGuestAuthor
     ? { rows: [] as any[] }
     : await dbPool.query(
-        `SELECT u.uid, u.id, u.idreg, u.username, u.topic, u.pic,
+        `SELECT u.uid, u.id, u.idreg, u.username, u.display_name, u.topic, u.pic,
                 up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url
          FROM users u
          LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -145,7 +145,8 @@ export const createWallPost = async (
   } catch (_) {}
 
   const legacyUserId = String(user?.uid || user?.id || user?.idreg || authorId);
-  const authorName = normalizeAuthorName(isGuestAuthor ? authorDisplayName : user?.topic || user?.username || authorDisplayName) || authorId;
+  // الاسم المستعار فقط — يُحفظ ويُعرض للجميع
+  const authorName = normalizeAuthorName(isGuestAuthor ? authorDisplayName : user?.topic || user?.display_name || user?.username || authorDisplayName) || authorId;
 
   const result = await dbPool.query(
     `INSERT INTO bars (uid, msg, pic, topic, animated_faces) 
@@ -204,7 +205,7 @@ export const createWallComment = async (
   parentId?: string,
 ) => {
   const userRes = await dbPool.query(
-    `SELECT u.id, u.username, u.topic, u.pic,
+    `SELECT u.id, u.username, u.display_name, u.topic, u.pic,
             up.gifted_banner_url, up.gifted_gift_icon_url, up.gifted_promotion_icon_url
      FROM users u
      LEFT JOIN user_profiles up ON up.user_id = u.id
@@ -213,7 +214,8 @@ export const createWallComment = async (
   );
   const user = userRes.rows[0];
   const resolvedId = String(user?.id || authorId);
-  const resolvedName = user?.topic || user?.username || authorName || "زائر";
+  // الاسم المستعار فقط
+  const resolvedName = user?.topic || user?.display_name || authorName || "زائر";
 
   // Fetch role icon
   let authorRoleIconUrl = "";

@@ -76,10 +76,6 @@ export function getActiveSession(): { token: string; user: AuthUser } | null {
  * إنهاء جلسة المستخدم بالكامل وإغلاق السوكيت وتنظيف التخزين المحلي وإخطار السيرفر
  */
 export async function terminateUserSession(notifyServer = true): Promise<void> {
-  try {
-    // تتبّع مؤقت: من أنهي الجلسة؟
-    console.warn("[CLIENT_SOCKET_TRACE] terminateUserSession (notifyServer=" + notifyServer + ") from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
-  } catch {}
   const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
 
   // 1. قطع اتصال السوكيت فوراً وإرسال حدث الخروج لإسقاط الحضور
@@ -134,3 +130,5 @@ export async function terminateUserSession(notifyServer = true): Promise<void> {
     } catch {}
   }
 }
+
+

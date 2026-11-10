@@ -52,11 +52,13 @@ export default createAuthenticatedUserHandler(async (event, auth) => {
     }
 
     const user = result.rows[0];
+    // الاسم المستعار فقط — لا يُكشف اسم المستخدم الحقيقي
+    const publicName = user.display_name || user.topic || "عضو";
     return {
       success: true,
       user: {
         id: user.id,
-        name: user.display_name || user.topic || user.username,
+        name: publicName,
         mentionName: user.mention_name || "",
         publicUserId: user.public_user_id || "",
         avatar: user.pic || "/pic.png",

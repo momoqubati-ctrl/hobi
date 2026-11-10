@@ -88,6 +88,10 @@ export const getRoomMessage = (roomId: string, messageId: string): ChatMessage |
   return roomMessagesCache.get(roomId)?.get(messageId);
 };
 
+export const clearRoomMessages = (roomId: string): void => {
+  roomMessagesCache.delete(roomId);
+};
+
 export const updateRoomMessageReactions = (roomId: string, messageId: string, reactions: Record<string, RoomReactionType>) => {
   const msg = roomMessagesCache.get(roomId)?.get(messageId);
   if (msg) {

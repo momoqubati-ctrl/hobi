@@ -6,6 +6,11 @@ import { findInMemoryUser } from "./authService";
 import { findSharedUser } from "./sharedUserStore";
 import { normalizeMinioUrl } from "./minioClient";
 import { isSystemOwnerUsername } from "./systemOwner";
+import {
+  getCachedProfileStats,
+  mergeProfileStats,
+  type ProfileStatsSnapshot,
+} from "./profileStatsCache";
 
 type ProfileVisitor = {
   id: string;
@@ -37,12 +42,14 @@ const toIsoDate = (value: unknown) => {
 
 const createLegacyProfileResult = (row: any) => {
   const userId = String(row.id || row.uid || row.idreg || "");
-  const displayName = String(row.display_name || row.topic || row.username || "");
+  // الاسم المستعار فقط — يظهر هذا الكائن لجميع الأعضاء
+  const displayName = String(row.display_name || row.topic || "").trim()
+    || (row.idreg ? `#${String(row.idreg).replace(/^#+/, "")}` : "");
 
   return {
     id: userId,
     legacyId: row.idreg ?? null,
-    username: String(row.username || ""),
+    username: displayName,
     displayName,
     mentionName: String(row.mention_name || ""),
     publicUserId: String(row.public_user_id || ""),
@@ -180,7 +187,8 @@ const addLocalProfileVisit = async (visitorId: string, profileId: string, hidden
   const visitorProfile = await findLegacyUserProfile(visitorId).catch(() => null);
   const visitor: ProfileVisitor = {
     id: visitorProfile?.id || visitorId,
-    username: visitorProfile?.username || visitorId,
+    // الاسم المستعار فقط — قائمة الزوار تظهر لصاحب الملف
+    username: visitorProfile?.displayName || visitorProfile?.username || visitorId,
     displayName: visitorProfile?.displayName || visitorProfile?.username || visitorId,
     avatarUrl: visitorProfile?.profile?.avatarUrl || visitorProfile?.avatarUrl || "/pic.png",
     visitedAt: new Date().toISOString(),
@@ -199,11 +207,10 @@ export class ProfileService {
     if (visitorId === profileId) return; // Don't count self-views
 
     try {
-      await addLocalProfileVisit(visitorId, profileId, hidden);
-
       const [visitor, profile] = await Promise.all([
         db.query.users.findFirst({ where: eq(users.id, visitorId) }),
         db.query.users.findFirst({ where: eq(users.id, profileId) }),
+        addLocalProfileVisit(visitorId, profileId, hidden),
       ]);
 
       if (!visitor) {
@@ -235,22 +242,23 @@ export class ProfileService {
   static async getProfileStats(profileId: string) {
     const cachedStats = await redis.client?.hgetall(`profile:stats:${profileId}`);
 
-    let baseStats: any;
-    if (!cachedStats || Object.keys(cachedStats).length === 0) {
+    let baseStats = getCachedProfileStats(cachedStats);
+    if (!baseStats) {
+      let fallbackStats: ProfileStatsSnapshot | null = null;
       try {
         const legacyStats = await getLegacyProfileStats(profileId);
-        if (legacyStats) baseStats = legacyStats;
+        if (legacyStats) fallbackStats = legacyStats;
       } catch (error: any) {
         if (error?.code !== "42703" && error?.code !== "42P01") {
           console.error("[ProfileService] legacy stats lookup error", error);
         }
       }
 
-      if (!baseStats) {
+      if (!fallbackStats) {
         const profileInfo = await db.query.userProfiles.findFirst({
           where: eq(userProfiles.userId, profileId),
         });
-        baseStats = {
+        fallbackStats = {
           views: profileInfo?.rep || 0,
           likes: profileInfo?.wallPostLikes || 0,
           coins: profileInfo?.coins || 0,
@@ -258,14 +266,7 @@ export class ProfileService {
           giftsReceivedCount: profileInfo?.giftsReceivedCount || 0,
         };
       }
-    } else {
-      baseStats = {
-        views: parseInt(cachedStats.views || "0", 10),
-        likes: parseInt(cachedStats.likes || "0", 10),
-        coins: parseInt(cachedStats.coins || "0", 10),
-        evaluation: parseInt(cachedStats.evaluation || "0", 10),
-        giftsReceivedCount: parseInt(cachedStats.giftsReceivedCount || "0", 10),
-      };
+      baseStats = mergeProfileStats(fallbackStats, cachedStats);
     }
 
     let followersCount = 0;
@@ -462,10 +463,12 @@ export class ProfileService {
     // Fallback to in-memory users
     const memUser = findInMemoryUser(userId);
     if (memUser) {
+      const alias = memUser.displayName || "";
       return {
         id: memUser.id,
-        username: memUser.username,
-        displayName: memUser.displayName,
+        // الاسم المستعار فقط للعرض
+        username: alias,
+        displayName: alias,
         role: memUser.role,
         avatarUrl: memUser.profile?.avatar || "/pic.png",
         coverUrl: memUser.profile?.profileCover || "/pich.png",
@@ -480,10 +483,12 @@ export class ProfileService {
     // Fallback to shared store (accessible across all contexts via globalThis)
     const shared = findSharedUser(userId);
     if (shared) {
+      const alias = shared.displayName || "";
       return {
         id: shared.id,
-        username: shared.username,
-        displayName: shared.displayName,
+        // الاسم المستعار فقط للعرض
+        username: alias,
+        displayName: alias,
         role: shared.role,
         avatarUrl: shared.avatar || "/pic.png",
         coverUrl: "/pich.png",

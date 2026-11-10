@@ -28,7 +28,7 @@ export function viteSocketIO(): Plugin {
     configureServer(server) {
       if (!server.httpServer) return;
 
-      console.log(`[SOCKET_TRACE_VITE] configuring pid=${process.pid}`);
+      console.log(`[vite-socket] configuring (pid ${process.pid})`);
       (globalThis as any).__VITE_SOCKET_IO_CREATED__ = true;
       (process as any).__VITE_SOCKET_IO_CREATED__ = true;
 
@@ -50,20 +50,7 @@ export function viteSocketIO(): Plugin {
           zlibInflateOptions: { chunkSize: 1024 * 16 },
         },
       });
-      console.log(`[SOCKET_TRACE_VITE] attached: upgradeListeners=${(server.httpServer as any).listenerCount("upgrade")}`);
-
-      // ===== تتبّع مؤقت: اعتراض engine.io close لكل سوكت مع سبب الاستدعاء =====
-      (io.engine as any).on("connection", (engineSocket: any) => {
-        const originalClose = engineSocket.close.bind(engineSocket);
-        engineSocket.close = function (discard?: boolean) {
-          const stack = (new Error().stack || "").split("\n").slice(2, 8).join(" | ");
-          console.log(`[SOCKET_TRACE_ENGINE_CLOSE] sid=${engineSocket.id} discard=${discard} path=${engineSocket.request?.url || ""} stack=${stack}`);
-          return originalClose(discard);
-        } as typeof engineSocket.close;
-        engineSocket.on("close", (reason: string) => {
-          console.log(`[SOCKET_TRACE_ENGINE_EVENT] sid=${engineSocket.id} engineCloseReason=${reason}`);
-        });
-      });
+      console.log(`[vite-socket] ws server attached on path /ws (upgrade listeners: ${(server.httpServer as any).listenerCount("upgrade")})`);
 
       // Initialize the SocketBroker with this io instance
       void initializeSocketBroker(io).catch((error) => {
@@ -336,7 +323,6 @@ export function viteSocketIO(): Plugin {
       runtimeGlobal.__vite_room_members_map__ = roomMembersMap;
       runtimeProcess.__vite_connected_users__ = connectedUsers;
       runtimeProcess.__vite_room_members_map__ = roomMembersMap;
-      console.log("[VITE_TRACE_PRESENCE] Exposed connectedUsers and roomMembersMap on runtime globals");
 
       // عدّاد فريد: يحسب الأشخاص الفعليين لا الجلسات (يمنع تضخم "متصل الآن" عند تعدد الجلسات أو بقاياها)
       function computeUniqueOnlineCount(): number {
@@ -416,7 +402,6 @@ export function viteSocketIO(): Plugin {
       function removeUser(socketId: string) {
         const user = connectedUsers.get(socketId);
         if (user) {
-          console.log(`[VITE_TRACE_ROOM] removeUser START socketId=${socketId} user=${user.username} roomId=${user.roomId} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
           connectedUsers.delete(socketId);
           if (user.roomId) {
             const members = roomMembersMap.get(user.roomId);
@@ -424,14 +409,11 @@ export function viteSocketIO(): Plugin {
               members.delete(socketId);
               if (members.size === 0) {
                 roomMembersMap.delete(user.roomId);
-                console.log(`[VITE_TRACE_ROOM] removeUser: roomMembersMap DELETED key ${user.roomId} (became empty)`);
               }
             }
           }
-          console.log(`[VITE_TRACE_ROOM] removeUser END socketId=${socketId} user=${user.username} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
           removeConnectedUser(socketId).catch(err => console.error("[vite-socket] removeConnectedUser failed:", err));
         } else {
-          console.log(`[VITE_TRACE_ROOM] removeUser: user NOT FOUND socketId=${socketId}`);
         }
         return user;
       }
@@ -439,42 +421,34 @@ export function viteSocketIO(): Plugin {
       function joinUserToRoom(socketId: string, roomId: string) {
         const user = connectedUsers.get(socketId);
         if (!user) {
-          console.log(`[VITE_TRACE_ROOM] joinUserToRoom: user NOT FOUND socketId=${socketId} roomId=${roomId}`);
           return;
         }
-        console.log(`[VITE_TRACE_ROOM] joinUserToRoom START socketId=${socketId} roomId=${roomId} user.roomId=${user.roomId} roomMembersMap.has(roomId)=${roomMembersMap.has(roomId)} currentCount=${getRoomCount(roomId)}`);
         if (user.roomId && user.roomId !== roomId) {
           leaveUserFromRoom(socketId);
         }
         user.roomId = roomId;
         if (!roomMembersMap.has(roomId)) roomMembersMap.set(roomId, new Set());
         roomMembersMap.get(roomId)!.add(socketId);
-        console.log(`[VITE_TRACE_ROOM] joinUserToRoom END socketId=${socketId} roomId=${roomId} count=${getRoomCount(roomId)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
         joinRoom(socketId, roomId).catch(err => console.error("[vite-socket] joinRoom failed:", err));
       }
 
       function leaveUserFromRoom(socketId: string) {
         const user = connectedUsers.get(socketId);
         if (!user || !user.roomId) {
-          console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom: no user or no roomId socketId=${socketId} user=${!!user}`);
           return undefined;
         }
         const roomId = user.roomId;
         const members = roomMembersMap.get(roomId);
         const beforeCount = members?.size ?? 0;
-        console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom START socketId=${socketId} roomId=${roomId} beforeCount=${beforeCount} user.roomId=${user.roomId}`);
-        console.log(`[VITE_TRACE_ROOM] CALLER: ${new Error().stack?.split('\n').slice(2, 6).join(' → ')}`);
         if (members) {
           members.delete(socketId);
           if (members.size === 0) {
             roomMembersMap.delete(roomId);
-            console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom: roomMembersMap deleted key roomId=${roomId} (became empty)`);
           }
         }
         user.roomId = "";
         const s = io?.sockets.sockets.get(socketId);
         if (s) s.data.user.roomId = "";
-        console.log(`[VITE_TRACE_ROOM] leaveUserFromRoom END socketId=${socketId} removedFrom=${roomId} countAfter=${getRoomCount(roomId)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
         leaveRoom(socketId).catch(err => console.error("[vite-socket] leaveRoom failed:", err));
         return roomId;
       }
@@ -650,7 +624,6 @@ export function viteSocketIO(): Plugin {
           };
 
           socket.data.user = userData;
-          console.log(`[VITE_TRACE_PRESENCE] new connection socketId=${socket.id} username=${username} displayName=${canonicalDisplayName} userId=${userId}`);
           addUser(socket.id, userData);
           addConnectedUser(socket.id, userData).catch(err => console.error("[vite-socket] addConnectedUser failed:", err));
 
@@ -759,13 +732,11 @@ export function viteSocketIO(): Plugin {
 
           const pendingLeave = pendingLeaves.get(socket.id);
           let prev = connectedUsers.get(socket.id)?.roomId;
-          console.log(`[VITE_TRACE] join_room START user=${username} socket=${socket.id} roomId=${roomId} prev=${prev} pendingLeave=${!!pendingLeave} connectedUsers.size=${connectedUsers.size} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))}`);
           
           if (pendingLeave) {
             clearTimeout(pendingLeave.timeout);
             prev = pendingLeave.roomId;
             pendingLeaves.delete(socket.id);
-            console.log(`[VITE_TRACE] pendingLeave resolved: prev=${prev}`);
           }
 
           // البحث عن معلّقات قطع اتصال لهذه الجلسة أو لأي جلسة سابقة لنفس المستخدم
@@ -783,17 +754,13 @@ export function viteSocketIO(): Plugin {
             const oldSocketId = pEntry.socketId;
             if (oldSocketId !== socket.id) {
               removeUser(oldSocketId);
-              console.log(`[VITE_TRACE] pendingDisconnect: removed OLD socket oldSocketId=${oldSocketId} (different from current)`);
             } else {
-              console.log(`[VITE_TRACE] pendingDisconnect: SKIPPED removeUser (same socket) oldSocketId=${oldSocketId}`);
             }
 
             if (pEntry.roomId === roomId) {
               isReconnect = true;
-              console.log(`[VITE_TRACE] isReconnect=true (same room) roomId=${roomId}`);
             } else {
               prev = pEntry.roomId;
-              console.log(`[VITE_TRACE] pendingDisconnect: setting prev=${prev} oldSocketId=${oldSocketId} roomId=${roomId}`);
             }
           }
 
@@ -817,14 +784,11 @@ export function viteSocketIO(): Plugin {
           }
 
           if (prev && prev !== roomId) {
-            console.log(`[VITE_TRACE] === TRANSITION user=${username} socket=${socket.id} from=${prev} to=${roomId} ===`);
-            console.log(`[VITE_TRACE] before leave: prevRoom=${prev} getRoomCount=${getRoomCount(prev)} roomMembersMap keys=${JSON.stringify(Array.from(roomMembersMap.keys()))} roomMembersMap[${prev}]=${JSON.stringify(Array.from(roomMembersMap.get(prev) || []))}`);
             
             socket.leave(`room:${prev}`);
             leaveUserFromRoom(socket.id);
             
             const countAfterLeave = getRoomCount(prev);
-            console.log(`[VITE_TRACE] after leave: prevRoom=${prev} getRoomCount=${countAfterLeave} roomMembersMap[${prev}]=${JSON.stringify(Array.from(roomMembersMap.get(prev) || []))}`);
             
             io!.to(`room:${prev}`).emit("user_left", { socketId: socket.id, username, roomId: prev, memberCount: countAfterLeave });
             
@@ -852,7 +816,6 @@ export function viteSocketIO(): Plugin {
             // Broadcast live counter update globally for the previous room
             io!.emit("room_count_update", { roomId: prev, memberCount: countAfterLeave });
           } else {
-            console.log(`[VITE_TRACE] NO TRANSITION (first join or same room) user=${username} socket=${socket.id} room=${roomId} prev=${prev}`);
           }
 
           socket.join(`room:${roomId}`);
@@ -860,7 +823,6 @@ export function viteSocketIO(): Plugin {
           socket.data.user.roomId = roomId;
 
           const members = getRoomUsers(roomId);
-          console.log(`[VITE_TRACE] after join: newRoom=${roomId} getRoomUsers=${members.length} getRoomCount=${getRoomCount(roomId)} roomMembersMap[${roomId}]=${JSON.stringify(Array.from(roomMembersMap.get(roomId) || []))} memberIds=${JSON.stringify(members.map(m=>({id:m.id, uname:m.username, sid:m.socketId})))}`);
           
           try {
             const messages = await chatStore.listMessages(roomId);
@@ -920,13 +882,11 @@ export function viteSocketIO(): Plugin {
               members: mappedMembers,
               memberCount: members.length,
             });
-            console.log(`[VITE_TRACE] callback sent: memberCount=${members.length}`);
 
             if (!isReconnect) {
               const currentUserRecord = connectedUsers.get(socket.id);
               const currentUserProfile = memberProfilesMap.get(String(userId));
               const currentIdreg = String(currentUserProfile?.idreg || currentUserRecord?.idreg || userData.idreg || "").replace(/^#+/, "");
-              console.log(`[VITE_TRACE] emitting user_joined to room=${roomId} memberCount=${members.length}`);
               socket.to(`room:${roomId}`).emit("user_joined", {
                 socketId: socket.id,
                 user: {
@@ -949,7 +909,6 @@ export function viteSocketIO(): Plugin {
               });
 
               // Broadcast live counter update globally for the new room
-              console.log(`[VITE_TRACE] emitting room_count_update for room=${roomId} memberCount=${members.length}`);
               io!.emit("room_count_update", { roomId, memberCount: members.length });
 
               // Broadcast entrance/transition message to new room
@@ -1007,9 +966,7 @@ export function viteSocketIO(): Plugin {
           const runLeave = () => {
             pendingLeaves.delete(socket.id);
             const currentUser = connectedUsers.get(socket.id);
-            console.log(`[KICK_TRACE_LEAVE] runLeave triggered socketId=${socket.id} roomId=${roomId} currentRoom=${currentUser?.roomId} kicked=${!!(socket as any).kicked}`);
             if (!currentUser || currentUser.roomId !== roomId) {
-              console.log(`[VITE_TRACE] runLeave: SKIPPED (user no longer in room ${roomId}, current room=${currentUser?.roomId}) socketId=${socket.id}`);
               return;
             }
             socket.leave(`room:${roomId}`);
@@ -1299,7 +1256,6 @@ export function viteSocketIO(): Plugin {
         };
 
         socket.on("get_online_users", (callback?: any) => {
-          console.log(`[VITE_TRACE_PRESENCE] get_online_users requested by ${socket.id} connectedUsers count=${connectedUsers.size} users=${JSON.stringify(Array.from(connectedUsers.values()).map(u=>({id:u.id, username:u.username, socketId:u.socketId, roomId:u.roomId})))}`);
           const uniqueUsers = new Map<string, any>();
           
           for (const u of connectedUsers.values()) {
@@ -1593,7 +1549,6 @@ export function viteSocketIO(): Plugin {
         // ===== User Logout =====
         socket.on("user_logout", () => {
           try {
-            console.log(`[SOCKET_TRACE] user_logout received socket=${socket.id} userId=${socket.data?.user?.id || ""} referer=${socket.handshake.headers.referer || ""}`);
             (socket as any).loggedOut = true;
             const anotherSessionIsOnline = Array.from(connectedUsers.entries()).some(
               ([sid, user]) =>
@@ -1615,7 +1570,6 @@ export function viteSocketIO(): Plugin {
 
         // ===== Disconnect =====
         socket.on("disconnect", (disconnectReason: any) => {
-          console.log(`[SOCKET_TRACE] disconnect reason=${disconnectReason || "unknown"} socket=${socket.id} loggedOut=${!!(socket as any).loggedOut} user=${socket.data?.user?.username || ""}`);
           if ((socket as any).loggedOut) {
             return;
           }
@@ -1645,12 +1599,10 @@ export function viteSocketIO(): Plugin {
                 u => String(u.id) === String(user.id) && u.socketId !== socket.id
               );
               if (isStillConnected) {
-                console.log(`[VITE_TRACE] runDisconnect: user ${username} has another active socket, skipping user_left`);
                 removeUser(socket.id);
                 return;
               }
               const roomId = latestUser.roomId;
-              console.log(`[KICK_TRACE_DISCONNECT] runDisconnect triggered (old server) socketId=${socket.id} roomId=${roomId} kicked=${!!(socket as any).kicked}`);
 
               io!.to(`room:${roomId}`).emit("user_left", { socketId: socket.id, username, roomId, memberCount: Math.max(0, getRoomCount(roomId) - 1) });
               
@@ -1711,3 +1663,5 @@ export function viteSocketIO(): Plugin {
     },
   };
 }
+
+

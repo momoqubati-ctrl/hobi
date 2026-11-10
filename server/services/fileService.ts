@@ -1,7 +1,7 @@
 import { dbPool } from "../db";
 import fs from "node:fs";
 import path from "node:path";
-import { saveUploadBuffer, normalizeUploadExtension } from "./uploadStorage";
+import { saveUploadBuffer, normalizeUploadExtension, saveWithLocalFallback } from "./uploadStorage";
 import { isMinioEnabled, uploadToMinio, deleteFromMinio } from "./minioClient";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
@@ -56,18 +56,19 @@ const saveFileToStorage = async (userId: string, extension: string, buffer: Buff
 
   if (isMinioEnabled()) {
     const contentType = MIME_MAP[extension] || "application/octet-stream";
-    const url = await uploadToMinio(`uploads/files/${filename}`, buffer, contentType);
-    if (url) return `uploads/files/${filename}`;
+    return saveWithLocalFallback(
+      async () => {
+        await uploadToMinio(`uploads/files/${filename}`, buffer, contentType);
+        return `uploads/files/${filename}`;
+      },
+      () => saveFileToDisk(filename, buffer),
+    );
   }
 
   return saveFileToDisk(filename, buffer);
 };
 
 const deleteFileFromStorage = async (storagePath: string) => {
-  if (isMinioEnabled()) {
-    await deleteFromMinio(storagePath);
-  }
-
   const cwd = process.cwd();
   const dirs = [
     path.join(cwd, "public"),
@@ -77,8 +78,14 @@ const deleteFileFromStorage = async (storagePath: string) => {
     dirs.push(path.resolve(cwd, "..", "public"));
     dirs.push(path.resolve(cwd, "..", "..", "public"));
   }
-  for (const base of Array.from(new Set(dirs))) {
-    const fp = path.join(base, storagePath);
+  const filePaths = Array.from(new Set(dirs), (base) => path.join(base, storagePath));
+  const hasLocalCopy = filePaths.some((filePath) => fs.existsSync(filePath));
+
+  if (isMinioEnabled() && !hasLocalCopy) {
+    await deleteFromMinio(storagePath);
+  }
+
+  for (const fp of filePaths) {
     if (fs.existsSync(fp)) {
       try { fs.unlinkSync(fp); } catch {}
     }

@@ -125,6 +125,42 @@ export function getSocket(): Socket {
     timeout: 20000,
   });
 
+  // ===== حماية: منع تكرار حزمة CONNECT على نفس اتصال المحرك =====
+  // تم إثبات أن حلقة "دخل الغرفة / غادر الغرفة (انقطع الاتصال)" المستمرة سببها
+  // حزم CONNECT مكررة: أي نداء socket.connect() بينما CONNECT سابق لم يُجب
+  // عليه بعد يرسل حزمة CONNECT إضافية، والخادم يعتبرها خرقاً للبروتوكول
+  // فيغلق الاتصال كاملاً (سبب engine.io: "forced close") فتتكرر الدورة.
+  // الحارس أدناه يجعل connect() إحداثية (idempotent) أثناء فترة انتظار ack.
+  {
+    const s: any = socket;
+    let nsConnectInFlight = false;
+    const clearInFlight = () => {
+      if (nsConnectInFlight) nsConnectInFlight = false;
+    };
+    s.on("connect", clearInFlight);
+    s.on("disconnect", clearInFlight);
+    s.on("connect_error", clearInFlight);
+    // تتغير الحالة عند أي فتح محرك (يدوي أو تلقائي عبر إعادة الاتصال)
+    (s.io as any)?.on?.("open", () => { nsConnectInFlight = true; });
+    (s.io as any)?.on?.("close", clearInFlight);
+    try {
+      (s.io.engine as any)?.on?.("open", () => { nsConnectInFlight = true; });
+      (s.io.engine as any)?.on?.("close", clearInFlight);
+    } catch {}
+
+    const origConnect = s.connect.bind(s);
+    s.connect = (...args: unknown[]) => {
+      // حماية جوهرية: لا تُرسل CONNECT ثانية أثناء وجود CONNECT معلّق على نفس
+      // اتصال المحرك — الخادم يعتبرها خرقاً للبروتوكول ويغلق الاتصال بالكامل
+      // (engine.io "forced close")، وهذا كان سبب حلقة الاتصال/القطع المستمرة.
+      if (nsConnectInFlight && !s.connected) {
+        console.debug("[socket] ignoring duplicate connect() while namespace CONNECT is in flight");
+        return s;
+      }
+      return origConnect(...args);
+    };
+  }
+
   // التحقق من صلاحية التوكن عند خطأ الاتصال الأول فقط (قبل بدء reconnectionManager)
   // reconnectionManager يتولى الحالات اللاحقة
   socket.once("connect_error", (err: Error) => {
@@ -312,10 +348,6 @@ export function refreshSocketAuth(): void {
 
 export function reconnectSocket(): Socket {
   const auth = readSocketAuth();
-  try {
-    // تتبّع مؤقت: من يستدعي إعادة الاتصال؟ (لاكتشاف أي حلقة connect/logout)
-    console.warn("[CLIENT_SOCKET_TRACE] reconnectSocket called from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
-  } catch {}
   if (socket) {
     socket.auth = auth;
     if (socket.connected) {
@@ -323,8 +355,19 @@ export function reconnectSocket(): Socket {
       // أثناء فترة سماح قطع الاتصال، مثل ترقية الزائر إلى عضو)
       try {
         socket.emit("user_logout");
-      } catch {}
-      socket.disconnect();
+        socket.disconnect();
+      } catch {
+        socket.disconnect();
+      }
+    } else {
+      // إذا كان هناك اتصال معلّق (CONNECT لم يُجب عليه) بمصادقة قديمة، نقطعه
+      // حتى تُطبَّق المصادقة الجديدة على اتصال نظيف (وإلا فسيتجاهله الحارس أعلاه)
+      const engineState = (socket.io as any)?._readyState || "";
+      if (engineState === "open" || engineState === "opening" || engineState === "connecting") {
+        try {
+          socket.io.disconnect();
+        } catch {}
+      }
     }
     if (hasValidUserAuth()) {
       socket.connect();
@@ -346,10 +389,6 @@ export function logoutSocket(): void {
   if (socket) {
     try {
       if (socket.connected) {
-        try {
-          // تتبّع مؤقت: من يستدعي تسجيل الخروج؟
-          console.warn("[CLIENT_SOCKET_TRACE] logoutSocket (user_logout) from:", (new Error().stack || "").split("\n").slice(2, 6).join(" | "));
-        } catch {}
         socket.emit("user_logout");
       }
     } catch {}
@@ -362,3 +401,5 @@ export function logoutSocket(): void {
 export function isSocketConnected(): boolean {
   return socket?.connected ?? false;
 }
+
+

@@ -20,6 +20,7 @@ import { getSocketIp } from "../services/requestCountry";
 import { publishGlobalEvent } from "./SocketBroker";
 import { getMessagePermissionRequirements } from "../../src/lib/chatFeaturePermissions";
 import { hasChatFeatureAccess } from "../services/chatAuthorization";
+import { resolvePublicName } from "../utils/publicIdentity";
 
 export function registerWallHandlers(io: Server, socket: Socket): void {
   const user = socket.data.user;
@@ -77,7 +78,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
         createdAt: new Date().toISOString(),
         author: {
           id: String(user.id),
-          name: user.username || "زائر",
+          name: resolvePublicName(user),
           avatar: user.avatar || "/pic.png",
           nameColor: socket.data.user.nameColor || "",
           statusFontColor: socket.data.user.statusFontColor || "",
@@ -87,7 +88,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
         },
       };
 
-      // البث المباشر فوراً لجميع المتواجدين
+      // البث المباشر فوراً لجميع المتواجدين (المنشور)
       publishGlobalEvent("wall_post_created", post).catch((err) => 
         console.error("Failed to broadcast wall post:", err)
       );
@@ -229,7 +230,7 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
         createdAt: new Date().toISOString(),
         author: {
           id: String(user.id),
-          name: user.username || "زائر",
+          name: resolvePublicName(user),
           avatar: user.avatar || "/pic.png",
           nameColor: socket.data.user.nameColor || "",
           statusFontColor: socket.data.user.statusFontColor || "",
@@ -260,11 +261,12 @@ export function registerWallHandlers(io: Server, socket: Socket): void {
       const ip = getSocketIp(socket);
       Promise.all([
         applyShortcuts(content).then(expanded => processText({ text: expanded, source: "تعليق على الحائط", user: { username: user.username, topic: user.username, ip } })),
-        dbPool.query(`SELECT id, username, topic, pic FROM users WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 LIMIT 1`, [user.id])
+        dbPool.query(`SELECT id, username, display_name, topic, pic FROM users WHERE id::text = $1 OR idreg::text = $1 OR uid::text = $1 LIMIT 1`, [user.id])
       ]).then(([filterRes, userRes]) => {
         const dbUser = userRes.rows[0];
         const resolvedId = String(dbUser?.id || user.id);
-        const resolvedName = dbUser?.topic || dbUser?.username || user.username || "زائر";
+        // الاسم المستعار فقط يُحفظ في قاعدة البيانات ويُعرض للآخرين
+        const resolvedName = dbUser?.topic || dbUser?.display_name || resolvePublicName(user);
 
         // الحفظ بالمصفي
         return dbPool.query(

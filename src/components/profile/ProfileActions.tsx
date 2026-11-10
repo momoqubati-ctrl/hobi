@@ -247,7 +247,7 @@ export function ProfileActions({
             sideOffset={6}
             collisionPadding={12}
             avoidCollisions={true}
-            className="w-64 overflow-y-auto overscroll-contain bg-card/98 border border-border text-card-foreground shadow-2xl backdrop-blur-xl rounded-2xl p-1.5 focus:outline-none dark:bg-[#0b1226]/98 dark:border-blue-900/50 dark:text-slate-200 scrollbar-thin"
+            className="w-64 overflow-y-auto overscroll-contain bg-card/98 border border-border text-card-foreground shadow-lg rounded-2xl p-1.5 focus:outline-none dark:bg-[#0b1226]/98 dark:border-blue-900/50 dark:text-slate-200 scrollbar-thin"
             style={{
               maxHeight: "min(360px, calc(var(--radix-dropdown-menu-content-available-height, 400px) - 20px))",
             }}

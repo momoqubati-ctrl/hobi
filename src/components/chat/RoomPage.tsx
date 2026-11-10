@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmojiPanel } from "./EmojiPickerPopover";
-import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile, LogOut, Menu, Settings } from "lucide-react";
+import { Gift, Send, Plus, X, Volume2, VolumeX, Crown, MicOff, ChevronLeft, Mic2, AudioLines, Loader2, SmilePlus, Reply, ArrowLeft, Youtube, ImagePlus, Video, Smile, LogOut, Menu, Settings, Pin, PinOff, Trash2 } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { getCountryFlagSrc, normalizeCountryCode } from "@/lib/countries";
 import { getSocket } from "@/lib/socket";
@@ -114,6 +114,13 @@ type RoomMember = {
   roomRole?: string;
   roomPower?: number;
   customTitle?: string;
+  customRole?: {
+    id: string;
+    name: string;
+    color: string;
+    powerLevel: number;
+    permissions: Record<string, boolean>;
+  } | null;
   idreg?: string;
   nameColor?: string;
   status?: string;
@@ -129,6 +136,8 @@ const getStoredUser = () => {
     profileMsg: "( غير مسجل )",
     avatarFrameUrl: "",
     giftIconUrl: "",
+    username: "",
+    idreg: "",
     profileThemeId: "",
     messageBubbleStyle: "default",
   };
@@ -150,6 +159,8 @@ const getStoredUser = () => {
     return {
       name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : fallback.name,
       id: String(parsed.id || parsed.idreg || parsed.uid || fallback.id),
+      username: typeof parsed.username === "string" ? parsed.username : "",
+      idreg: String(parsed.idreg || "").replace(/^#+/, ""),
       role,
       countryCode: normalizeCountryCode(parsed.countryCode),
       avatar: typeof parsed.avatar === "string" && parsed.avatar.trim() ? parsed.avatar : fallback.avatar,
@@ -806,6 +817,7 @@ const RoomPage = ({
   const currentUser = getStoredUser();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRoomProfileOpen, setIsRoomProfileOpen] = useState(false);
+  const [pinnedAnnouncement, setPinnedAnnouncement] = useState("");
   const userPermissions = useRealtimeStore((state) => state.userPermissions);
   const [permissions, setPermissions] = useState<string[]>(userPermissions);
   const [userRole, setUserRole] = useState<string>(() => currentUser?.role || "");
@@ -881,6 +893,34 @@ const RoomPage = ({
     return false;
   }, [currentUser, userRole, permissions, room, roomFromStore]);
 
+  const canManagePermissionGroups = useMemo(() => {
+    if (!currentUser || currentUser.role === "guest") return false;
+    const currentRoom = roomFromStore || room;
+    const ownerReferences = [
+      currentRoom?.owner,
+      currentRoom?.ownerId,
+      currentRoom?.owner_id,
+      currentRoom?.ownerIdreg,
+      currentRoom?.owner_idreg,
+      currentRoom?.user,
+    ].map((value) => String(value || "").replace(/^#+/, "").trim().toLowerCase()).filter(Boolean);
+    const currentUserReferences = [
+      currentUser.id,
+      currentUser.idreg,
+      currentUser.username,
+      currentUser.name,
+    ].map((value) => String(value || "").replace(/^#+/, "").trim().toLowerCase()).filter(Boolean);
+    return currentUserReferences.some((reference) => ownerReferences.includes(reference));
+  }, [currentUser, room, roomFromStore]);
+  const currentRoomMember = members.find((member) =>
+    String(member.id) === String(currentUser?.id) ||
+    (member.username && member.username.toLowerCase() === (currentUser?.name || currentUser?.username || "")?.toLowerCase())
+  );
+  const canPinRoomMessages = canManagePermissionGroups ||
+    Boolean(currentRoomMember?.customRole?.permissions.canPin);
+  const canClearRoomMessages = canManagePermissionGroups ||
+    Boolean(currentRoomMember?.customRole?.permissions.canClearMessages);
+
   const skipInitialJoinRef = useRef(false);
 
   useEffect(() => {
@@ -897,6 +937,7 @@ const RoomPage = ({
     setOpenActionMsgId(null);
     setActiveYouTubeEmbedUrl(null);
     setMemberCount(roomFromStore?.members ?? room?.members ?? 0);
+    setPinnedAnnouncement(String(roomFromStore?.pinnedAnnouncement || room?.pinnedAnnouncement || ""));
   }, [roomId, autoJoin]);
 
   // تحديث عدد المتواجدين فقط عند تغيره في المخزن أو الخصائص دون إعادة تهيئة الغرفة بأكملها
@@ -995,6 +1036,7 @@ const RoomPage = ({
           if (res.members) {
             setMembers(res.members);
           }
+          setPinnedAnnouncement(String(res.pinnedAnnouncement || ""));
           setMemberCount(res.memberCount || 0);
           setError("");
         } else {
@@ -1160,11 +1202,46 @@ const RoomPage = ({
     };
     socket.on("room_reaction", onRoomReaction);
 
+    const onRoomMessagesCleared = (data: { roomId: string }) => {
+      if (data.roomId === roomId) setMessages([]);
+    };
+    socket.on("room:messages_cleared", onRoomMessagesCleared);
+
+    const onRoomAnnouncementPinned = (data: { roomId: string; pinnedAnnouncement: string }) => {
+      if (data.roomId === roomId) setPinnedAnnouncement(data.pinnedAnnouncement || "");
+    };
+    socket.on("room:announcement_pinned", onRoomAnnouncementPinned);
+
+    const onCustomRoleChanged = (data: {
+      roomId: string;
+      userId: string;
+      customRoleId: string | null;
+      customRole: RoomMember["customRole"];
+      roomRole: string;
+      powerLevel: number;
+    }) => {
+      if (data.roomId !== roomId) return;
+      setMembers((current) => current.map((member) =>
+        String(member.id) === String(data.userId)
+          ? {
+              ...member,
+              customRole: data.customRole,
+              roomRole: data.roomRole,
+              roomPower: data.customRole?.powerLevel ?? data.powerLevel,
+            }
+          : member
+      ));
+    };
+    socket.on("room:custom_role_changed", onCustomRoleChanged);
+
     // استماع لتحديثات الغرفة اللحظية (broadcast, mics, stageLocks, etc.)
     const onRoomUpdated = (data: { roomId: string; room: any }) => {
       if (data.roomId !== roomId) return;
       if (data.room.mics !== undefined) {
         setShowMics((data.room.mics ?? 0) > 0);
+      }
+      if (data.room.pinnedAnnouncement !== undefined) {
+        setPinnedAnnouncement(String(data.room.pinnedAnnouncement || ""));
       }
     };
     socket.on("room_updated", onRoomUpdated);
@@ -1193,6 +1270,9 @@ const RoomPage = ({
       socket.off("system_message", onSystemMessage);
       socket.off("user_profile_updated", onUserProfileUpdated);
       socket.off("room_reaction", onRoomReaction);
+      socket.off("room:messages_cleared", onRoomMessagesCleared);
+      socket.off("room:announcement_pinned", onRoomAnnouncementPinned);
+      socket.off("room:custom_role_changed", onCustomRoleChanged);
       socket.off("room_updated", onRoomUpdated);
       socket.emit("leave_room", { roomId });
     };
@@ -1552,6 +1632,11 @@ const RoomPage = ({
               <p className="text-[9px] font-bold text-muted-foreground">
                 {memberCount > 0 ? `${memberCount} متصل` : "بواسطة: " + (room.owner || "إدارة الموقع")}
               </p>
+              {pinnedAnnouncement && (
+                <p className="max-w-[35vw] truncate text-[9px] font-bold text-primary" title={pinnedAnnouncement}>
+                  📌 {pinnedAnnouncement}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1575,6 +1660,46 @@ const RoomPage = ({
               <Mic2 size={18} />
             </Button>
           </PermissionGate>
+
+          {canPinRoomMessages && pinnedAnnouncement && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => getSocket().emit(
+                "room:unpin_message",
+                { roomId },
+                (result: { success: boolean; message?: string }) => {
+                  if (!result.success) showMuteAlert(result.message || "تعذر إلغاء تثبيت الرسالة");
+                },
+              )}
+              title="إلغاء تثبيت الرسالة"
+              aria-label="إلغاء تثبيت الرسالة"
+              className="h-9 w-9 rounded-xl text-primary"
+            >
+              <PinOff size={17} />
+            </Button>
+          )}
+          {canClearRoomMessages && messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                if (!window.confirm("سيتم مسح سجل الرسائل الظاهر لجميع أعضاء الغرفة. هل تريد المتابعة؟")) return;
+                getSocket().emit(
+                  "room:clear_messages",
+                  { roomId },
+                  (result: { success: boolean; message?: string }) => {
+                    if (!result.success) showMuteAlert(result.message || "تعذر مسح الرسائل");
+                  },
+                );
+              }}
+              title="مسح رسائل الغرفة"
+              aria-label="مسح رسائل الغرفة"
+              className="h-9 w-9 rounded-xl text-destructive"
+            >
+              <Trash2 size={17} />
+            </Button>
+          )}
 
           {canManageRoom && (
             <Button
@@ -1602,7 +1727,8 @@ const RoomPage = ({
             roomName={room?.name}
             currentUser={{
               id: String(currentUser?.id || currentUser?.name || "guest"),
-              username: String(currentUser?.username || currentUser?.name || "زائر"),
+              // الاسم المستعار فقط — يظهر للمعرضين على المسرح
+              username: String(currentUser?.name || "زائر"),
               role: currentUser?.role,
               avatar: currentUser?.avatar || "/pic.png",
               seatFrameUrl: (currentUser as any)?.seatFrameUrl,
@@ -1864,6 +1990,29 @@ const RoomPage = ({
                     >
                       <Reply size={13} className="text-muted-foreground" />
                     </button>}
+                    {canPinRoomMessages && msg.text && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const eventName = pinnedAnnouncement === msg.text
+                            ? "room:unpin_message"
+                            : "room:pin_message";
+                          const payload = eventName === "room:pin_message"
+                            ? { roomId, messageId: msg.id }
+                            : { roomId };
+                          getSocket().emit(eventName, payload, (result: { success: boolean; message?: string }) => {
+                            if (!result.success) showMuteAlert(result.message || "تعذر تحديث الرسالة المثبتة");
+                          });
+                        }}
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-slate-700"
+                        title={pinnedAnnouncement === msg.text ? "إلغاء التثبيت" : "تثبيت الرسالة"}
+                        aria-label={pinnedAnnouncement === msg.text ? "إلغاء تثبيت الرسالة" : "تثبيت الرسالة"}
+                      >
+                        {pinnedAnnouncement === msg.text
+                          ? <PinOff size={13} className="text-primary" />
+                          : <Pin size={13} className="text-muted-foreground" />}
+                      </button>
+                    )}
 
                     {/* قائمة اختيار التفاعل */}
                     {hasPermissionAccess(permissions, "room_reactions.use") && activeReactionMsgId === msg.id && (
@@ -1953,6 +2102,8 @@ const RoomPage = ({
           onClose={() => setIsSettingsOpen(false)}
           roomId={roomId}
           room={roomFromStore || room}
+          members={members.map((member) => ({ id: member.id, username: member.username }))}
+          canManagePermissionGroups={canManagePermissionGroups}
           onRoomUpdated={(updatedRoom) => {
             if (updatedRoom) {
               if (updatedRoom.micSlots !== undefined || updatedRoom.mics !== undefined) {

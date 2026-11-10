@@ -6,6 +6,7 @@ import {
   type H3Event,
 } from "h3";
 import { getUserAuthContext } from "./adminAccess";
+import { publishSocketEvent } from "../socket/SocketBroker";
 import {
   createRoomCustomRoleSchema,
   roomCustomRoleService,
@@ -114,8 +115,11 @@ export function createRoomCustomRoleHandlers(
     if ("error" in context) return context.error;
 
     try {
-      const roles = await service.listForRoom(context.roomRef, context.userId);
-      return { success: true, roles };
+      const [roles, assignments] = await Promise.all([
+        service.listForRoom(context.roomRef, context.userId),
+        service.listMemberAssignmentsForRoom(context.roomRef, context.userId),
+      ]);
+      return { success: true, roles, assignments };
     } catch (error) {
       return handleServiceError(event, error, "list roles");
     }
@@ -200,6 +204,7 @@ export function createRoomCustomRoleHandlers(
         memberId,
         input.customRoleId,
       );
+      await publishSocketEvent(assignment.roomId, "room:custom_role_changed", assignment);
       return { success: true, assignment };
     } catch (error) {
       return handleServiceError(event, error, "assign member role");

@@ -3,50 +3,82 @@ import { publishSocketEvent } from "../socket/SocketBroker";
 
 export type NotificationType = "like" | "comment" | "reply" | "gift" | "wall_post" | "follow" | "unfollow" | "mention" | "mail";
 
-export const createNotification = async (
+const isNotificationActorForeignKeyError = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "23503" &&
+  "constraint" in error &&
+  error.constraint === "notifications_actor_id_users_id_fk";
+
+type NotificationQuery = (
+  text: string,
+  values?: (string | null)[],
+) => Promise<{ rows: Record<string, unknown>[] }>;
+
+export const createNotificationWithDependencies = (
+  query: NotificationQuery,
+  publish: (channel: string, event: string, payload: unknown) => Promise<void>,
+  unreadCount: (userId: string) => Promise<number>,
+) => async (
   userId: string,
   actorId: string,
   type: NotificationType,
   entityType: string,
   entityId: string | null,
-  metadata: Record<string, any> = {},
+  metadata: Record<string, unknown> = {},
 ) => {
   // Don't notify yourself
   if (userId === actorId) return null;
-
-  const result = await dbPool.query(
-    `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, user_id, actor_id, type, entity_type, entity_id, metadata, read_at, created_at`,
-    [userId, actorId, type, entityType, entityId, JSON.stringify(metadata)],
-  );
-
-  const row = result.rows[0];
 
   // جلب معلومات المستخدم (الاسم المستعار + صورة البروفايل + اللون)
   let actorName = "مستخدم";
   let actorAvatar = "/pic.png";
   let actorNameColor = "";
-  try {
-    console.log("[Notification] Looking up actor:", actorId, typeof actorId);
-    const actorRes = await dbPool.query(
-      `SELECT u.username, u.topic, u.pic, COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color
-       FROM users u
-       LEFT JOIN user_profiles up ON up.user_id = u.id
-       WHERE CAST(u.id AS TEXT) = $1 OR CAST(u.uid AS TEXT) = $1 OR CAST(u.idreg AS TEXT) = $1 LIMIT 1`,
-      [String(actorId)]
-    );
-    console.log("[Notification] Actor query result:", actorRes.rows);
-    if (actorRes.rows.length > 0) {
-      const actor = actorRes.rows[0];
-      actorName = actor.topic || actor.username || "مستخدم";
-      actorAvatar = actor.pic || "/pic.png";
-      actorNameColor = actor.actor_name_color || "";
-    }
-  } catch (e) {
-    console.error("[Notification] Failed to fetch actor info:", e);
+  const actorResult = await query(
+    `SELECT u.id, u.username, u.topic, u.pic, COALESCE(NULLIF(up.name_color, ''), NULLIF(u.ucol, '')) as actor_name_color
+     FROM users u
+     LEFT JOIN user_profiles up ON up.user_id = u.id
+     WHERE CAST(u.id AS TEXT) = $1 OR CAST(u.uid AS TEXT) = $1 OR CAST(u.idreg AS TEXT) = $1
+     ORDER BY CASE
+       WHEN CAST(u.id AS TEXT) = $1 THEN 0
+       WHEN CAST(u.uid AS TEXT) = $1 THEN 1
+       ELSE 2
+     END
+     LIMIT 1`,
+    [String(actorId)],
+  );
+  const actor = actorResult.rows[0];
+  if (actor) {
+    actorName = String(actor.topic || actor.username || "مستخدم");
+    actorAvatar = String(actor.pic || "/pic.png");
+    actorNameColor = String(actor.actor_name_color || "");
   }
 
+  const insertQuery = `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, user_id, actor_id, type, entity_type, entity_id, metadata, read_at, created_at`;
+  const insertValues = [
+    userId,
+    actor ? String(actor.id) : null,
+    type,
+    entityType,
+    entityId,
+    JSON.stringify(metadata),
+  ];
+  let result;
+  try {
+    result = await query(insertQuery, insertValues);
+  } catch (error) {
+    if (!insertValues[1] || !isNotificationActorForeignKeyError(error)) throw error;
+
+    console.warn("[Notification] Actor no longer exists; retrying notification without actor", {
+      actorId: insertValues[1],
+    });
+    result = await query(insertQuery, [userId, null, type, entityType, entityId, JSON.stringify(metadata)]);
+  }
+
+  const row = result.rows[0];
   const notification = {
     id: String(row.id),
     userId: row.user_id,
@@ -67,12 +99,12 @@ export const createNotification = async (
   const channel = `notifications:${userId}`;
 
   // Emit real-time notification to the recipient only
-  publishSocketEvent(channel, "notification", notification).catch(() => {});
+  publish(channel, "notification", notification).catch(() => {});
 
   // Also emit unread count update to the recipient only
-  publishSocketEvent(channel, "notification_unread", {
+  publish(channel, "notification_unread", {
     userId,
-    count: await getUnreadCount(userId),
+    count: await unreadCount(userId),
   }).catch(() => {});
 
   return notification;
@@ -96,7 +128,7 @@ export const getNotifications = async (userId: string, limit = 30, offset = 0) =
     [userId, limit, offset],
   );
 
-  return result.rows.map((row: any) => ({
+  return result.rows.map((row) => ({
     id: String(row.id),
     userId: row.user_id,
     actorId: row.actor_id,
@@ -125,6 +157,12 @@ export const getUnreadCount = async (userId: string) => {
   );
   return result.rows[0].count;
 };
+
+export const createNotification = createNotificationWithDependencies(
+  (text, values) => dbPool.query(text, values),
+  (channel, event, payload) => publishSocketEvent(channel, event, payload),
+  getUnreadCount,
+);
 
 export const markAsRead = async (notificationId: string, userId: string) => {
   await dbPool.query(

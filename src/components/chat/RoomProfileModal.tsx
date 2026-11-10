@@ -265,6 +265,7 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
         roomRole,
         roomPower,
         customTitle: m.customTitle || "",
+        customRole: m.customRole || null,
         status: m.status || "online",
       };
     });
@@ -569,6 +570,7 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {filteredMembers.map((member) => {
                 const roleInfo = getRoomRoleBadgeInfo(member.roomRole);
+                const customRole = member.customRole;
                 return (
                   <div
                     key={member.id}
@@ -598,7 +600,14 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
                             Lv.{member.level}
                           </span>
                         </div>
-                        {member.customTitle ? (
+                        {customRole ? (
+                          <span
+                            className="text-[10px] font-semibold truncate block"
+                            style={{ color: customRole.color }}
+                          >
+                            {customRole.name}
+                          </span>
+                        ) : member.customTitle ? (
                           <span className="text-[10px] text-amber-500 font-semibold truncate block">
                             {member.customTitle}
                           </span>
@@ -620,7 +629,18 @@ export const RoomProfileModal: React.FC<RoomProfileModalProps> = ({
                         iconOnly
                         className="h-8 w-8 rounded-full"
                       />
-                      {roleInfo && (
+                      {customRole ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] leading-none"
+                          style={{
+                            color: customRole.color,
+                            borderColor: `${customRole.color}80`,
+                            backgroundColor: `${customRole.color}1a`,
+                          }}
+                        >
+                          <span>{customRole.name}</span>
+                        </span>
+                      ) : roleInfo && (
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] leading-none ${roleInfo.cls}`}>
                           <span>{roleInfo.icon}</span>
                           <span>{roleInfo.name}</span>

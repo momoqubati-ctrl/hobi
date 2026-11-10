@@ -23,7 +23,6 @@ const emitSessionEnd = (
   try {
     const sessionRoom = SOCKET_CHANNELS.privateMessageSession(ended.sessionId);
     const roomSize = io.sockets.adapter.rooms.get(sessionRoom)?.size ?? 0;
-    console.log(`[SOCKET_TRACE_PM_END] sessionId=${ended.sessionId} reason=${ended.reason} room=${sessionRoom} socketsInRoom=${roomSize} conversations=${ended.expiredConversations.length}`);
   } catch (_) {}
   for (const conversation of ended.expiredConversations) {
     for (const sessionId of conversation.sessionIds) {
@@ -83,7 +82,8 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
     const u = socket.data?.user || rawUser;
     return {
       id: myId,
-      name: String(u.displayName || u.username || u.name || rawUser.username || "عضو"),
+      // الاسم المستعار فقط — يظهر للمستقبل
+      name: String(u.displayName || u.name || (u as any).topic || "عضو"),
       avatar: String(u.avatar || rawUser.avatar || "/pic.png"),
       nameColor: String(u.nameColor || rawUser.nameColor || ""),
       messageColor: String(u.messageColor || rawUser.messageColor || ""),
@@ -325,3 +325,5 @@ export function registerPrivateHandlers(io: Server, socket: Socket): void {
     callback?.({ success: true, reactions: result.reactions });
   });
 }
+
+

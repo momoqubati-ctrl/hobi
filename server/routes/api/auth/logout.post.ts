@@ -13,7 +13,6 @@ import { revokeSession } from "../../../services/tokenRevocation";
 export default defineEventHandler(async (event) => {
   setResponseHeader(event, "Cache-Control", "private, no-store");
   const auth = getUserAuthContext(event);
-  console.log(`[SOCKET_TRACE_LOGOUT_API] sessionId=${auth.sessionId || ""} userId=${auth.userId || ""} ok=${auth.ok}`);
   if (!auth.ok || !auth.userId || !auth.sessionId) {
     setResponseStatus(event, auth.ok ? 401 : auth.statusCode);
     return { success: false, message: auth.ok ? "جلسة غير صالحة" : auth.message };
@@ -63,3 +62,5 @@ export default defineEventHandler(async (event) => {
 
   return { success: true, message: "تم إنهاء الجلسة بنجاح" };
 });
+
+

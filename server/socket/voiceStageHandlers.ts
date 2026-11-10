@@ -13,6 +13,8 @@ import {
 import { canPublishFromSeat } from "../services/voiceTokenAccess";
 import { hasChatFeatureAccess } from "../services/chatAuthorization";
 import { createVoiceProviderStore } from "../services/voiceProviderStore";
+import { roomCustomRoleService } from "../services/roomCustomRoleService";
+import { resolvePublicName } from "../utils/publicIdentity";
 
 /**
  * الحصول على حالة الاستيج لغرفة معينة أو تهيئتها
@@ -228,7 +230,8 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       const newSeat: VoiceSeat = {
         seatIndex,
         userId: user.id,
-        username: user.username,
+        // الاسم المستعار فقط — المقاعد تُبث لجميع أعضاء الغرفة
+        username: resolvePublicName(user),
         role: user.role || "guest",
         avatar: user.avatar || "/pic.png",
         seatFrameUrl: seatFrameUrl || undefined,
@@ -391,16 +394,20 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       }
       const stage = await getOrCreateRoomStage(canonicalRoomId);
 
-      // تحقق من الصلاحيات الإدارية
-      if (!(await hasChatFeatureAccess(user, ["room_voice_moderation.use"]))) {
-        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
-        return;
-      }
-
       if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= stage.maxSeats) {
         callback?.({ success: false, message: "رقم المقعد خارج نطاق هذه الغرفة" });
         return;
       }
+
+      // تحقق من الصلاحيات الإدارية
+      const hasPlatformPermission = await hasChatFeatureAccess(user, ["room_voice_moderation.use"]);
+      const hasRoomPermission = !hasPlatformPermission &&
+        await roomCustomRoleService.hasPermission(canonicalRoomId, String(user.id), "canManageMics");
+      if (!hasPlatformPermission && !hasRoomPermission) {
+        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
+        return;
+      }
+
       const updatedStage = await voiceStageStore.setSeatLock(canonicalRoomId, seatIndex, Boolean(data.isLocked));
       if (!updatedStage) {
         callback?.({ success: false, message: "تعذر تحديث قفل المقعد" });
@@ -428,15 +435,23 @@ export function registerVoiceStageHandlers(io: Server, socket: Socket) {
       }
       const stage = await getOrCreateRoomStage(canonicalRoomId);
 
-      if (!(await hasChatFeatureAccess(user, ["room_voice_moderation.use"]))) {
-        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
-        return;
-      }
-
       if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= stage.maxSeats) {
         callback?.({ success: false, message: "رقم المقعد خارج نطاق هذه الغرفة" });
         return;
       }
+
+      const hasPlatformPermission = await hasChatFeatureAccess(user, ["room_voice_moderation.use"]);
+      if (!hasPlatformPermission && (!stage.seats[seatIndex] ||
+        !(await roomCustomRoleService.canManageMember(
+          canonicalRoomId,
+          String(user.id),
+          stage.seats[seatIndex].userId,
+          "canManageMics",
+        )))) {
+        callback?.({ success: false, message: "لا تملك صلاحية إدارة مقاعد المايك" });
+        return;
+      }
+
       const kicked = await voiceStageStore.kickSeat(canonicalRoomId, seatIndex);
       if (!kicked) {
         callback?.({ success: false, message: "تعذر إنزال العضو" });

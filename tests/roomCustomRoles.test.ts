@@ -7,8 +7,10 @@ import { roomCustomRoles, roomMembers } from "../server/db/schema";
 import { ensureRoomCustomRolesSchema } from "../server/db/migrate";
 import { createRoomCustomRoleHandlers } from "../server/services/roomCustomRoleApi";
 import {
+  DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS,
   createRoomCustomRoleSchema,
   createRoomCustomRoleService,
+  canPerformRoomCustomRoleAction,
   RoomCustomRoleServiceError,
   roomMemberRoleAssignmentSchema,
   updateRoomCustomRoleSchema,
@@ -90,6 +92,43 @@ test("room member role assignment accepts a custom role or null to clear it", ()
   assert.equal(roomMemberRoleAssignmentSchema.safeParse({ customRoleId: null, userId: "owner-1" }).success, false);
 });
 
+test("custom role actions require the permission and a strictly lower-ranked target", () => {
+  const permissions = {
+    canKick: true,
+    canMute: false,
+    canManageMics: false,
+    canPin: false,
+    canClearMessages: false,
+    canBan: false,
+  };
+  const actor = {
+    userId: "moderator",
+    isOwner: false,
+    powerLevel: 3000,
+    globalRole: "member",
+    permissions,
+  };
+  const member = {
+    userId: "member",
+    isOwner: false,
+    powerLevel: 1000,
+    globalRole: "member",
+    permissions: DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS,
+  };
+  const peer = { ...member, userId: "peer", powerLevel: 3000 };
+  const owner = { ...member, userId: "owner", isOwner: true, powerLevel: 100000 };
+  const siteAdmin = { ...member, userId: "site-admin", globalRole: "admin", powerLevel: 1 };
+  const protectedSiteOwner = { ...member, userId: "site-owner", globalRole: "owner", powerLevel: 1 };
+
+  assert.equal(canPerformRoomCustomRoleAction(actor, member, "canKick"), true);
+  assert.equal(canPerformRoomCustomRoleAction(actor, peer, "canKick"), false);
+  assert.equal(canPerformRoomCustomRoleAction(actor, member, "canMute"), false);
+  assert.equal(canPerformRoomCustomRoleAction(actor, owner, "canKick"), false);
+  assert.equal(canPerformRoomCustomRoleAction(owner, actor, "canKick"), true);
+  assert.equal(canPerformRoomCustomRoleAction(siteAdmin, member, "canKick"), true);
+  assert.equal(canPerformRoomCustomRoleAction(siteAdmin, protectedSiteOwner, "canKick"), false);
+});
+
 test("custom role listing refuses non-owners before reading role data", async () => {
   const statements: string[] = [];
   const database = {
@@ -98,6 +137,7 @@ test("custom role listing refuses non-owners before reading role data", async ()
       if (statement.includes("FROM rooms")) {
         return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
       }
+      if (statement.includes("FROM room_members")) return { rows: [] };
       return { rows: [] };
     },
   } as unknown as RoomCustomRoleDatabase;
@@ -214,6 +254,51 @@ test("room custom role CRUD always scopes changes to the owner room", async () =
   assert.match(remove.text, /WHERE room_id = \$1 AND id = \$2/);
 });
 
+test("room owners cannot assign a role to a member who is not currently connected", async () => {
+  const statements: Array<{ text: string; values?: unknown[] }> = [];
+  const database = {
+    query: async (text: string, values?: unknown[]) => {
+      statements.push({ text, values });
+      if (text.includes("FROM rooms")) {
+        return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
+      }
+      if (text.includes("FROM room_custom_roles")) {
+        return {
+          rows: [{
+            id: "role-1",
+            name: "إدارة",
+            color: "#64748b",
+            power_level: 2000,
+            permissions: {
+              canKick: true,
+              canMute: false,
+              canManageMics: false,
+              canPin: false,
+              canClearMessages: false,
+              canBan: false,
+            },
+            created_at: new Date("2026-11-08T00:00:00.000Z"),
+          }],
+        };
+      }
+      if (text.includes("INSERT INTO room_members")) {
+        return { rows: [{ user_id: "member-1" }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const service = createRoomCustomRoleService(database, async () => false);
+
+  await assert.rejects(
+    service.assignMemberRole("room-slug", "owner-1", "member-1", "role-1"),
+    { message: "MEMBER_NOT_FOUND" },
+  );
+  assert.equal(
+    statements.some(({ text }) => text.includes("room_members")),
+    false,
+  );
+});
+
 test("room owners can assign only a role belonging to their room to an existing member", async () => {
   const statements: Array<{ text: string; values?: unknown[] }> = [];
   const database = {
@@ -223,9 +308,18 @@ test("room owners can assign only a role belonging to their room to an existing 
         return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
       }
       if (text.includes("FROM room_custom_roles")) {
-        return { rows: [{ id: "role-1" }] };
+        return {
+          rows: [{
+            id: "role-1",
+            name: "إدارة",
+            color: "#64748b",
+            power_level: 2000,
+            permissions: DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS,
+            created_at: new Date("2026-11-08T00:00:00.000Z"),
+          }],
+        };
       }
-      if (text.includes("UPDATE room_members")) {
+      if (text.includes("INSERT INTO room_members")) {
         return { rows: [{ user_id: "member-1" }] };
       }
       return { rows: [] };
@@ -235,11 +329,16 @@ test("room owners can assign only a role belonging to their room to an existing 
 
   const assigned = await service.assignMemberRole("room-slug", "owner-1", "member-1", "role-1");
 
-  assert.deepEqual(assigned, { userId: "member-1", customRoleId: "role-1" });
+  assert.equal(assigned.roomId, "room-id");
+  assert.equal(assigned.userId, "member-1");
+  assert.equal(assigned.customRoleId, "role-1");
+  assert.equal(assigned.customRole?.name, "إدارة");
   const roleCheck = statements.find(({ text }) => text.includes("FROM room_custom_roles"));
-  const assignment = statements.find(({ text }) => text.includes("UPDATE room_members"));
+  const assignment = statements.find(({ text }) => text.includes("INSERT INTO room_members"));
   assert.deepEqual(roleCheck?.values, ["room-id", "role-1"]);
-  assert.deepEqual(assignment?.values, ["role-1", "room-id", "member-1"]);
+  assert.deepEqual(assignment?.values, ["room-id", "member-1", "role-1"]);
+  assert.match(assignment?.text || "", /FROM users/);
+  assert.match(assignment?.text || "", /ON CONFLICT \(room_id, user_id\)/);
 });
 
 test("room role assignment rejects a role from another room and missing members", async () => {
@@ -248,7 +347,7 @@ test("room role assignment rejects a role from another room and missing members"
     query: async (text: string) => {
       if (text.includes("FROM rooms")) return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
       if (text.includes("FROM room_custom_roles")) return { rows: [] };
-      if (text.includes("UPDATE room_members")) {
+      if (text.includes("INSERT INTO room_members")) {
         updateAttempted = true;
         return { rows: [] };
       }
@@ -266,8 +365,19 @@ test("room role assignment rejects a role from another room and missing members"
   const memberDatabase = {
     query: async (text: string) => {
       if (text.includes("FROM rooms")) return { rows: [{ id: "room-id", owner_id: "owner-1" }] };
-      if (text.includes("FROM room_custom_roles")) return { rows: [{ id: "role-1" }] };
-      if (text.includes("UPDATE room_members")) return { rows: [] };
+      if (text.includes("FROM room_custom_roles")) {
+        return {
+          rows: [{
+            id: "role-1",
+            name: "إدارة",
+            color: "#64748b",
+            power_level: 2000,
+            permissions: DEFAULT_ROOM_CUSTOM_ROLE_PERMISSIONS,
+            created_at: new Date("2026-11-08T00:00:00.000Z"),
+          }],
+        };
+      }
+      if (text.includes("INSERT INTO room_members")) return { rows: [] };
       return { rows: [] };
     },
   } as unknown as RoomCustomRoleDatabase;
@@ -282,6 +392,10 @@ test("room role API rejects guests before reaching the service", async () => {
   let calls = 0;
   const service = {
     listForRoom: async () => {
+      calls += 1;
+      return [];
+    },
+    listMemberAssignmentsForRoom: async () => {
       calls += 1;
       return [];
     },
@@ -371,7 +485,7 @@ test("room role API derives the actor from auth and validates assignment input",
     {
       assignMemberRole: async (...args: unknown[]) => {
         received = args;
-        return { userId: "member-1", customRoleId: null };
+        return { roomId: "room-id", userId: "member-1", customRoleId: null, customRole: null };
       },
     } as never,
     () => ({ ok: true, userId: "owner-1", username: "owner", role: "member" }) as never,

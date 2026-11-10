@@ -21,6 +21,7 @@ import { updatePersistedUserProfile } from "../services/userRepository";
 import { updateUserMessageIdentity } from "../services/chatStore";
 import { getUserContext } from "../services/permissionEngine";
 import { filterProfileUpdatesByPermissions } from "../services/visualProfilePermissions";
+import { resolvePublicName } from "../utils/publicIdentity";
 
 type PresenceAssetFields = {
   avatar?: unknown;
@@ -201,8 +202,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
       ...connectedAssets,
       socketId: socket.id,
       userId: user.id,
-      username: user.username,
-      displayName: socket.data.user.displayName || user.displayName || user.username,
+      // الاسم المستعار فقط — لا يُرسل اسم المستخدم الحقيقي أبداً للأعضاء
+      username: resolvePublicName({ ...user, displayName: socket.data.user.displayName || user.displayName }),
+      displayName: socket.data.user.displayName || user.displayName,
       mentionName: socket.data.user.mentionName || user.mentionName || "",
       publicUserId: socket.data.user.publicUserId || user.publicUserId || "",
       role: user.role,
@@ -296,8 +298,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
         return normalizePresenceUserAssets({
           id: u.id,
           socketId: u.socketId,
-          username: u.username,
-          displayName: (u as any).displayName || u.username,
+          // الاسم المستعار فقط في القوائم المرئية للأعضاء
+          username: resolvePublicName({ displayName: (u as any).displayName, idreg: u.idreg, publicUserId: (u as any).publicUserId, role: u.role, username: u.username }),
+          displayName: (u as any).displayName || "",
           mentionName: (u as any).mentionName || "",
           publicUserId: (u as any).publicUserId || "",
           role: u.role,
@@ -373,6 +376,8 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
     }
 
     const oldUsername = user.username;
+    // الاسم المستعار القديم قبل التحديث (مطابقة العميل تتم بالاسم المستعار)
+    const oldDisplayName = socket.data.user.displayName || (user as any).displayName || "";
     if (typeof data.mentionName === "string") {
       const cleanM = data.mentionName.trim().slice(0, 32);
       (socket.data.user as any).mentionName = cleanM;
@@ -471,8 +476,9 @@ export async function registerPresenceHandlers(io: Server, socket: Socket): Prom
 const updatedAssets = normalizePresenceUserAssets({
   socketId: socket.id,
   userId: user.id,
-  username: user.username,
-  previousUsername: oldUsername,
+  // الاسم المستعار فقط — الحدث مُذاع لجميع الأعضاء
+  username: resolvePublicName({ displayName: socket.data.user.displayName, idreg: socket.data.user.idreg || user.idreg, publicUserId: (user as any).publicUserId, role: user.role, username: user.username }),
+  previousUsername: resolvePublicName({ displayName: oldDisplayName }),
   role: user.role,
   avatar: socket.data.user.avatar || user.avatar || "/pic.png",
   profileMsg: socket.data.user.profileMsg,
@@ -548,8 +554,8 @@ const updatedAssets = normalizePresenceUserAssets({
     io.emit("user_status_update", {
       socketId: socket.id,
       userId: user.id,
-      username: user.username,
-      displayName: (socket.data.user as any)?.displayName || (user as any)?.displayName || user.username,
+      username: resolvePublicName({ displayName: (socket.data.user as any)?.displayName || (user as any)?.displayName, idreg: socket.data.user.idreg || user.idreg, publicUserId: (user as any).publicUserId, role: user.role, username: user.username }),
+      displayName: (socket.data.user as any)?.displayName || (user as any)?.displayName || "",
       mentionName: (socket.data.user as any)?.mentionName || (user as any)?.mentionName || "",
       publicUserId: (socket.data.user as any)?.publicUserId || (user as any)?.publicUserId || "",
       role: user.role,
@@ -580,7 +586,7 @@ const updatedAssets = normalizePresenceUserAssets({
         io.emit("user_disconnected", {
           socketId: socket.id,
           userId: user.id,
-          username: user.username,
+          username: resolvePublicName({ displayName: (user as any).displayName, idreg: user.idreg, publicUserId: (user as any).publicUserId, role: user.role, username: user.username }),
           role: user.role,
           count,
         });
@@ -622,7 +628,7 @@ const updatedAssets = normalizePresenceUserAssets({
           io.emit("user_disconnected", {
             socketId: socket.id,
             userId: user.id,
-            username: user.username,
+            username: resolvePublicName({ displayName: (user as any).displayName, idreg: user.idreg, publicUserId: (user as any).publicUserId, role: user.role, username: user.username }),
             role: user.role,
             count,
           });

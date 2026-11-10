@@ -6,6 +6,7 @@ import type { Server, Socket } from "socket.io";
 import { SOCKET_CHANNELS } from "./SocketChannels";
 import { getPrivateCallPermission } from "../../src/lib/chatFeaturePermissions";
 import { hasChatFeatureAccess } from "../services/chatAuthorization";
+import { resolvePublicName } from "../utils/publicIdentity";
 
 interface ActiveCallSession {
   callId: string;
@@ -139,7 +140,8 @@ export function registerCallHandlers(io: Server, socket: Socket) {
       }
 
       const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const callerName = socket.data?.user?.username || "مستخدم";
+      // الاسم المستعار فقط — هذا الاسم يظهر للمستقبل
+      const callerName = resolvePublicName(socket.data?.user);
       const callerAvatar = socket.data?.user?.avatar || "/pic.png";
 
       const session: ActiveCallSession = {

@@ -2,6 +2,7 @@ import type { Server, Socket } from "socket.io";
 import { sendMail, getInbox, getOutbox, markAsRead, deleteMail, getUnreadCount } from "../services/internalMailService";
 import { createNotification } from "../services/notificationService";
 import { publishMailToParticipants } from "./mailDelivery";
+import { resolvePublicName } from "../utils/publicIdentity";
 
 export function registerMailHandlers(io: Server, socket: Socket): void {
   const user = socket.data.user;
@@ -23,7 +24,8 @@ export function registerMailHandlers(io: Server, socket: Socket): void {
 
       const enrichedMail = {
         ...mail,
-        senderName: user.topic || user.username || user.id,
+        // الاسم المستعار فقط
+        senderName: user.topic || user.displayName || resolvePublicName(user),
         senderAvatar: user.avatar || "/pic.png",
         senderNameColor: mail.senderNameColor || user.nameColor || "",
         senderStatusFontColor: user.statusFontColor || "",

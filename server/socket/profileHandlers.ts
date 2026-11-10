@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { getUserContext, invalidatePermissionCache, canModerate } from "../services/permissionEngine";
 import { isSystemOwnerUsername } from "../services/systemOwner";
 import { isSiteOwnerUsername } from "../services/siteOwner";
+import { resolvePublicName } from "../utils/publicIdentity";
 import { getAllOnlineUsers, updateUserRolePresence } from "./presenceManager";
 import { canExecuteAction, logModerationEvent, PowerAction, getPowerLevel, assignUserRole, getUserAuthoritativeRank } from "../services/powersService";
 import { listRooms } from "../services/chatStore";
@@ -18,6 +19,10 @@ import { publishSocketEvent } from "./SocketBroker";
 import { canRunProfileAdminAction, ProfileAdminAction } from "../../src/lib/profileAdminPermissions";
 import { alertThrottle } from "../services/alertThrottle";
 import { SYSTEM_OWNER_RANK } from "../services/systemOwner";
+import {
+  roomCustomRoleService,
+  type RoomCustomRolePermission,
+} from "../services/roomCustomRoleService";
 
 type AdminAction = ProfileAdminAction;
 
@@ -277,8 +282,9 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           const su = targetSocket.data.user;
           profile = {
             id: su.id,
-            username: su.username,
-            displayName: su.displayName || su.username,
+            // الاسم المستعار فقط — الملف الشخصي يظهر للأعضاء الآخرين
+            username: su.displayName || (su as any).topic || "",
+            displayName: su.displayName || (su as any).topic || "",
             role: su.role,
             avatarUrl: su.avatar || "/pic.png",
             coverUrl: "/pich.png",
@@ -297,10 +303,13 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       const isHiddenVisit = Boolean(data.hidden && (await canRunAdminAction(userId, "history")));
       await ProfileService.recordVisit(userId, resolvedProfileId, isHiddenVisit);
 
-      const onlineTarget = await findOnlineUser(resolvedProfileId, profile.username);
-      const stats = await ProfileService.getProfileStats(resolvedProfileId);
-      const relationship = await ProfileService.getRelationship(userId, resolvedProfileId);
-      const canSeeVisitors = relationship.isSelf || (await canRunAdminAction(userId, "history"));
+      const [onlineTarget, stats, relationship, canSeeHistory] = await Promise.all([
+        findOnlineUser(resolvedProfileId, profile.username),
+        ProfileService.getProfileStats(resolvedProfileId),
+        ProfileService.getRelationship(userId, resolvedProfileId),
+        canRunAdminAction(userId, "history"),
+      ]);
+      const canSeeVisitors = relationship.isSelf || canSeeHistory;
       const visitors = canSeeVisitors ? ProfileService.getVisitors(resolvedProfileId) : [];
 
       const hydratedProfile = {
@@ -364,11 +373,47 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       const profileId = normalizeId(data?.profileId);
       const action = data?.action;
       if (!profileId || !action) return callback?.({ error: "Invalid action" });
-      if (!(await canRunAdminAction(userId, action))) return callback?.({ error: "Permission denied" });
+      const hasAdminPermission = await canRunAdminAction(userId, action);
+      const isRoomScopedAction = ["room_kick", "room_mute", "room_unmute"].includes(action);
+      if (!hasAdminPermission && !isRoomScopedAction) return callback?.({ error: "Permission denied" });
 
       const targetProfile = await ProfileService.getFullProfile(profileId);
       if (!targetProfile) return callback?.({ error: "Profile not found" });
       const target = await findOnlineUser(targetProfile.id, targetProfile.username);
+      let customRoomActionAllowed = false;
+      if (isRoomScopedAction) {
+        const actorRoomId = normalizeId(socket.data.user?.roomId);
+        const targetRoomId = normalizeId(target?.roomId);
+        const actorIsInRoom = actorRoomId && socket.rooms.has(`room:${actorRoomId}`);
+        if (!actorRoomId || !targetRoomId || !actorIsInRoom) {
+          return callback?.({ error: "يجب أن تكون أنت والعضو في الغرفة نفسها" });
+        }
+        const { resolveRoomId } = await import("./roomAccess");
+        const [canonicalActorRoomId, canonicalTargetRoomId] = await Promise.all([
+          resolveRoomId(actorRoomId),
+          resolveRoomId(targetRoomId),
+        ]);
+        if (!canonicalActorRoomId || canonicalActorRoomId !== canonicalTargetRoomId) {
+          return callback?.({ error: "يجب أن تكون أنت والعضو في الغرفة نفسها" });
+        }
+        const roomPermission: RoomCustomRolePermission[] = action === "room_mute" || action === "room_unmute"
+          ? ["canMute"]
+          : ["canKick", "canBan"];
+        for (const permission of roomPermission) {
+          if (await roomCustomRoleService.canManageMember(
+            canonicalActorRoomId,
+            userId,
+            String(targetProfile.id || profileId),
+            permission,
+          )) {
+            customRoomActionAllowed = true;
+            break;
+          }
+        }
+        if (!hasAdminPermission && !customRoomActionAllowed) {
+          return callback?.({ error: "لا تملك صلاحية هذا الإجراء في الغرفة" });
+        }
+      }
 
       // Security Foundation: Triple-lock protection & Hierarchy check
       const targetUsername = String(targetProfile.username || "").toLowerCase();
@@ -380,7 +425,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         return callback?.({ error: "لا يمكن تعديل بيانات مالك الموقع" });
       }
       const targetUserId = String(targetProfile.id || profileId);
-      if (targetUserId !== userId) {
+      if (targetUserId !== userId && !customRoomActionAllowed) {
         const canMod = await canModerate(userId, targetUserId);
         if (!canMod) {
           return callback?.({ error: "لا يمكنك تنفيذ هذا الإجراء على عضو يملك رتبة مساوية أو أعلى من رتبتك" });
@@ -393,7 +438,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         }
         const powerAction: PowerAction = action === "ban" ? "ban" : (action === "room_mute" || action === "global_mute") ? "mute" : "kick";
         const targetRole = String(target?.role || targetProfile.role || "guest");
-        if (!canExecuteAction(String(socket.data.user?.role || "guest"), targetRole, powerAction)) {
+        if (!customRoomActionAllowed && !canExecuteAction(String(socket.data.user?.role || "guest"), targetRole, powerAction)) {
           return callback?.({ error: action === "pull_to_room" ? "العضو يملك ترقية اكبر منك لا تستطيع تنفيذ الامر" : "Permission denied" });
         }
       }
@@ -436,7 +481,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         const newPowerValue = data.value ? String(data.value).trim() : "";
         const roleDisplayName = assignRes.roleName || (data as any).displayName || newPowerValue || "عضو";
         const canonicalRole = assignRes.canonicalRole || (newPowerValue ? "admin" : "member");
-        const adminName = socket.data.user?.username || "الإدارة";
+        const adminName = resolvePublicName(socket.data.user as any);
         const adminAvatar = socket.data.user?.avatar || "/pic.png";
 
         // إبطال كاش الصلاحيات فوراً وجلب الصلاحيات المحدثة
@@ -581,7 +626,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
         // إرسال تنبيه ديالوج للعضو المستهدف عند الإسكات العام
         if (action === "global_mute" && isMuted) {
-          const adminName = socket.data.user?.username || "الإدارة";
+          const adminName = resolvePublicName(socket.data.user as any);
           const adminAvatar = socket.data.user?.avatar || "/pic.png";
           const alertPayload = {
             alertId: String(Date.now()),
@@ -600,7 +645,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
         // إرسال تنبيه ديالوج للعضو المستهدف عند عكس الإسكات العام
         if (action === "global_unmute") {
-          const adminName = socket.data.user?.username || "الإدارة";
+          const adminName = resolvePublicName(socket.data.user as any);
           const adminAvatar = socket.data.user?.avatar || "/pic.png";
           const alertPayload = {
             alertId: String(Date.now()),
@@ -682,7 +727,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
             s.emit("muted_state", { muted: Boolean(ud.muted), roomMuted: true, roomId: muteRoomId });
           }
 
-          const adminName = socket.data.user?.username || "الإدارة";
+          const adminName = resolvePublicName(socket.data.user as any);
           const adminAvatar = socket.data.user?.avatar || "/pic.png";
           io.to(`user:${profileId}`).emit("alert_received", {
             alertId: String(Date.now()),
@@ -701,7 +746,18 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
             ? `تم كتم العضو في غرفة ${roomName} فقط (بقية الغرف والخاص سليم)`
             : `الكتم بالغرفة ${roomName} مفعّل مسبقاً على هذا العضو`;
         } else {
-          const cleared = await roomMuteService.clearRoomMutesForUser(targetDbId);
+          let cleared: number;
+          if (customRoomActionAllowed && !hasAdminPermission) {
+            const muteRoomId = normalizeId(target?.roomId || socket.data.user?.roomId);
+            const { resolveRoomId } = await import("./roomAccess");
+            const resolvedRoomId = (await resolveRoomId(muteRoomId)) || muteRoomId;
+            cleared = await roomMuteService.clearRoomMute(
+              deriveRoomIds(resolvedRoomId, muteRoomId),
+              targetDbId,
+            );
+          } else {
+            cleared = await roomMuteService.clearRoomMutesForUser(targetDbId);
+          }
 
           for (const [, s] of io.sockets.sockets) {
             const ud = s.data?.user;
@@ -711,7 +767,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           }
 
           if (cleared > 0) {
-            const adminName = socket.data.user?.username || "الإدارة";
+            const adminName = resolvePublicName(socket.data.user as any);
             const adminAvatar = socket.data.user?.avatar || "/pic.png";
             io.to(`user:${profileId}`).emit("alert_received", {
               alertId: String(Date.now()),
@@ -728,8 +784,12 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           }
 
           responsePayload.notice = cleared > 0
-            ? `تم فك الكتم الغرفي (${cleared}) دون التأثير على الإسكات العام`
-            : "لا يوجد كتم غرفي على هذا العضو (الإسكات العام له إجراء فصل بإلغائه)";
+            ? customRoomActionAllowed && !hasAdminPermission
+              ? `تم فك الكتم في هذه الغرفة فقط (${cleared})`
+              : `تم فك الكتم الغرفي (${cleared}) دون التأثير على الإسكات العام`
+            : customRoomActionAllowed && !hasAdminPermission
+              ? "لا يوجد كتم نشط لهذا العضو في هذه الغرفة"
+              : "لا يوجد كتم غرفي على هذا العضو (الإسكات العام له إجراء فصل بإلغائه)";
         }
       }
 
@@ -752,7 +812,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         }
 
         if (target) {
-          const adminName = socket.data.user?.username || "الإدارة";
+          const adminName = resolvePublicName(socket.data.user as any);
           const adminAvatar = socket.data.user?.avatar || "/pic.png";
           const msg = data.reason || (action === "ban" ? "تم حظرك من الموقع" : "تم طردك من الموقع");
           // إرسال تنبيه مرئي
@@ -780,17 +840,10 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       }
 
       if (action === "room_kick") {
-        console.log("========== [KICK_TRACE] ENTERED room_kick handler ==========");
-        console.log("[KICK_TRACE] action=room_kick value=", data.value, "reason=", data.reason);
-        console.log("[KICK_TRACE] adminUser=", socket.data.user?.username, "adminRole=", socket.data.user?.role);
         // اكتشاف الغرفة: أولاً من target، وإذا لم يُعثر عليها نبحث مباشرة في سوكيتات السيرفر
         let kickTargetRoomId = target?.roomId || "";
         const targetIdLow = normalizeId(targetProfile.id).toLowerCase();
         const targetNameLow = normalizeId(targetProfile.username).toLowerCase();
-
-        console.log("[KICK_DIAG] target:", JSON.stringify({ roomId: target?.roomId, socketId: target?.socketId }));
-        console.log("[KICK_DIAG] targetProfile:", JSON.stringify({ id: targetProfile.id, username: targetProfile.username, idreg: targetProfile.idreg }));
-        console.log("[KICK_DIAG] targetIdentity:", JSON.stringify({ targetIdLow, targetNameLow, adminUser: socket.data.user?.username, adminId: socket.data.user?.id }));
 
         if (!kickTargetRoomId) {
           for (const [, s] of io.sockets.sockets) {
@@ -811,8 +864,6 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           }
         }
 
-        console.log("[KICK_DIAG] kickTargetRoomId:", kickTargetRoomId);
-
         if (!kickTargetRoomId) {
           return callback?.({ error: "العضو ليس متواجداً في أي غرفة حالياً" });
         }
@@ -821,7 +872,6 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         const bannedUntil = new Date(Date.now() + minutes * 60 * 1000);
         const { resolveRoomId, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
         const resolvedRoomId = await resolveRoomId(kickTargetRoomId);
-        console.log("[KICK_TRACE_ROOM] kickTargetRoomId=", kickTargetRoomId, "resolvedRoomId=", resolvedRoomId, "same=", kickTargetRoomId === resolvedRoomId);
         const roomIdVariants = await resolveRoomIdVariants(kickTargetRoomId);
         // Also include any exact room ids observed on the target's sockets
         const observedRoomIds = new Set<string>();
@@ -852,7 +902,6 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           normalizeRoomIdValue(kickTargetRoomId),
           normalizeRoomIdValue(resolvedRoomId),
         ].filter(Boolean)));
-        console.log("[KICK_DIAG] resolvedRoomId=", resolvedRoomId, "roomIdVariants=", JSON.stringify(roomIdVariants), "roomVariants=", JSON.stringify(roomVariants));
 
         // جلب الهوية الصحيحة للمستخدم من قاعدة البيانات
         // وتسجيل الطرد عبر أكثر من معرف ممكن لضمان فحص join_room لاحقاً
@@ -893,8 +942,6 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           ].filter((value) => String(value).trim())));
         }
 
-        console.log("[KICK_DIAG] userLookup", JSON.stringify({ rowCount: userLookup?.rowCount || 0, row: userLookup?.rows?.[0] || null, dbUserId, resolvedIdentifiers }));
-        console.log("[KICK_DIAG] inserting kick for", JSON.stringify({ roomVariants, identifiers: resolvedIdentifiers, bannedUntil: bannedUntil.toISOString(), minutes }));
         const insertResults = await Promise.all(
           roomVariants.flatMap((roomVariant) =>
             resolvedIdentifiers.map((identifier) =>
@@ -905,26 +952,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
             )
           )
         );
-        console.log("[KICK_DIAG] insert results", insertResults.map((result) => ({ rowCount: result.rowCount })));
 
-        try {
-          const verifyRes = await dbPool.query(
-            `SELECT room_id, user_id, banned_until, created_at
-             FROM room_kicks
-             WHERE room_id = ANY($1::text[])
-               AND (
-                 user_id = ANY($2::text[])
-                 OR lower(user_id) = ANY($3::text[])
-               )
-             ORDER BY created_at DESC
-             LIMIT 50`,
-            [roomVariants, resolvedIdentifiers, resolvedIdentifiers.map((v) => v.toLowerCase())]
-          );
-          console.log("[KICK_DIAG] verify inserted rows count=", verifyRes.rowCount);
-          if (verifyRes.rowCount > 0) console.log("[KICK_DIAG] verify rows:", JSON.stringify(verifyRes.rows));
-        } catch (err) {
-          console.error("[KICK_DIAG] verify query failed:", err);
-        }
         // فصل كافة سوكيتات العضو من الغرفة
         // الاعتماد فقط على s.rooms.has() لأنه المصدر الموثوق الوحيد لعضوية الغرفة
         const { leaveRoom, getRoomMemberCount } = await import("./presenceManager");
@@ -939,14 +967,12 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
           // التحقق من هوية العضو
           const isTarget = sid === targetIdLow || sname === targetNameLow;
-          console.log(`[KICK_DIAG] socket: sid=${sid} sname=${sname} isTarget=${isTarget} s.rooms=${JSON.stringify(Array.from(s.rooms))}`);
           if (!isTarget) continue;
 
           // التحقق من وجوده بالغرفة عبر s.rooms مباشرةً (الأكثر موثوقية)
           const hasCanonicalRoom = s.rooms.has(`room:${resolvedRoomId}`);
           const hasLegacyRoom = !hasCanonicalRoom && s.rooms.has(`room:${kickTargetRoomId}`);
           if (!hasCanonicalRoom && !hasLegacyRoom) {
-            console.log(`[KICK_DIAG] NOT in room. looking for room:${kickTargetRoomId} canonical:${resolvedRoomId}`);
             continue;
           }
 
@@ -963,40 +989,28 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
           });
 
           // تنفيذ الخروج الفعلي من الغرفة
-          try {
-            console.log(`[KICK_DIAG] before leave s.id=${s.id} s.rooms=${JSON.stringify(Array.from(s.rooms))}`);
-          } catch (err) {
-            console.warn('[KICK_DIAG] failed to stringify s.rooms before leave', err);
-          }
           s.leave(`room:${resolvedRoomId}`);
           s.leave(`room:${kickTargetRoomId}`);
-          try {
-            const post = await io.in(`room:${kickTargetRoomId}`).fetchSockets();
-            console.log(`[KICK_DIAG] after leave room=${kickTargetRoomId} sockets=${post.length} ids=${JSON.stringify(post.map(p=>p.id))}`);
-          } catch (err) {
-            console.warn('[KICK_DIAG] failed to fetch sockets after leave:', err);
-          }
           await leaveRoom(s.id);
           s.data.user.roomId = "";
 
           const memberCount = await getRoomMemberCount(kickTargetRoomId);
           await publishSocketEvent(kickTargetRoomId, "user_left", {
             socketId: s.id,
-            username: s.data.user.username,
+            username: resolvePublicName(s.data.user),
             roomId: kickTargetRoomId,
             memberCount,
           });
 
           const now = new Date().toISOString();
-          console.log("[KICK_TRACE] About to publish system_message to room:", kickTargetRoomId, "text:", `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`);
           await publishSocketEvent(kickTargetRoomId, "system_message", {
-            text: `تم طرد العضو (${s.data.user.username}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`,
+            text: `تم طرد العضو (${resolvePublicName(s.data.user)}) من الغرفة مؤقتاً لمدة ${minutes} دقائق`,
             roomId: kickTargetRoomId,
             systemType: "leave",
             createdAt: now,
             user: {
               id: s.data.user.id,
-              username: s.data.user.username,
+              username: resolvePublicName(s.data.user),
               role: s.data.user.role,
               avatar: s.data.user.avatar,
               countryCode: s.data.user.countryCode,
@@ -1004,10 +1018,8 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
               giftIconUrl: s.data.user.giftIconUrl,
             }
           });
-          console.log("[KICK_TRACE] system_message sent successfully");
 
           await publishGlobalEvent("room_count_update", { roomId: kickTargetRoomId, memberCount });
-          console.log("[KICK_TRACE] Kick complete for socket:", s.id, "username:", s.data.user.username);
         }
 
         responsePayload.notice = kicked
@@ -1019,7 +1031,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         io.to(target.socketId).emit("system_alert", {
           title: "نقل إلى غرفة",
           message: "طلبت الإدارة نقلك إلى غرفة أخرى.",
-          from: socket.data.user?.username,
+          from: resolvePublicName(socket.data.user as any),
         });
         responsePayload.notice = "تم إرسال طلب النقل للعضو المتصل";
       }
@@ -1037,7 +1049,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         } catch (_) {}
 
         // إرسال تنبيه للعضو المستهدف
-        const adminName = socket.data.user?.username || "الإدارة";
+        const adminName = resolvePublicName(socket.data.user as any);
         const adminAvatar = socket.data.user?.avatar || "/pic.png";
         io.to(`user:${profileId}`).emit("alert_received", {
           alertId: String(Date.now()),
@@ -1067,12 +1079,13 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
         metadata: { value: data.value },
       });
 
-      const newDisplayName = action === "nick" && data.value ? String(data.value).trim().slice(0, 120) : (targetProfile.displayName || targetProfile.username);
+      const newDisplayName = action === "nick" && data.value ? String(data.value).trim().slice(0, 120) : (targetProfile.displayName || targetProfile.topic || "");
+      // الحدث مذاع لجميع الأعضاء — الاسم المستعار فقط
       io.emit("user_profile_updated", {
         userId: targetProfile.id || profileId,
         displayName: newDisplayName,
-        username: targetProfile.username,
-        previousUsername: targetProfile.username,
+        username: newDisplayName,
+        previousUsername: targetProfile.displayName || targetProfile.topic || "",
         avatar: updates.pic ? "/pic.png" : undefined,
         avatarUrl: updates.pic ? "/pic.png" : undefined,
         profileMsg: updates.msg,
@@ -1290,7 +1303,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
       // إرسال إشعار للمستلم
       io.to(`user:${profileId}`).emit("gift_banner_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl,
       });
 
@@ -1333,7 +1346,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       io.to(`user:${profileId}`).emit("gift_banner_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl: "",
       });
 
@@ -1381,7 +1394,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       io.to(`user:${profileId}`).emit("gift_icon_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl,
       });
 
@@ -1423,7 +1436,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       io.to(`user:${profileId}`).emit("gift_icon_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl: "",
       });
 
@@ -1471,7 +1484,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       io.to(`user:${profileId}`).emit("gift_promotion_icon_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl,
       });
 
@@ -1513,7 +1526,7 @@ export function registerProfileHandlers(io: SocketIOServer, socket: Socket) {
 
       io.to(`user:${profileId}`).emit("gift_promotion_icon_received", {
         fromUserId: userId,
-        fromUsername: socket.data.user?.username || "",
+        fromUsername: resolvePublicName(socket.data.user as any),
         iconUrl: "",
       });
 

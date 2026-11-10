@@ -23,6 +23,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { showSuccess, showError } from "@/utils/toast";
 import { useRealtimeStore } from "@/lib/realtime-store";
+import { RoomPermissionGroupsTab } from "./RoomPermissionGroupsTab";
 import {
   Settings,
   ImagePlus,
@@ -76,6 +77,8 @@ interface RoomSettingsModalProps {
   onClose: () => void;
   roomId: string;
   room?: any;
+  members?: { id: string; username: string }[];
+  canManagePermissionGroups?: boolean;
   onRoomUpdated?: (updatedRoom: any) => void;
 }
 
@@ -84,6 +87,8 @@ export const RoomSettingsModal: React.FC<RoomSettingsModalProps> = ({
   onClose,
   roomId,
   room,
+  members = [],
+  canManagePermissionGroups = false,
   onRoomUpdated,
 }) => {
   const [form, setForm] = useState<RoomFormState>(defaultFormState);
@@ -372,7 +377,7 @@ export const RoomSettingsModal: React.FC<RoomSettingsModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid grid-cols-4 h-12 w-full rounded-2xl bg-muted/60 p-1">
+            <TabsList className={`grid ${canManagePermissionGroups ? "grid-cols-5" : "grid-cols-4"} h-12 w-full rounded-2xl bg-muted/60 p-1`}>
               <TabsTrigger
                 value="general"
                 className="rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-card data-[state=active]:shadow-sm"
@@ -401,6 +406,15 @@ export const RoomSettingsModal: React.FC<RoomSettingsModalProps> = ({
                 <Shield size={14} />
                 <span>الأمان</span>
               </TabsTrigger>
+              {canManagePermissionGroups && (
+                <TabsTrigger
+                  value="permission-groups"
+                  className="rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-card data-[state=active]:shadow-sm"
+                >
+                  <Shield size={14} />
+                  <span>الصلاحيات</span>
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* TAB 1: General Info */}
@@ -759,6 +773,16 @@ export const RoomSettingsModal: React.FC<RoomSettingsModalProps> = ({
                 </div>
               </div>
             </TabsContent>
+
+            {canManagePermissionGroups && (
+              <TabsContent value="permission-groups">
+                <RoomPermissionGroupsTab
+                  roomId={roomId}
+                  members={members}
+                  getAuthHeaders={getAuthHeaders}
+                />
+              </TabsContent>
+            )}
           </Tabs>
 
           {/* Action buttons */}

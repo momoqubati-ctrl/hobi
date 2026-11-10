@@ -128,9 +128,9 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
       if (!data?.storyId) return callback?.({ error: "Story ID required" });
 
       const currentViewerName =
-        socket.data?.user?.username ||
+        socket.data?.user?.displayName ||
+        (socket.data?.user as any)?.topic ||
         (socket.handshake?.auth as any)?.username ||
-        userData.username ||
         "عضو";
 
       await markStoryViewed(data.storyId, currentViewerId, currentViewerName);
@@ -185,7 +185,8 @@ export function registerStoryHandlers(io: Server, socket: Socket): void {
         return callback?.({ error: "لا تملك صلاحية التفاعل مع القصص" });
       }
 
-      const result = await reactToStory(data.storyId, userId, data.type || "like", userData.username);
+      // الاسم المستعار فقط يُسجل كمُفاعل
+      const result = await reactToStory(data.storyId, userId, data.type || "like", userData.displayName || (userData as any).topic || "عضو");
 
       if (result?.reacted) {
         try {

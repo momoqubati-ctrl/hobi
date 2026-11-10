@@ -133,7 +133,7 @@ export default defineEventHandler(async (event) => {
     const dbSuccess = await updatePersistedUserProfile(userId, updates);
 
     // 3. Update in-memory fallback
-    updateInMemoryUserProfile(username, { ...updates, displayName: updates.displayName || username });
+    updateInMemoryUserProfile(username, { ...updates, displayName: updates.displayName || updates.displayName });
 
     // 4. Always fetch the latest avatar from DB to broadcast the current pic
     let currentAvatarUrl: string | undefined = updates.avatar ? normalizeMinioUrl(updates.avatar) : undefined;
@@ -151,8 +151,9 @@ export default defineEventHandler(async (event) => {
 
     const eventPayload: Record<string, unknown> = {
       userId,
-      username: updates.displayName || username,
-      previousUsername: username,
+      // الاسم المستعار فقط — الحدث مذاع لجميع الأعضاء
+      username: updates.displayName || "",
+      previousUsername: updates.displayName ? "" : undefined,
       role: "member",
       avatar: currentAvatarUrl,
       avatarUrl: currentAvatarUrl,
@@ -208,7 +209,7 @@ export default defineEventHandler(async (event) => {
       success: true,
       updates,
       normalizedAvatar: currentAvatarUrl,
-      displayName: updates.displayName || username,
+      displayName: updates.displayName || "",
       mentionName: updates.mentionName,
       nameColor: updates.nameColor,
       messageColor: updates.messageColor,
