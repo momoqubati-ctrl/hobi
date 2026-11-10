@@ -293,18 +293,19 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
         return;
       }
 
-    // ── Check if user is temporarily kicked/banned from this room ──
-    try {
-      const { dbPool } = await import("../db");
-      const { resolveRoomId, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
-      const uid = String(user.id || "");
-      const uname = String(user.username || "").toLowerCase();
-      const uidreg = String(user.idreg || "");
+      const { resolveRoomId: resolveRoomIdFn, resolveRoomIdVariants, normalizeRoomIdValue } = await import("./roomAccess");
+      const canonicalRoomId = (await resolveRoomIdFn(roomId)) || roomId;
       const roomIdVariants = await resolveRoomIdVariants(roomId);
-      const canonicalRoomId = await resolveRoomId(roomId);
       const roomCheckValues = Array.from(new Set([canonicalRoomId, roomId, ...roomIdVariants, normalizeRoomIdValue(roomId), normalizeRoomIdValue(canonicalRoomId)].filter(Boolean)));
       const normalizedRoomCheckValues = roomCheckValues.map((value) => normalizeRoomIdValue(value).toLowerCase());
-      console.log(`[JOIN_ROOM_TRACE] incoming`, JSON.stringify({ socketId: socket.id, userId: uid, userName: user.username, userIdReg: uidreg, requestedRoomId: roomId, canonicalRoomId, roomIdVariants, roomCheckValues, normalizedRoomCheckValues }));
+
+      // ── Check if user is temporarily kicked/banned from this room ──
+      try {
+        const { dbPool } = await import("../db");
+        const uid = String(user.id || "");
+        const uname = String(user.username || "").toLowerCase();
+        const uidreg = String(user.idreg || "");
+        console.log(`[JOIN_ROOM_TRACE] incoming`, JSON.stringify({ socketId: socket.id, userId: uid, userName: user.username, userIdReg: uidreg, requestedRoomId: roomId, canonicalRoomId, roomIdVariants, roomCheckValues, normalizedRoomCheckValues }));
 
       // خطوة 1: جلب الهوية الصحيحة للمستخدم من جدول users
       // user.id قد يكون uid أو UUID أو idreg - نبحث بكل الصيغ
@@ -473,7 +474,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     // ── Likes required check ──
     try {
       const roomInfo = allRooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
-      if (roomInfo && roomInfo.likesRequired > 0) {
+      const requiredLikes = Number((roomInfo as any)?.likesRequired ?? (roomInfo as any)?.rmli ?? 0);
+      if (roomInfo && requiredLikes > 0) {
         let userLikes = 0;
         try {
           const { dbPool } = await import("../db");
@@ -483,8 +485,8 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           );
           userLikes = Number(likesResult.rows[0]?.likes || 0);
         } catch (_) {}
-        if (userLikes < roomInfo.likesRequired) {
-          callback?.({ success: false, message: `يجب أن يكون لديك ${roomInfo.likesRequired} إعجاب على الأقل للدخول لهذه الغرفة (لديك ${userLikes})`, likesRequired: true });
+        if (userLikes < requiredLikes) {
+          callback?.({ success: false, message: `يجب أن يكون لديك ${requiredLikes} إعجاب على الأقل للدخول لهذه الغرفة (لديك ${userLikes})`, likesRequired: true });
           return;
         }
       }
@@ -496,7 +498,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
     try {
       const roomInfo = allRooms.find((r: any) => String(r.id) === String(canonicalRoomId) || String(r.id) === String(roomId));
       const currentCount = await getRoomMemberCount(canonicalRoomId);
-      const maxMembers = roomInfo?.maxMembers || 50;
+      const maxMembers = Number((roomInfo as any)?.maxMembers ?? (roomInfo as any)?.max ?? 50);
       if (currentCount >= maxMembers) {
         callback?.({ success: false, message: "الغرفة ممتلئة حالياً، لا يمكنك الدخول", full: true });
         return;
@@ -754,6 +756,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
           level: Number((user as any).level) || 1,
           exp: Number((user as any).exp) || 0,
           roomRole: (user as any).roomRole || (user.role === "admin" || user.role === "owner" ? "super_admin" : (user.role === "moderator" ? "moderator" : "member")),
+          customRole: memberCustomRolesMap.get(String(user.id)) || null,
           idreg: String((user as any).idreg || ""),
         },
         memberCount: members.length,
@@ -1211,7 +1214,7 @@ export function registerRoomHandlers(io: Server, socket: Socket): void {
       // لا نُرسل "غادر الغرفة (انقطع الاتصال)" ولا نسقط أمانة الجلسات:
       // ننظّف حضور هذه الجلسة المقطوعة فقط (بمفتاح سوكيتها الخاص وليس userId).
       try {
-        const stillHere = Array.from(io.sockets.sockets).some(
+        const stillHere = Array.from(io.sockets.sockets.values()).some(
           (s) => s.id !== socket.id && String((s.data as any)?.user?.id || "") === String(user.id)
         );
         if (stillHere) {
@@ -1389,7 +1392,7 @@ export async function handleGetRoomProfile(
 
     // 2. جلب جميع الأعضاء المتواجدين حالياً في الغرفة عبر كافة معرفاتها (UUID, Slug, rawRoomId)
     const lookupRoomIds = Array.from(new Set([canonicalRoomId, roomSlug, rawRoomId].filter(Boolean)));
-    const membersMap = new Map<string, OnlineUser>();
+    const membersMap = new Map<string, any>();
     for (const rid of lookupRoomIds) {
       try {
         const list = await getRoomMembers(rid);
